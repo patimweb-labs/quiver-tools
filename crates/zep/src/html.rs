@@ -388,7 +388,7 @@ fn wert(attribute: &[(String, String)], name: &str) -> Option<String> {
 }
 
 /// Zerlegt den Inhalt zwischen `<` und `>` in Name und Attribute.
-fn zerlegen(roh: &str) -> (String, Vec<(String, String)>) {
+pub(crate) fn zerlegen(roh: &str) -> (String, Vec<(String, String)>) {
     let roh = roh.trim();
     // `</form>` wird zu `/form`: der Schrägstrich gehört zum Namen.
     let (schliessend, roh) = match roh.strip_prefix('/') {
@@ -494,7 +494,7 @@ fn nur_text(roh: &str) -> String {
 }
 
 /// Die üblichen Entitäten auflösen (mehr braucht ein Formular nicht).
-fn entschluesseln(text: &str) -> String {
+pub(crate) fn entschluesseln(text: &str) -> String {
     if !text.contains('&') {
         return text.to_string();
     }

@@ -449,6 +449,15 @@ impl Anmeldung {
             &self.inner.konfig.passwort,
         );
         let ergebnis = routine.ausfuehren(&metadaten, &client_id).await;
+        if let Some(geruest) = routine.unklare_seite() {
+            match geruest_ablegen(&self.inner.konfig.zustand, geruest) {
+                Ok(pfad) => bericht.push(format!(
+                    "Aufbau der unbekannten Seite (ohne Werte) liegt in {}",
+                    pfad.display()
+                )),
+                Err(fehler) => bericht.push(format!("Seitenaufbau nicht gespeichert: {fehler}")),
+            }
+        }
         bericht.extend(routine.in_bericht());
         let antwort =
             ergebnis.map_err(|fehler| AnmeldeFehler::Fehlgeschlagen(fehler.to_string()))?;
@@ -696,6 +705,22 @@ impl Anmeldung {
 }
 
 /// Warum die Routine gesperrt wird – als Satz, der dem User hilft.
+/// Das Gerüst einer unbekannten Seite ablegen (nur für den User lesbar).
+fn geruest_ablegen(ordner: &std::path::Path, geruest: &str) -> std::io::Result<std::path::PathBuf> {
+    std::fs::create_dir_all(ordner)?;
+    let pfad = ordner.join("letzte-seite.txt");
+    let mut optionen = std::fs::OpenOptions::new();
+    optionen.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        optionen.mode(0o600);
+    }
+    use std::io::Write;
+    optionen.open(&pfad)?.write_all(geruest.as_bytes())?;
+    Ok(pfad)
+}
+
 fn sperrgrund(fehler: &AnmeldeFehler) -> String {
     match fehler {
         AnmeldeFehler::Gesperrt(grund) => grund.clone(),

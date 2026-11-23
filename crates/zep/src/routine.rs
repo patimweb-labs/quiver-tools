@@ -93,6 +93,8 @@ pub struct Routine<'a> {
     benutzer: &'a str,
     passwort: &'a str,
     bericht: Vec<String>,
+    /// Das Gerüst der Seite, an der der Ablauf hängen blieb (ohne Werte).
+    unklare_seite: Option<String>,
 }
 
 impl<'a> Routine<'a> {
@@ -102,12 +104,18 @@ impl<'a> Routine<'a> {
             benutzer,
             passwort,
             bericht: Vec::new(),
+            unklare_seite: None,
         }
     }
 
     /// Die Schritte, die der Ablauf gesehen hat – ohne Werte, ohne Token.
     pub fn bericht(&self) -> &[String] {
         &self.bericht
+    }
+
+    /// Das Gerüst der Seite, an der der Ablauf hängen blieb – ohne Werte.
+    pub fn unklare_seite(&self) -> Option<&str> {
+        self.unklare_seite.as_deref()
     }
 
     /// Den Bericht übernehmen.
@@ -274,6 +282,11 @@ impl<'a> Routine<'a> {
                         continue;
                     }
 
+                    self.unklare_seite = Some(format!(
+                        "Seite {}\n\n{}",
+                        kurz(&ziel),
+                        crate::geruest::geruest(&html_text)
+                    ));
                     return Err(RoutineFehler::UnklareSeite(format!(
                         "Seite {}. {} Formular(e); Felder: {}. \
                          Erwartet war ein Anmelde- oder ein Zustimmungsformular.",

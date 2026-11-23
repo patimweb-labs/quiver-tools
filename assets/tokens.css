@@ -1,0 +1,118 @@
+/* Erzeugt von `cargo run -p quiver-oberflaeche --bin tokens_css` – nicht von Hand ändern. */
+
+:root, :root[data-theme="dark"] {
+  --wp-color-accent-default: #2EE6C8;
+  --wp-color-accent-hover: #7CF0DC;
+  --wp-color-accent-pressed: #16B7A5;
+  --wp-color-bg-canvas: #090C10;
+  --wp-color-bg-hover: #18202A;
+  --wp-color-bg-input: #05070A;
+  --wp-color-bg-panel: #0E1319;
+  --wp-color-bg-raised: #131A22;
+  --wp-color-bg-selected: #1F2831;
+  --wp-color-border-strong: #2E3A46;
+  --wp-color-border-subtle: #1F2831;
+  --wp-color-focus-ring: #2EE6C8;
+  --wp-color-signal-default: #F7931E;
+  --wp-color-signal-hover: #FFB24D;
+  --wp-color-status-error: #D9614A;
+  --wp-color-status-ok: #86B26A;
+  --wp-color-status-warn: #F2A63B;
+  --wp-color-text-default: #E9E5DC;
+  --wp-color-text-faint: #78838F;
+  --wp-color-text-muted: #98A3AF;
+  --wp-color-text-on-accent: #05070A;
+}
+
+:root[data-theme="light"] {
+  --wp-color-accent-default: #0A6E63;
+  --wp-color-accent-hover: #0A4A43;
+  --wp-color-accent-pressed: #062B27;
+  --wp-color-bg-canvas: #F6F2EA;
+  --wp-color-bg-hover: #F6F2EA;
+  --wp-color-bg-input: #FFFDF8;
+  --wp-color-bg-panel: #FFFDF8;
+  --wp-color-bg-raised: #E9E5DC;
+  --wp-color-bg-selected: #C9C3B7;
+  --wp-color-border-strong: #78838F;
+  --wp-color-border-subtle: #C9C3B7;
+  --wp-color-focus-ring: #0A6E63;
+  --wp-color-signal-default: #B8640A;
+  --wp-color-signal-hover: #8F4B00;
+  --wp-color-status-error: #A8321E;
+  --wp-color-status-ok: #4F7A2E;
+  --wp-color-status-warn: #A86A0E;
+  --wp-color-text-default: #0E1319;
+  --wp-color-text-faint: #78838F;
+  --wp-color-text-muted: #3E4C5A;
+  --wp-color-text-on-accent: #FFFDF8;
+}
+
+:root[data-theme="mono"] {
+  --wp-color-accent-default: #E8E6E1;
+  --wp-color-accent-hover: #FFFFFF;
+  --wp-color-accent-pressed: #B5B2AD;
+  --wp-color-bg-canvas: #0A0A0A;
+  --wp-color-bg-hover: #1E1E1E;
+  --wp-color-bg-input: #0D0D0D;
+  --wp-color-bg-panel: #101010;
+  --wp-color-bg-raised: #161616;
+  --wp-color-bg-selected: #262626;
+  --wp-color-border-strong: #3D3D3D;
+  --wp-color-border-subtle: #242424;
+  --wp-color-focus-ring: #FFFFFF;
+  --wp-color-signal-default: #D6D3CE;
+  --wp-color-signal-hover: #FFFFFF;
+  --wp-color-status-error: #FFFFFF;
+  --wp-color-status-ok: #B5B2AD;
+  --wp-color-status-warn: #D6D3CE;
+  --wp-color-text-default: #E8E6E1;
+  --wp-color-text-faint: #7C7A76;
+  --wp-color-text-muted: #A8A5A0;
+  --wp-color-text-on-accent: #0A0A0A;
+}
+
+:root {
+  --wp-duration-fast: 120ms;
+  --wp-duration-normal: 200ms;
+  --wp-font-family-display: Archivo, 'IBM Plex Sans', system-ui, sans-serif;
+  --wp-font-family-mono: 'IBM Plex Mono', ui-monospace, Menlo, Consolas, monospace;
+  --wp-font-family-sans: 'IBM Plex Sans', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --wp-font-line-mono: 1.35;
+  --wp-font-line-normal: 1.5;
+  --wp-font-line-tight: 1.2;
+  --wp-font-size-2xl: 28px;
+  --wp-font-size-lg: 16px;
+  --wp-font-size-md: 14px;
+  --wp-font-size-sm: 12px;
+  --wp-font-size-xl: 20px;
+  --wp-font-size-xs: 11px;
+  --wp-font-weight-medium: 500;
+  --wp-font-weight-regular: 400;
+  --wp-font-weight-semibold: 600;
+  --wp-radius-lg: 0;
+  --wp-radius-md: 0;
+  --wp-radius-none: 0;
+  --wp-radius-pill: 0;
+  --wp-radius-sm: 0;
+  --wp-size-akzentbalken: 2px;
+  --wp-size-border: 1px;
+  --wp-size-control-lg: 40px;
+  --wp-size-control-md: 32px;
+  --wp-size-control-padding: 14px;
+  --wp-size-control-sm: 28px;
+  --wp-size-focus: 2px;
+  --wp-size-kopf: 62px;
+  --wp-size-navzeile: 28px;
+  --wp-size-seitenleiste: 192px;
+  --wp-size-titlebar-macos: 68px;
+  --wp-space-0: 0;
+  --wp-space-1: 4px;
+  --wp-space-2: 8px;
+  --wp-space-3: 12px;
+  --wp-space-4: 16px;
+  --wp-space-5: 24px;
+  --wp-space-6: 32px;
+  --wp-space-7: 48px;
+  --wp-space-8: 64px;
+}

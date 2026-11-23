@@ -1,0 +1,10 @@
+[workspace]
+resolver = "2"
+members = ["crates/kern"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Patrick Weppelmann"]
+repository = "https://github.com/patimweb-labs/quiver-tools"

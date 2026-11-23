@@ -52,7 +52,7 @@ Ablauf der Anmeldung (`quiver-m365 anmelden`):
 3. öffnet den Browser: https://login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize?...
 4. User meldet sich an → Rückleitung http://127.0.0.1:<port>/?code=…&state=…
 5. state prüfen, Code + Verifier gegen Token tauschen (…/oauth2/v2.0/token)
-6. Refresh-Token in den Schlüsselbund, Access-Token nur im Speicher
+6. Refresh-Token in die Tresor-Datei, Access-Token nur im Speicher
 7. Browser-Seite: „Angemeldet – Fenster kann geschlossen werden“ (Tokens: keine)
 ```
 
@@ -62,7 +62,7 @@ Ablauf der Anmeldung (`quiver-m365 anmelden`):
   nutzt das Ergebnis. *Begründung:* MCP-Clients brechen lange Aufrufe ab.
 - **Erneuern:** Access-Token läuft ab → Refresh-Token benutzen. Graph antwortet 401 → einmal
   erneuern und wiederholen. Refresh scheitert (widerrufen, abgelaufen) → neue Anmeldung.
-- **Speicher:** Schlüsselbund, Dienst `quiver-m365`, Schlüssel `<tenant>/<client_id>`.
+- **Speicher:** Tresor-Datei `<Datenordner>/quiver-m365/tresor`, Schlüssel `<tenant>/<client_id>`.
   Nie in Dateien, nie ins Log, nie in Tool-Antworten.
 - **Abmelden:** Tool `abmelden` löscht das Refresh-Token.
 - **Später (mcp-quiver SPEC §7):** Der quiver-Client übernimmt die Anmeldung und reicht das Token
@@ -106,7 +106,7 @@ Fehler von Graph kommen als MCP-Fehler mit Graph-Code und Text (ohne Tokens).
 ## 5. Aufbau
 
 ```
-crates/anmeldung   PKCE-Ablauf, Loopback-Lauscher, Erneuern, Tresor (Schlüsselbund/Speicher)
+crates/anmeldung   PKCE-Ablauf, Loopback-Lauscher, Erneuern, Tresor (Datei/Speicher)
 crates/graph       Graph-Client: GET/POST mit Token, 401 → erneuern, Modelle der Antworten
 crates/mcp         rmcp-Server über stdio, die Tools aus §4; Programm `quiver-m365`
 ```

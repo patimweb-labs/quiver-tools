@@ -1,26 +1,26 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Wo das Refresh-Token liegt (SPEC.md §2): Schlüsselbund oder – mit
+//! Wo das Refresh-Token liegt (SPEC.md §2): eigene verschlüsselte Datei oder – mit
 //! `M365_TRESOR=speicher` – nur im Arbeitsspeicher.
 
-use m365_anmeldung::{Schluesselbund, SpeicherTresor, Tresor};
+use m365_anmeldung::{DateiTresor, SpeicherTresor, Tresor};
 
 /// Die Wahl aus der Umgebung, als ein Typ (die Anmeldung ist generisch).
 pub enum TresorWahl {
-    /// Schlüsselbund des Betriebssystems (Standard).
-    Schluesselbund(Schluesselbund),
+    /// Eigene verschlüsselte Datei (Standard).
+    Datei(DateiTresor),
     /// Nur im Arbeitsspeicher (Tests, Entwicklung, `M365_TRESOR=speicher`).
     Speicher(SpeicherTresor),
 }
 
 impl TresorWahl {
     /// Die reine Regel: `speicher` (Groß-/Kleinschreibung egal) → Speicher,
-    /// alles andere → Schlüsselbund.
+    /// alles andere → Datei.
     pub fn aus_wert(roh: Option<&str>) -> Self {
         match roh.map(|wert| wert.trim().to_ascii_lowercase()) {
             Some(wert) if wert == "speicher" => Self::Speicher(SpeicherTresor::neu()),
-            _ => Self::Schluesselbund(Schluesselbund::neu()),
+            _ => Self::Datei(DateiTresor::standard()),
         }
     }
 
@@ -33,7 +33,7 @@ impl TresorWahl {
     /// Nur für Tests und Logs: welcher Tresor ist es?
     pub fn name(&self) -> &'static str {
         match self {
-            Self::Schluesselbund(_) => "schluesselbund",
+            Self::Datei(_) => "datei",
             Self::Speicher(_) => "speicher",
         }
     }
@@ -42,21 +42,21 @@ impl TresorWahl {
 impl Tresor for TresorWahl {
     fn lesen(&self, schluessel: &str) -> anyhow::Result<Option<String>> {
         match self {
-            Self::Schluesselbund(tresor) => tresor.lesen(schluessel),
+            Self::Datei(tresor) => tresor.lesen(schluessel),
             Self::Speicher(tresor) => tresor.lesen(schluessel),
         }
     }
 
     fn schreiben(&self, schluessel: &str, wert: &str) -> anyhow::Result<()> {
         match self {
-            Self::Schluesselbund(tresor) => tresor.schreiben(schluessel, wert),
+            Self::Datei(tresor) => tresor.schreiben(schluessel, wert),
             Self::Speicher(tresor) => tresor.schreiben(schluessel, wert),
         }
     }
 
     fn loeschen(&self, schluessel: &str) -> anyhow::Result<()> {
         match self {
-            Self::Schluesselbund(tresor) => tresor.loeschen(schluessel),
+            Self::Datei(tresor) => tresor.loeschen(schluessel),
             Self::Speicher(tresor) => tresor.loeschen(schluessel),
         }
     }
@@ -73,10 +73,10 @@ mod tests {
     }
 
     #[test]
-    fn sonst_schluesselbund() {
-        assert_eq!(TresorWahl::aus_wert(None).name(), "schluesselbund");
-        assert_eq!(TresorWahl::aus_wert(Some("")).name(), "schluesselbund");
-        assert_eq!(TresorWahl::aus_wert(Some("datei")).name(), "schluesselbund");
+    fn sonst_datei() {
+        assert_eq!(TresorWahl::aus_wert(None).name(), "datei");
+        assert_eq!(TresorWahl::aus_wert(Some("")).name(), "datei");
+        assert_eq!(TresorWahl::aus_wert(Some("datei")).name(), "datei");
     }
 
     #[test]

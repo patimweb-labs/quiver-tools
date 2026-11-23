@@ -3,7 +3,7 @@
 
 //! Ende zu Ende: `quiver-m365` als Kindprozess, MCP über stdio, Graph gegen die
 //! Attrappe. Der „Browser“ wird mit `M365_ACCESS_TOKEN` umgangen, der Tresor ist
-//! `M365_TRESOR=speicher` – nie der echte Schlüsselbund.
+//! `M365_TRESOR=speicher` – nie die echte Tresor-Datei.
 
 mod graph_attrappe;
 

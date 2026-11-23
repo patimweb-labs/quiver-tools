@@ -6,7 +6,7 @@
 //! Graph-Fehler → MCP-Fehler ohne Token, `AnmeldungLaeuft` → Hinweistext.
 //!
 //! Alles gegen die Attrappen: Anmelde-Attrappe aus Aufgabe 01 und die
-//! Graph-Attrappe daneben. Nie echte Microsoft-Server, nie der echte Schlüsselbund.
+//! Graph-Attrappe daneben. Nie echte Microsoft-Server, nie die echte Tresor-Datei.
 
 #[path = "../../anmeldung/tests/attrappe.rs"]
 mod attrappe;

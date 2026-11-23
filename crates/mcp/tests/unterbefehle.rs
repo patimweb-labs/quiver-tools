@@ -6,7 +6,7 @@
 //! Anmeldung auslöst.
 //!
 //! Alles gegen die Attrappen: Anmeldedienst und Graph. Nie login.microsoftonline.com,
-//! nie der echte Schlüsselbund, nie ein echter Browser.
+//! nie die echte Tresor-Datei, nie ein echter Browser.
 
 #[path = "../../anmeldung/tests/attrappe.rs"]
 mod attrappe;
@@ -20,7 +20,7 @@ use graph_attrappe::GraphAttrappe;
 use m365_anmeldung::{SpeicherTresor, Tresor};
 use quiver_m365::unterbefehle::{abmelden, anmelden, status};
 
-/// Tresor, den der Test zwischen den Unterbefehlen teilt (wie der echte im Schlüsselbund).
+/// Tresor, den der Test zwischen den Unterbefehlen teilt (wie der echte in der Tresor-Datei).
 #[derive(Clone)]
 struct GeteilterTresor(Arc<SpeicherTresor>);
 

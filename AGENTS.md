@@ -95,7 +95,7 @@ Weitere Befehle kommen mit dem Code.
 
 ## 8. Projektspezifisch
 
-- **Zugangsdaten:** Refresh-Token nur im Schlüsselbund, Access-Token nur im Speicher.
+- **Zugangsdaten:** Refresh-Token nur in der Tresor-Datei, Access-Token nur im Speicher.
 - **Rechte:** nur delegierte Graph-Berechtigungen, nie App-Berechtigungen.
 - **Verändernde Tools** (`mail_senden`, `termin_anlegen`) tragen die MCP-Annotation `destructiveHint`.
 - Tenant-spezifische Werte (Client-ID, Tenant-ID) nie ins Repo – nur über Umgebung bzw. mcp-quiver.

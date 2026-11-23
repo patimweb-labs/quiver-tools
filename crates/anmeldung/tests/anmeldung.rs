@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Patrick Weppelmann
 
 //! Abnahme aus `docs/aufgaben/01-anmeldung.md` – nur gegen die Attrappe,
-//! nie gegen echte Microsoft-Server, nie gegen den echten Schlüsselbund.
+//! nie gegen echte Microsoft-Server, nie gegen die echte Tresor-Datei.
 
 mod attrappe;
 

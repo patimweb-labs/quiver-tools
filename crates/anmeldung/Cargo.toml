@@ -15,12 +15,19 @@ serde.workspace = true
 serde_json.workspace = true
 tracing.workspace = true
 axum = "0.8"
-keyring = "4"
+base64 = "0.22"
+chacha20poly1305 = "0.10"
+dirs = "6"
 oauth2 = { version = "5", default-features = false, features = ["reqwest", "rustls-tls"] }
 open = "5"
 rand = "0.9"
 url = "2"
 
+# Nur für den einmaligen Umzug aus dem alten Schlüsselbund (macOS).
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = "4"
+
 [dev-dependencies]
+tempfile = "3"
 axum = "0.8"
 tokio = { workspace = true, features = ["test-util"] }

@@ -99,10 +99,11 @@ pub trait Anmeldung: Send + Sync {
 
 mod anmeldung;
 mod browser;
+mod dateitresor;
 mod fluss;
 mod konfig;
 mod tresor;
 
 pub use anmeldung::EntraAnmeldung;
 pub use browser::{KeinBrowser, OeffneBrowser};
-pub use tresor::{Schluesselbund, SpeicherTresor};
+pub use tresor::{DateiTresor, SpeicherTresor};

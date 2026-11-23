@@ -3,7 +3,7 @@
 
 //! Das Programm `quiver-m365` (SPEC.md §5).
 //!
-//! Hier wird nur verdrahtet: Konfig aus der Umgebung, Tresor (Schlüsselbund oder
+//! Hier wird nur verdrahtet: Konfig aus der Umgebung, Tresor (Datei oder
 //! `M365_TRESOR=speicher`), Browser, Graph-Client, rmcp über stdio.
 //!
 //! **stdout gehört MCP.** Logs gehen nach stderr, `--version`, `anmelden`,

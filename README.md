@@ -61,7 +61,7 @@ Umgebung wie den MCP-Prozess auf (siehe [Eintrag für mcp-quiver](#eintrag-für-
 |---|---|---|
 | `quiver-m365 anmelden` | Browser-Ablauf (Authorization Code + PKCE, wartet **5 min** auf die Rückleitung), danach `GET /me`; stdout: das Konto (`userPrincipalName`) | 0 = angemeldet, 2 = Fehler (stderr) |
 | `quiver-m365 status` | **ohne** Browser: Refresh-Token erneuern und `GET /me`; stdout: das Konto | 0 = angemeldet, 1 = kein (gültiges) Refresh-Token, 2 = Netz-/sonstiger Fehler |
-| `quiver-m365 abmelden` | Refresh-Token aus dem Schlüsselbund löschen | 0 |
+| `quiver-m365 abmelden` | Refresh-Token aus der Tresor-Datei löschen | 0 |
 
 Ein von außen gereichtes `M365_ACCESS_TOKEN` gilt nur im MCP-Betrieb; die Unterbefehle verwalten
 das eigene Refresh-Token im Tresor.
@@ -105,7 +105,7 @@ Alles über Umgebung, alles optional:
 | `M365_ZEITZONE` | `Europe/Berlin` | Zeitzone für Termine und alle Zeiten in Antworten |
 | `M365_ACCESS_TOKEN` | – | fertiges Token von außen; dann keine eigene Anmeldung |
 | `M365_BROWSER` | `aus` | `erlaubt` = Browser-Ablauf auch aus einem Tool-Aufruf heraus (Standard: nie) |
-| `M365_TRESOR` | Schlüsselbund | `speicher` = Token nur im Arbeitsspeicher (Tests, Entwicklung) |
+| `M365_TRESOR` | Datei | `speicher` = Token nur im Arbeitsspeicher (Tests, Entwicklung) |
 | `RUST_LOG` | `info` | Logs gehen nach **stderr**, stdout gehört MCP |
 
 ## Eintrag für mcp-quiver
@@ -158,12 +158,12 @@ eine Rückfrage.
   (`quiver-m365 anmelden`), Rückleitung über einen Loopback-Lauscher auf `127.0.0.1` (kein
   `localhost`, das im Browser zuerst `::1` sein kann). Im MCP-Betrieb öffnet `quiver-m365` nie
   selbst einen Browser – nur mit `M365_BROWSER=erlaubt`.
-- **Speicher:** Refresh-Token im Schlüsselbund (Dienst `quiver-m365`), Access-Token nur im
+- **Speicher:** Refresh-Token in der Tresor-Datei (Dienst `quiver-m365`), Access-Token nur im
   Arbeitsspeicher. Nie in Dateien, nie in Logs, nie in Tool-Antworten.
 - **Erneuern:** abgelaufenes Token per Refresh-Token, 401 von Graph → einmal erneuern und
   wiederholen, 429/503 mit `Retry-After` → einmal nach der genannten Zeit (höchstens 10 s).
 - **Rechte:** nur delegierte Graph-Berechtigungen, nie App-Berechtigungen. Microsoft prüft, nicht wir.
-- **Daten:** quiver-m365 speichert nichts außer dem Refresh-Token im Schlüsselbund des Rechners.
+- **Daten:** quiver-m365 speichert nichts außer dem Refresh-Token in der Tresor-Datei des Rechners.
   Mails, Termine und Dateien werden je Aufruf abgerufen und nur an den MCP-Client
   zurückgegeben, der den Aufruf gemacht hat. Kein Server dazwischen, keine Telemetrie.
   Das Tool `abmelden` löscht das Refresh-Token wieder.
@@ -176,7 +176,7 @@ cargo fmt --all --check && cargo clippy --all-targets -- -D warnings && cargo te
 ```
 
 Tests laufen nur gegen Attrappen (axum): Microsoft-Identity-Provider und Graph. Nie gegen echte
-Microsoft-Server, nie gegen den echten Schlüsselbund, nie mit einem echten Browser.
+Microsoft-Server, nie gegen die echte Tresor-Datei, nie mit einem echten Browser.
 
 Aufbau: `crates/anmeldung` (PKCE, Lauscher, Tresor) ← `crates/graph` (Graph-Client, Modelle) ←
 `crates/mcp` (rmcp-Server über stdio, Programm `quiver-m365`).

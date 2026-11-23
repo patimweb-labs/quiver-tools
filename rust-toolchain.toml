@@ -1,0 +1,5 @@
+# Die Rust-Version ist festgelegt (wie in sprechwerk): fmt und clippy ändern ihr
+# Urteil mit der Version. Anheben: hier ändern, `cargo fmt --all`, Clippy beheben.
+[toolchain]
+channel = "1.100.0"
+components = ["rustfmt", "clippy"]

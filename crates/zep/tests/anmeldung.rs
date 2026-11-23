@@ -311,3 +311,38 @@ async fn abmelden_loescht_das_refresh_token_und_die_sperre() {
         .is_none());
     assert!(anmeldung.sperrgrund().is_none());
 }
+
+#[tokio::test]
+async fn die_inertia_zustimmung_wie_bei_zep_wird_bestaetigt() {
+    let attrappe = Attrappe::starte().await;
+    let ordner = tempfile::tempdir().unwrap();
+    let browser = browser();
+    let anmeldung = baue(&attrappe, &ordner, speicher(), Arc::clone(&browser));
+    attrappe.inertia_zustimmung_zeigen(false);
+
+    let lauf = anmeldung.routine_lauf().await;
+    assert!(lauf.gelungen(), "{lauf:?}");
+    assert_eq!(attrappe.zustimmungen(), 1);
+    assert_eq!(attrappe.login_posts(), 1);
+    assert_eq!(browser.aufrufe(), 0, "kein Browser");
+    let bericht = lauf.bericht.join("\n");
+    assert!(bericht.contains("Zustimmungsseite (Inertia)"), "{bericht}");
+    assert!(
+        !bericht.contains("auth-"),
+        "kein auth_token im Bericht: {bericht}"
+    );
+    assert!(matches!(anmeldung.status(), Status::Angemeldet { .. }));
+}
+
+#[tokio::test]
+async fn eine_inertia_zustimmung_fuer_einen_fremden_client_wird_nicht_bestaetigt() {
+    let attrappe = Attrappe::starte().await;
+    let ordner = tempfile::tempdir().unwrap();
+    let anmeldung = baue(&attrappe, &ordner, speicher(), browser());
+    attrappe.inertia_zustimmung_zeigen(true);
+
+    let lauf = anmeldung.routine_lauf().await;
+    let fehler = lauf.fehler.clone().expect("muss scheitern");
+    assert!(fehler.contains("anderen Client"), "{fehler}");
+    assert_eq!(attrappe.zustimmungen(), 0, "nichts bestätigt");
+}

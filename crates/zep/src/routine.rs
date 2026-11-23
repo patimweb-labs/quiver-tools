@@ -30,7 +30,7 @@ use crate::oauth::{self, TokenAntwort, UMLEITUNG};
 use crate::pkce::{self, Pkce};
 
 /// So viele Schritte darf ein Ablauf brauchen; danach bricht er ab.
-pub const MAX_SCHRITTE: usize = 12;
+pub const MAX_SCHRITTE: usize = 16;
 
 /// Wie lange eine einzelne Anfrage höchstens dauert.
 pub const ZEITLIMIT: Duration = Duration::from_secs(25);
@@ -279,6 +279,36 @@ impl<'a> Routine<'a> {
                         ziel = ziel_aufloesen(&ziel, &formular.action)?;
                         methode = methode_von(&formular.methode);
                         rumpf = Some(formular.rumpf());
+                        continue;
+                    }
+
+                    // ZEP: Laravel Passport mit Inertia – kein <form>, die
+                    // Angaben für „OK“ stehen in den Seitendaten.
+                    if let Some(zustimmung) = crate::inertia::zustimmung(&html_text) {
+                        if zustimmung.client_id != client_id {
+                            return Err(RoutineFehler::UnklareSeite(format!(
+                                "Die Zustimmungsseite gilt einem anderen Client ({}) als \
+                                 unserer Registrierung – nicht bestätigt.",
+                                zustimmung.client_name
+                            )));
+                        }
+                        let bestaetigen = ziel_aufloesen(&ziel, &zustimmung.approve_url)?;
+                        if !gleicher_host(&bestaetigen, erlaubter_host.as_deref()) {
+                            return Err(RoutineFehler::UnklareSeite(format!(
+                                "Die Zustimmung zeigt auf {}, einen anderen Host als der \
+                                 Authorization-Server – nicht bestätigt.",
+                                kurz(&bestaetigen)
+                            )));
+                        }
+                        self.melde(format!(
+                            "{nummer}. Zustimmungsseite (Inertia): „{}“ mit Scope {} bestätigen \
+                             (Felder: _token, state, client_id, auth_token)",
+                            zustimmung.client_name,
+                            zustimmung.scopes.join(", ")
+                        ));
+                        ziel = bestaetigen;
+                        methode = Methode::Post;
+                        rumpf = Some(zustimmung.rumpf());
                         continue;
                     }
 

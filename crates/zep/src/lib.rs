@@ -36,6 +36,7 @@ pub mod browser;
 pub mod cookies;
 pub mod geruest;
 pub mod html;
+pub mod inertia;
 pub mod metadaten;
 pub mod oauth;
 pub mod pkce;

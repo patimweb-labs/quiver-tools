@@ -105,6 +105,10 @@ struct Zustand {
     unklare_seite: AtomicBool,
     /// Zeigt das Anmeldeformular auf einen fremden Host (Phishing-Versuch)?
     fremdes_formular: AtomicBool,
+    /// Zustimmung wie bei ZEP: Inertia-Seite ohne `<form>`.
+    inertia: AtomicBool,
+    /// Die Inertia-Zustimmung nennt einen fremden Client.
+    inertia_fremder_client: AtomicBool,
 }
 
 fn griff<T>(fach: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -128,6 +132,8 @@ impl Zustand {
             refresh_tokens: Mutex::new(BTreeSet::new()),
             access_tokens: Mutex::new(BTreeSet::new()),
             passwort_richtig: AtomicBool::new(true),
+            inertia: AtomicBool::new(false),
+            inertia_fremder_client: AtomicBool::new(false),
             umgeschaltet: AtomicBool::new(false),
             unklare_seite: AtomicBool::new(false),
             fremdes_formular: AtomicBool::new(false),
@@ -314,6 +320,14 @@ impl Attrappe {
     /// `/authorize` antwortet mit einer Seite, die zu keinem Schritt passt.
     pub fn unklare_seite_zeigen(&self) {
         self.zustand.unklare_seite.store(true, Ordering::SeqCst);
+    }
+
+    /// Die Zustimmung kommt wie bei ZEP als Inertia-Seite (ohne `<form>`).
+    pub fn inertia_zustimmung_zeigen(&self, fremder_client: bool) {
+        self.zustand.inertia.store(true, Ordering::SeqCst);
+        self.zustand
+            .inertia_fremder_client
+            .store(fremder_client, Ordering::SeqCst);
     }
 
     /// Das Anmeldeformular zeigt auf einen fremden Host.
@@ -599,7 +613,7 @@ async fn autorisieren(
     griff(&zustand.fluesse).insert(kennung.clone(), fluss);
 
     if griff(&zustand.fluesse)[&kennung].angemeldet {
-        return zustimmungs_html(&basis(&kopf), &kennung, &csrf);
+        return zustimmung_zeigen(&zustand, &basis(&kopf), &kennung);
     }
     let basis = if zustand.fremdes_formular.load(Ordering::SeqCst) {
         "https://boese.example.test".to_string()
@@ -636,6 +650,40 @@ fn anmelde_html(basis: &str, fluss: &str, csrf: &str) -> Response {
             csrf = escape(csrf),
         ),
     )
+}
+
+/// Die Zustimmungsseite – klassisch als Formular oder wie ZEP als Inertia-Seite.
+fn zustimmung_zeigen(zustand: &Arc<Zustand>, basis: &str, kennung: &str) -> Response {
+    let Some(fluss) = griff(&zustand.fluesse).get(kennung).cloned() else {
+        return (StatusCode::BAD_REQUEST, "unbekannter Vorgang").into_response();
+    };
+    if !zustand.inertia.load(Ordering::SeqCst) {
+        return zustimmungs_html(basis, kennung, &fluss.csrf);
+    }
+    let client = if zustand.inertia_fremder_client.load(Ordering::SeqCst) {
+        "fremder-client".to_string()
+    } else {
+        fluss.client_id.clone()
+    };
+    let daten = serde_json::json!({
+        "component": "OAuth/Authorize",
+        "props": {
+            "approveUrl": format!("{basis}/{MANDANT}/next/oauth/zustimmen"),
+            "denyUrl": format!("{basis}/{MANDANT}/next/oauth/zustimmen"),
+            "authToken": format!("auth-{kennung}"),
+            "state": kennung,
+            "clientId": client,
+            "clientName": "quiver-zep",
+            "csrf_token": fluss.csrf,
+            "scopes": ["mcp:use"],
+        }
+    });
+    Html(format!(
+        "<!doctype html><html><head><title>zep</title></head><body>\
+         <script data-page=\"app\" type=\"application/json\">{daten}</script>\
+         <div id=\"app\"></div></body></html>"
+    ))
+    .into_response()
 }
 
 fn zustimmungs_html(basis: &str, fluss: &str, csrf: &str) -> Response {
@@ -730,10 +778,16 @@ async fn anmelden(
 
 #[derive(Debug, Deserialize)]
 struct Zustimmung {
-    #[serde(default)]
+    /// Klassisch `fluss`, bei Passport/Inertia `state`.
+    #[serde(default, alias = "state")]
     fluss: String,
-    #[serde(default)]
+    /// Klassisch `csrf`, bei Passport/Inertia `_token`.
+    #[serde(default, alias = "_token")]
     csrf: String,
+    #[serde(default)]
+    client_id: Option<String>,
+    #[serde(default)]
+    auth_token: Option<String>,
 }
 
 async fn zustimmungsseite(
@@ -747,7 +801,7 @@ async fn zustimmungsseite(
     if !fluss.angemeldet {
         return anmelde_html(&basis(&kopf), &anfrage.fluss, &fluss.csrf);
     }
-    zustimmungs_html(&basis(&kopf), &anfrage.fluss, &fluss.csrf)
+    zustimmung_zeigen(&zustand, &basis(&kopf), &anfrage.fluss)
 }
 
 async fn zustimmen(
@@ -759,6 +813,20 @@ async fn zustimmen(
     };
     if anfrage.csrf != fluss.csrf {
         return (StatusCode::BAD_REQUEST, "csrf").into_response();
+    }
+    if anfrage
+        .client_id
+        .as_ref()
+        .is_some_and(|id| *id != fluss.client_id)
+    {
+        return (StatusCode::BAD_REQUEST, "client_id").into_response();
+    }
+    if anfrage
+        .auth_token
+        .as_ref()
+        .is_some_and(|token| *token != format!("auth-{}", anfrage.fluss))
+    {
+        return (StatusCode::BAD_REQUEST, "auth_token").into_response();
     }
     zustand.zustimmungen.fetch_add(1, Ordering::SeqCst);
 

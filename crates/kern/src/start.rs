@@ -133,14 +133,14 @@ fn hilfe(name: &str, titel: &str, mehrfach: bool) -> String {
     let angaben = if mehrfach {
         format!(
             "Die Verbindungen legt der User im quiver-Fenster unter Tools → {titel} an;\n\
-             quiver übergibt sie als JSON in QUIVER_ZUGAENGE. Geheimnisse liegen im\n\
-             Schlüsselbund und erreichen nie einen Agenten."
+             quiver übergibt sie als JSON in QUIVER_ZUGAENGE. Geheimnisse liegen in\n\
+             der Tresor-Datei von quiver und erreichen nie einen Agenten."
         )
     } else {
         format!(
             "Die Angaben trägt der User im quiver-Fenster unter Tools → {titel} ein;\n\
              quiver setzt sie als Umgebung ({name} in Großbuchstaben, Unterstrich, Feldname).\n\
-             Geheimnisse liegen im Schlüsselbund und erreichen nie einen Agenten."
+             Geheimnisse liegen in der Tresor-Datei und erreichen nie einen Agenten."
         )
     };
     format!(
@@ -306,7 +306,7 @@ mod tests {
         assert!(text.contains("quiver-outline eintrag"));
         assert!(text.contains("quiver-outline testen"));
         assert!(text.contains("MCP über stdio"));
-        assert!(text.contains("Schlüsselbund"));
+        assert!(text.contains("Tresor-Datei"));
         assert!(!text.contains("einrichten"));
     }
 }

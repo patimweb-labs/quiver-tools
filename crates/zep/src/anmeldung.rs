@@ -8,7 +8,7 @@
 //!
 //! - **Client-Registrierung (DCR)** einmal je Installation; die `client_id`
 //!   liegt im Tresor.
-//! - **Refresh-Token** im Schlüsselbund unter der MCP-Adresse, **Access-Token**
+//! - **Refresh-Token** in der Tresor-Datei unter der MCP-Adresse, **Access-Token**
 //!   nur im Arbeitsspeicher. Ein rotiertes Refresh-Token wird sofort gesichert.
 //! - **Hintergrund-Erneuerung**: solange der Prozess läuft, wird das
 //!   Access-Token bei 80 % seiner Laufzeit erneuert – damit das Refresh-Token
@@ -35,7 +35,7 @@ use crate::oauth::{self, TokenAntwort};
 use crate::pkce::{self, Pkce};
 use crate::routine::Routine;
 use crate::sperre::Sperre;
-use crate::tresor::{schluessel_client, schluessel_refresh, Schluesselbund, Tresor};
+use crate::tresor::{schluessel_client, schluessel_refresh, DateiTresor, Tresor};
 use crate::werkzeug::ZepKonfig;
 
 /// Der Satz, den jedes Werkzeug sagt, wenn keine Anmeldung möglich ist
@@ -207,11 +207,11 @@ impl Anmeldung {
         }
     }
 
-    /// Eine Anmeldung mit echten Diensten: Schlüsselbund, Standardbrowser aus.
+    /// Eine Anmeldung mit echten Diensten: Tresor-Datei, Standardbrowser aus.
     pub fn aus_konfig(konfig: ZepKonfig) -> Anmeldung {
         Anmeldung::neu(
             konfig,
-            Arc::new(Schluesselbund::neu()),
+            Arc::new(DateiTresor::standard()),
             Arc::new(KeinBrowser::neu()),
         )
     }

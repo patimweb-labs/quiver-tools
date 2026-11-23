@@ -12,8 +12,8 @@
 //! [{"name":"web-01","werte":{"host":"…","port":"22","benutzer":"…"}}]
 //! ```
 //!
-//! Dieses Modul liest diese Liste. Es kennt weder quiver noch den
-//! Schlüsselbund; es liest eine Umgebungsvariable, wie es [`crate::Zugang`] für
+//! Dieses Modul liest diese Liste. Es kennt weder quiver noch dessen
+//! Tresor-Datei; es liest eine Umgebungsvariable, wie es [`crate::Zugang`] für
 //! die Felder eines einzelnen Zugangs tut.
 
 use std::collections::BTreeMap;

@@ -21,7 +21,7 @@ use crate::{FeldArt, Werkzeug};
 pub enum Quelle {
     /// Der User am Gerät, offen in der Client-Konfiguration.
     Client,
-    /// Der User am Gerät, im Schlüsselbund; verlässt das Gerät nie.
+    /// Der User am Gerät, in der Tresor-Datei; verlässt das Gerät nie.
     Geheim,
 }
 

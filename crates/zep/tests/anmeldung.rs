@@ -4,7 +4,7 @@
 //! Anmeldung gegen die ZEP-Attrappe (Aufgabe 06, Punkte 1–6).
 //!
 //! Alle Fälle laufen gegen `tests/attrappe`: nie gegen zep-online.de, nie
-//! gegen den echten Schlüsselbund (es ist immer ein [`SpeicherTresor`]), nie
+//! gegen die echte Tresor-Datei (es ist immer ein [`SpeicherTresor`]), nie
 //! gegen einen echten Browser (der Test-Browser spricht selbst HTTP).
 
 mod attrappe;

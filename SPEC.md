@@ -25,10 +25,10 @@ noch Browser. *Preis:* vorerst genau ein Zugang je Tool (siehe unten).
 
 - Die Felder eines Zugangs stehen im Bibliothekseintrag. Offene Felder (Quelle `client`, z. B. eine
   Adresse) liegen in der Client-Konfiguration, geheime Felder (`geheim`, Feldart `Passwort`) im
-  Schlüsselbund des Geräts und werden nie gepusht.
+  Tresor-Datei des Geräts und werden nie gepusht.
 - quiver setzt beim Start die Umgebung des Werkzeugs: `<NAME>_<FELD>` in Großbuchstaben, z. B.
   `OUTLINE_URL` und `OUTLINE_API_KEY`. Der Kern liest nur diese Umgebung; er kennt weder quiver noch
-  den Schlüsselbund.
+  die Tresor-Datei.
 - **Genau ein Zugang `standard`.** Sind alle Pflichtfelder gesetzt, gibt es dieses eine Profil
   (Geheimes kommt aus der Umgebung, nicht aus einem Tresor). Leere Werte gelten als fehlend.
 - Fehlt ein Pflichtfeld, antwortet **jedes** Tool mit dem Text
@@ -42,7 +42,7 @@ noch Browser. *Preis:* vorerst genau ein Zugang je Tool (siehe unten).
 ## 3. Wo die Werte liegen
 
 - Offene Werte: Client-Konfiguration von quiver; sie erscheinen in `<tool>_profile`.
-- Geheime Werte: Schlüsselbund des Geräts, gesetzt von quiver. Das Tool sieht sie nur als
+- Geheime Werte: Tresor-Datei des Geräts, gesetzt von quiver. Das Tool sieht sie nur als
   Umgebungsvariable im eigenen Prozess.
 - Nie in Log, Fehlertext, Tool-Antwort, Kommandozeile oder einer Datei des Tools. `Debug`-Ausgaben des
   Kerns zeigen Geheimnisse nur als Feldnamen.

@@ -37,7 +37,7 @@ Die Schnittstelle (`lib.rs`) legt der Architekt fest; die Umsetzung ergänzt sie
 ```
 quiver-Fenster (Tools → <Titel>)
   → Bibliothekseintrag (quiver-outline eintrag)      Felder, quelle client/geheim
-  → User trägt Werte ein                             offen: Client-Konfiguration, geheim: Schlüsselbund
+  → User trägt Werte ein                             offen: Client-Konfiguration, geheim: Tresor-Datei
   → quiver startet quiver-<tool> mit Umgebung        OUTLINE_URL, OUTLINE_API_KEY, …
   → umgebung::Zugang::neu(&Werkzeug)                 liest <NAME>_<FELD>, leere Werte fehlen
   → Zugang::profil()                                 alle Pflichtfelder da? → Profil `standard`
@@ -51,7 +51,7 @@ Datei, keinen Tresor im Tool.
 Regeln, die im Code als Kommentar stehen und hier gelten:
 
 - **Nur die Umgebung zählt.** Ein Feldname `api_key` wird zur Variablen `OUTLINE_API_KEY`
-  (`umgebung::schluessel`). Kein Konfigurationsordner, kein Schlüsselbund im Tool.
+  (`umgebung::schluessel`). Kein Konfigurationsordner, keine Tresor-Datei im Tool.
 - **Leer ist nicht gesetzt.** `Zugang` verwirft Werte, die nur aus Leerraum bestehen.
 - **Geheimes bleibt geheim.** `Profil::geheim` wird nie in eine Antwort geschrieben;
   `<tool>_profile` zeigt nur `Profil::werte`. Fehlertexte nennen höchstens Feldnamen.
@@ -227,7 +227,7 @@ Aufgabe: angemeldet bleiben.
 | `routine` | der Ablauf ohne Browser: Formular, Zustimmung, Rückleitung abfangen, Code tauschen | je Ablauf |
 | `browser` | `Browser`-Naht: `OeffneBrowser` (Notfall), `KeinBrowser` | keiner |
 | `anmeldung` | Token, Tresor, Sperrschutz, Hintergrund-Erneuerung, `status` | ein Token im Speicher, Refresh im Tresor |
-| `tresor` | `Tresor`-Naht: `Schluesselbund` (Dienst `quiver-zep`), `SpeicherTresor` | Refresh-Token, `client_id` |
+| `tresor` | `Tresor`-Naht: `DateiTresor` (`tresor/` im Zustandsordner), `SpeicherTresor` | Refresh-Token, `client_id` |
 | `sperre` | Sperrzustand als Datei (`routine-gesperrt.json`) | eine Datei |
 | `vermittler` | rmcp-Client zum ZEP-MCP, 401 → erneuern → einmal wiederholen | eine Verbindung |
 | `server` | der MCP-Server über stdio, Liste beim Start, `list_changed` weitergeben | Werkzeugliste |
@@ -322,7 +322,7 @@ funktioniert: [adr/0004-zep-offizieller-mcp.md](adr/0004-zep-offizieller-mcp.md)
 - `crates/zep/tests/attrappe` bildet den ZEP-MCP nach: Metadaten, DCR, Anmelde- und
   Zustimmungsseite mit CSRF und Cookies, Token mit Rotation und `invalid_grant`, dazu
   ein Mini-MCP-Server hinter `Bearer`, der auf Wunsch `tools/list_changed` schickt.
-  Kein Test spricht mit zep-online.de; `ZEP_TRESOR=speicher` hält den Schlüsselbund aus
+  Kein Test spricht mit zep-online.de; `ZEP_TRESOR=speicher` hält die Tresor-Datei aus
   dem Spiel.
 - `crates/email/tests/imap_echt.rs` ist `#[ignore]` und spricht nur auf Anforderung mit
   einem echten IMAP-Server (`EMAIL_TEST_*`, z. B. GreenMail im Docker). Ohne diese

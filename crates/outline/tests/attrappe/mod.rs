@@ -345,7 +345,7 @@ fn antwort(methode: &str, rumpf: &Value) -> Option<Value> {
 }
 
 /// Der Zugang, den quiver für dieses Tool setzen würde: `OUTLINE_URL` und
-/// `OUTLINE_API_KEY`. Kein Schlüsselbund, keine Umgebungsvariablen im Prozess.
+/// `OUTLINE_API_KEY`. Keine Tresor-Datei, keine Umgebungsvariablen im Prozess.
 pub fn zugang(adresse: &str) -> Zugang {
     Zugang::mit_umgebung(&Outline, |name| match name {
         "OUTLINE_URL" => Some(adresse.to_string()),

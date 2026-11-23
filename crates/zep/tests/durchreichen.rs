@@ -6,7 +6,7 @@
 //! So startet quiver das Programm wirklich: es setzt die Umgebung aus den
 //! Feldern des Bibliothekseintrags (`ZEP_URL`, `ZEP_BENUTZER`, `ZEP_PASSWORT`)
 //! und spricht JSON-RPC auf stdin/stdout. Der ZEP-MCP ist die Attrappe auf
-//! `127.0.0.1`; `ZEP_TRESOR=speicher` hält den Test vom echten Schlüsselbund
+//! `127.0.0.1`; `ZEP_TRESOR=speicher` hält den Test von der echten Tresor-Datei
 //! fern, `ZEP_ZUSTAND` lenkt den Sperrzustand in ein temporäres Verzeichnis.
 
 mod attrappe;

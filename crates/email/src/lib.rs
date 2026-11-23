@@ -18,7 +18,7 @@
 //!
 //! Den Zugang trägt der User im quiver-Fenster ein (SPEC §2); der Kern liest
 //! ihn aus der Umgebung (`EMAIL_ADRESSE`, `EMAIL_PASSWORT`, …). Das Passwort
-//! liegt im Schlüsselbund und erscheint in keiner Antwort.
+//! liegt in der Tresor-Datei und erscheint in keiner Antwort.
 
 pub mod domain;
 pub mod fehler;

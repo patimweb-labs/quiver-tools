@@ -93,7 +93,7 @@ Weitere Befehle kommen mit dem Code.
 
 ## 8. Projektspezifisch
 
-- **Zugangsdaten:** kommen als Umgebung von quiver (Geheimes liegt dort im Schlüsselbund); nie in Dateien,
+- **Zugangsdaten:** kommen als Umgebung von quiver (Geheimes liegt dort in der Tresor-Datei); nie in Dateien,
   Logs oder Antworten.
 - **Keine `*_setup`-Tools.** Felder beschreibt `Werkzeug::felder()`, `quiver-<tool> eintrag` gibt den
   Bibliothekseintrag aus. Hilfe-Links (z. B. „Token erstellen“) über `Feld::link`.

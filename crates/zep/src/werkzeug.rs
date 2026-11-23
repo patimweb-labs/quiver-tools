@@ -76,7 +76,7 @@ impl Werkzeug for Zep {
                 art: FeldArt::Passwort,
                 pflicht: true,
                 standard: None,
-                hilfe: "Ihr ZEP-Passwort; liegt im Schlüsselbund und geht nie an einen Agenten",
+                hilfe: "Ihr ZEP-Passwort; liegt in der Tresor-Datei und geht nie an einen Agenten",
                 link: None,
             },
         ]

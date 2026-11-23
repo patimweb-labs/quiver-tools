@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Wo das Refresh-Token liegt (Aufgabe 06): Schlüsselbund des Geräts, sonst nur
-//! im Arbeitsspeicher.
+//! Wo das Refresh-Token liegt (Aufgabe 06): eigene verschlüsselte Datei
+//! ([`DateiTresor`]), sonst nur im Arbeitsspeicher.
 //!
 //! Der Zugang selbst kommt als Umgebung aus quiver; hier liegt nur, was das
 //! Werkzeug selbst behalten muss, damit es angemeldet bleibt: das (rotierende)
@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Mutex;
 
-/// Name des Dienstes im Schlüsselbund (Aufgabe 06).
+/// Name des Dienstes im alten Schlüsselbund (nur noch für den Umzug).
 pub const DIENST: &str = "quiver-zep";
 
 /// Der Schlüssel des Refresh-Tokens: die MCP-Adresse, wie der User sie einträgt.
@@ -31,13 +31,13 @@ pub fn schluessel_client(url: &str) -> String {
 
 /// Der Tresor, den die Umgebung wählt.
 ///
-/// Normalfall ist der Schlüsselbund. `ZEP_TRESOR=speicher` legt die Werte nur in
-/// den Arbeitsspeicher – für Testläufe und für einen Lauf ohne Schlüsselbund;
-/// damit kommt kein Test je an den echten Schlüsselbund.
+/// Normalfall ist die Tresor-Datei. `ZEP_TRESOR=speicher` legt die Werte nur in
+/// den Arbeitsspeicher – für Testläufe und für einen Lauf ohne Tresor-Datei;
+/// damit kommt kein Test je an die echte Tresor-Datei.
 pub fn aus_umgebung() -> std::sync::Arc<dyn Tresor> {
     match std::env::var("ZEP_TRESOR").ok().as_deref() {
         Some("speicher") => std::sync::Arc::new(SpeicherTresor::neu()),
-        _ => std::sync::Arc::new(Schluesselbund::neu()),
+        _ => std::sync::Arc::new(DateiTresor::standard()),
     }
 }
 
@@ -48,60 +48,52 @@ pub trait Tresor: Send + Sync {
     fn loeschen(&self, schluessel: &str) -> anyhow::Result<()>;
 }
 
-/// Refresh-Token und Client-Id im Schlüsselbund des Betriebssystems.
-pub struct Schluesselbund {
-    dienst: String,
-}
+pub use crate::dateitresor::DateiTresor;
 
-impl Schluesselbund {
-    pub fn neu() -> Self {
-        Self {
-            dienst: DIENST.to_string(),
+impl DateiTresor {
+    /// Der Tresor im Zustandsordner (`ZEP_ZUSTAND`, sonst `~/.local/state/quiver-zep`) unter `tresor`.
+    ///
+    /// Unter macOS wird ein Wert, der noch nicht in der Datei steht, einmal
+    /// im alten Schlüsselbund (Dienst [`DIENST`]) gesucht und übernommen.
+    pub fn standard() -> Self {
+        let tresor = DateiTresor::im_ordner(crate::werkzeug::zustandsordner().join("tresor"));
+        match altbestand() {
+            Some(altbestand) => tresor.mit_altbestand(altbestand),
+            None => tresor,
         }
     }
 }
 
-impl Default for Schluesselbund {
-    fn default() -> Self {
-        Self::neu()
-    }
-}
-
-impl fmt::Debug for Schluesselbund {
-    /// Nie Werte, nur der Dienst.
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("Schluesselbund")
-            .field("dienst", &self.dienst)
-            .finish()
-    }
-}
-
-impl Tresor for Schluesselbund {
+impl Tresor for DateiTresor {
     fn lesen(&self, schluessel: &str) -> anyhow::Result<Option<String>> {
-        let eintrag = keyring::Entry::new(&self.dienst, schluessel)?;
-        match eintrag.get_password() {
-            Ok(wert) => Ok(Some(wert)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(fehler) => Err(fehler.into()),
-        }
+        DateiTresor::lesen(self, schluessel)
     }
-
     fn schreiben(&self, schluessel: &str, wert: &str) -> anyhow::Result<()> {
-        keyring::Entry::new(&self.dienst, schluessel)?.set_password(wert)?;
-        Ok(())
+        DateiTresor::schreiben(self, schluessel, wert)
     }
-
     fn loeschen(&self, schluessel: &str) -> anyhow::Result<()> {
-        let eintrag = keyring::Entry::new(&self.dienst, schluessel)?;
-        match eintrag.delete_credential() {
-            Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
-            Err(fehler) => Err(fehler.into()),
-        }
+        DateiTresor::loeschen(self, schluessel)
     }
+}
+
+/// Der alte Schlüsselbund als Altbestand – nur unter macOS.
+#[cfg(target_os = "macos")]
+fn altbestand() -> Option<crate::dateitresor::Altbestand> {
+    Some(Box::new(|schluessel: &str| {
+        keyring::Entry::new(DIENST, schluessel)
+            .ok()?
+            .get_password()
+            .ok()
+    }))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn altbestand() -> Option<crate::dateitresor::Altbestand> {
+    None
 }
 
 /// Werte nur im Arbeitsspeicher: für Tests und für einen Lauf ohne
-/// Schlüsselbund. Nichts davon überlebt den Prozess.
+/// Tresor-Datei. Nichts davon überlebt den Prozess.
 pub struct SpeicherTresor {
     werte: Mutex<BTreeMap<String, String>>,
 }

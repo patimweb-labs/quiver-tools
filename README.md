@@ -5,7 +5,7 @@
 Eigene MCP-Tools für [mcp-quiver](https://github.com/patimweb-labs/mcp-quiver) in reinem Rust:
 **Outline-Wiki**, **E-Mail** (IMAP/SMTP), **ZEP** (über den offiziellen ZEP-MCP), **SSH/SFTP** und
 **ABAP** (SAP ADT). Die Zugangsdaten trägt
-der User **im quiver-Fenster** ein – unter Tools → <Titel>. quiver legt Geheimes in den Schlüsselbund
+der User **im quiver-Fenster** ein – unter Tools → <Titel>. quiver legt Geheimes in die Tresor-Datei
 und setzt beim Start die Umgebung des Tools; Passwörter und API-Keys gehen nie durch einen Agenten.
 
 ## Der Zugang
@@ -19,7 +19,7 @@ quiver-outline eintrag
 Das JSON hat das Format von `quiver_domain::Eintrag`: Name, Titel, Beschreibung, Version, die Felder
 des Zugangs und wie das Programm gestartet wird. quiver zeigt daraus unter **Tools → Outline-Wiki**
 die Felder an (Adresse und API-Schlüssel). Offene Felder stehen in der Client-Konfiguration, geheime
-im Schlüsselbund des Geräts.
+im Tresor-Datei des Geräts.
 
 Beim Start setzt quiver die Umgebung: `OUTLINE_URL`, `OUTLINE_API_KEY` – also `<NAME>_<FELD>` in
 Großbuchstaben. Der Kern liest nur diese Umgebung, kein Profil aus einer Datei, keine Seite im Browser.
@@ -119,7 +119,7 @@ environment refers to them:
 }
 ```
 
-`quelle: "geheim"` heißt: quiver legt den Wert in den Schlüsselbund und gibt ihn nur als
+`quelle: "geheim"` heißt: quiver legt den Wert in die Tresor-Datei und gibt ihn nur als
 Umgebungsvariable an das Tool. Ein `einrichtung`-Feld gibt es nicht – das Tool öffnet
 keine Seite im Browser.
 
@@ -146,7 +146,7 @@ Setup (once), in quiver under **Tools → E-Mail**:
 | `passwort` | yes | – | For Gmail an **app password** |
 | `zertifikat_pruefen` | no | `an` | `aus` only for a local bridge (`127.0.0.1`, `localhost`); ignored (with a warning) for any other host |
 
-The password lives in the keychain and reaches the tool only as `EMAIL_PASSWORT`; it
+The password lives in the encrypted vault file and reaches the tool only as `EMAIL_PASSWORT`; it
 appears in no answer, no log line and no error text.
 
 ```bash
@@ -215,7 +215,7 @@ Setup (once), in quiver under **Tools → ZEP**:
 |---|---|---|
 | `url` | yes | MCP address, e.g. `https://www.zep-online.de/zepneoimpulse/next/mcp` |
 | `benutzer` | yes | ZEP user name |
-| `passwort` | yes | ZEP password; lives in the keychain and reaches the tool only as `ZEP_PASSWORT` |
+| `passwort` | yes | ZEP password; lives in the encrypted vault file and reaches the tool only as `ZEP_PASSWORT` |
 
 ```bash
 quiver-zep eintrag           # library entry with these fields
@@ -233,7 +233,7 @@ What it does on its own:
   `redirect_uris ["http://127.0.0.1"]`, `token_endpoint_auth_method "none"`. Everything
   else – authorization, token and registration endpoints, the scope (`mcp:use`), PKCE
   S256 – comes from the `/.well-known` metadata. Only the base address is hard-coded.
-- **Tokens:** the (rotating) refresh token in the keychain (service `quiver-zep`, key
+- **Tokens:** the (rotating) refresh token in the encrypted vault file (`tresor/` in the state folder, key
   `<url>`), the access token in memory only. A rotated refresh token is stored at once.
 - **Background renewal:** while the process runs, the access token is renewed at 80 % of
   its lifetime, even when no tool is called – so the refresh token never expires from
@@ -269,7 +269,7 @@ leaving the machine in a command line, a log or a tool answer.
 
 Setup (once per connection, in quiver): **Tools → SSH → Verbindungen** → add a
 connection with host, port (default 22), user, the login password and – separately –
-the sudo password. quiver keeps both passwords in the keychain and passes every
+the sudo password. quiver keeps both passwords in the encrypted vault file and passes every
 connection to the tool as JSON in `QUIVER_ZUGAENGE`.
 
 ### The key rule
@@ -363,7 +363,7 @@ findings, dumps, traces and transports from a SAP system over the ADT REST servi
 Setup (once per system, in quiver): **Tools → ABAP → Systeme** → add a system with the
 SAP user, the ADT address (e.g. `https://sap-dev.example.com:44300`), the client
 (mandant), the logon language (default `DE`) and the SAP password. quiver keeps the
-password in the keychain and passes every system to the tool as JSON in
+password in the encrypted vault file and passes every system to the tool as JSON in
 `QUIVER_ZUGAENGE`, exactly like `quiver-ssh`.
 
 ### Multiple systems, one list
@@ -464,11 +464,11 @@ Tests laufen nur gegen Attrappen – bei Outline ein axum-Server auf `127.0.0.1`
 E-Mail die Traits `Postfach`/`Versand`, bei ZEP eine axum-Attrappe mit Metadaten, DCR,
 Anmelde- und Zustimmungsseite, Token-Endpunkt und einem Mini-MCP-Server hinter Bearer –
 und setzen die Umgebung als Paare im Speicher;
-kein Test spricht mit einem echten Dienst, kein Test braucht einen Schlüsselbund. Der
+kein Test spricht mit einem echten Dienst, kein Test braucht eine Tresor-Datei. Der
 SMTP-Teil wird zusätzlich gegen `lettre`s Stub-Transport geprüft (Kopfzeilen, Threading,
 Empfänger). Die Ende-zu-Ende-Tests starten `quiver-outline`, `quiver-email` bzw.
 `quiver-zep` als Kindprozess mit gesetzter und ohne Umgebung. `quiver-zep` läuft dabei mit
-`ZEP_TRESOR=speicher`, damit kein Test je an den echten Schlüsselbund kommt.
+`ZEP_TRESOR=speicher`, damit kein Test je an die echte Tresor-Datei kommt.
 
 Ein Test spricht auf Anforderung mit einem echten IMAP-Server: `tests/imap_echt.rs` ist
 `#[ignore]` und wird über `EMAIL_TEST_*` gesteuert. Beispiel mit GreenMail im Docker
@@ -486,7 +486,7 @@ EMAIL_TEST_PASSWORT=geheim EMAIL_TEST_ZERTIFIKAT_PRUEFEN=aus \
 ```
 Tests laufen nur gegen Attrappen (axum auf `127.0.0.1`, für SSH ein echter
 `russh`-Server im Testprozess) und setzen die Umgebung als Paare im Speicher; kein Test
-spricht mit einem echten Dienst, kein Test braucht einen Schlüsselbund oder die echte
+spricht mit einem echten Dienst, kein Test braucht eine Tresor-Datei oder die echte
 `~/.ssh` (`HOME` und `QUIVER_SSH_DATEN` zeigen auf temp-Ordner). Der Ende-zu-Ende-Test
 startet `quiver-outline` bzw. `quiver-ssh` als Kindprozess mit gesetzter und ohne
 Umgebung.

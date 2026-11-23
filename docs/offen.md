@@ -14,7 +14,7 @@
 - [ ] E-Mail: STARTTLS (IMAP) ist eigener Code und nur über den ignorierten `imap_echt`-Test gegen einen echten Server geprüft.
 - [ ] E-Mail: mehrere Nachrichten je Aufruf (UID-Bereiche, Massen-Flaggen) gibt es nicht; die Vorlage auch nicht.
 - [ ] ZEP: Den Aufbau der echten ZEP-Anmeldeseiten kennen wir nicht. Der HTML-Formularleser ist gegen die eigene Attrappe getestet; der begleitete erste Test ist `quiver-zep routine-pruefen`. MFA/Einmalcode/Captcha enden mit einer Meldung – dann bleibt `anmelden --browser`.
-- [ ] ZEP: `ZEP_TRESOR=speicher` (statt Schlüsselbund) ist ein Cheat für die Kindprozess-Tests und für Läufe ohne Schlüsselbund. Ticket: entweder einen Test-Tresor nur hinter `#[cfg(test)]` oder den Schalter dokumentiert lassen.
+- [ ] ZEP: `ZEP_TRESOR=speicher` (statt Tresor-Datei) ist ein Cheat für die Kindprozess-Tests und für Läufe ohne Tresor-Datei. Ticket: entweder einen Test-Tresor nur hinter `#[cfg(test)]` oder den Schalter dokumentiert lassen.
 - [ ] ZEP: Sperrzustand liegt je Zustandsordner (`ZEP_ZUSTAND`, sonst `$XDG_STATE_HOME/quiver-zep`). Zwei quiver-Profile auf einem Gerät teilen ihn – gewollt (ein Konto), aber nicht geprüft.
 - [ ] ZEP: Die Rückleitung wird als `http://127.0.0.1` registriert (Port egal, RFC 8252 §7.3). Akzeptiert ein Server das nicht, braucht der Notfall eine Registrierung je Port (ADR 0004).
 - [ ] ZEP: `tracing`-Ereignisse des Werkzeugs sind stumm, weil der Kern keinen Subscriber setzt – die Meldungen von `anmelden`/`routine-pruefen` gehen stattdessen auf stdout.
@@ -24,7 +24,7 @@
 - [ ] SSH: Tunnel (`ssh_tunnel`) fehlen – die Vorlage `pi-ssh` hat lokale und entfernte Portweiterleitungen, Aufgabe 05 nicht.
 - [ ] SSH: `ssh_doctor` (Diagnose: Host erreichbar, Schlüssel akzeptiert, SFTP verfügbar) fehlt.
 - [ ] SSH: Wird ein Schlüssel ersetzt, bleibt der alte Eintrag in der entfernten `authorized_keys` stehen; ein Aufräumschritt (Kommentar `quiver-ssh <name>` entfernen) fehlt.
-- [ ] SSH: Der Schlüssel hat keine Passphrase; er liegt mit 0600 im Datenordner. Eine Passphrase bräuchte einen Schlüsselbund-Zugriff im Tool.
+- [ ] SSH: Der Schlüssel hat keine Passphrase; er liegt mit 0600 im Datenordner. Eine Passphrase bräuchte eine Tresor-Datei-Zugriff im Tool.
 - [ ] SSH: Nur ed25519 – kein RSA, keine Zertifikate, kein Agent, keine Sprung-Hosts (`ProxyJump`).
 - [ ] SSH: `ssh_list` zeigt keine Änderungszeiten (die SFTP-Attrappe und das Format lassen sie aus); die Vorlage zeigt das Datum.
 - [ ] ABAP: Teil 2 fehlt – `lock`/`unlock`/`write`/`activate`/`create_object`/`set_text_elements`. Dafür braucht `adt::client` eine **zustandsbehaftete** Sitzung (`X-sap-adt-sessiontype: stateful`), ein Lock-Handle und einen Transport; heute ist der Client bewusst zustandslos.
@@ -33,3 +33,5 @@
 - [ ] ABAP: Klassenkomponenten (`objectstructure`, `classComponents`) werden nicht angezeigt; `abap_object_structure` nennt nur die Includes.
 - [ ] ABAP: kein Debugger, kein Refactoring, kein abapGit, kein RAP-Generator – bewusst (ADR 0005).
 - [ ] ABAP: CSRF-Token und Cookies leben nur im Prozess; jeder Start meldet sich neu an. Ein Token-Cache über Prozesse wäre eine Datei mit Geheimnis – nicht gewollt.
+
+- [ ] Tresor-Datei (ADR mcp-quiver 0001): Umzug aus dem macOS-Schlüsselbund entfernen, sobald alle Geräte umgezogen sind; optional Hauptpasswort (Argon2) beim Start.

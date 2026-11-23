@@ -19,7 +19,7 @@
 //! | [`routine`] | der Ablauf ohne Browser: Formular, Zustimmung, Code |
 //! | [`browser`] | der Notfall über den Browser (Loopback) |
 //! | [`anmeldung`] | Token, Tresor, Sperrschutz, Hintergrund-Erneuerung |
-//! | [`tresor`] | Schlüsselbund (Dienst `quiver-zep`, Schlüssel `<url>`) |
+//! | [`tresor`] | Tresor-Datei (`tresor/` im Zustandsordner, Schlüssel `<url>`) |
 //! | [`sperre`] | der Sperrzustand in einer Datei |
 //! | [`vermittler`] | der rmcp-Client zum ZEP-MCP |
 //! | [`server`] | der MCP-Server über stdio |
@@ -34,6 +34,7 @@ pub mod anmeldung;
 pub mod befehle;
 pub mod browser;
 pub mod cookies;
+mod dateitresor;
 pub mod geruest;
 pub mod html;
 pub mod inertia;
@@ -50,7 +51,7 @@ pub mod werkzeug;
 pub use anmeldung::{AnmeldeFehler, Anmeldung, RoutineLauf, Status, HINWEIS_ANMELDUNG};
 pub use browser::{Browser, KeinBrowser, OeffneBrowser};
 pub use server::ZepServer;
-pub use tresor::{Schluesselbund, SpeicherTresor, Tresor};
+pub use tresor::{DateiTresor, SpeicherTresor, Tresor};
 pub use vermittler::Vermittler;
 pub use werkzeug::{Zep, ZepKonfig, ADRESSE, BENUTZER, NAME, PASSWORT, TITEL};
 

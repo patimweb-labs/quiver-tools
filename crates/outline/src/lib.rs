@@ -17,7 +17,7 @@
 //!
 //! Den Zugang trägt der User im quiver-Fenster ein (SPEC §2); der Kern liest
 //! ihn aus der Umgebung (`OUTLINE_URL`, `OUTLINE_API_KEY`). Der API-Schlüssel
-//! liegt im Schlüsselbund und erscheint in keiner Antwort.
+//! liegt in der Tresor-Datei und erscheint in keiner Antwort.
 
 pub mod client;
 pub mod datei;

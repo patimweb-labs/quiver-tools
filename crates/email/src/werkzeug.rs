@@ -6,7 +6,7 @@
 //! [`Email`] sagt dem Kern, welche Felder der Zugang hat und wie man die
 //! Verbindung prüft. Die Felder selbst kommen aus der Umgebung
 //! (`EMAIL_ADRESSE`, `EMAIL_PASSWORT`, …), die quiver aus dem
-//! Bibliothekseintrag setzt. Das Passwort liegt im Schlüsselbund und steht in
+//! Bibliothekseintrag setzt. Das Passwort liegt in der Tresor-Datei und steht in
 //! keiner Antwort.
 
 use quiver_tools_kern::{Feld, FeldArt, Profil, Werkzeug};

@@ -1276,7 +1276,7 @@ mod tests {
         assert!(text.contains("Outline-Wiki"), "{text}");
     }
 
-    /// Ein Zugang ohne Umgebung – nichts gesetzt, kein Schlüsselbund.
+    /// Ein Zugang ohne Umgebung – nichts gesetzt, keine Tresor-Datei.
     fn ohne_zugang() -> Zugang {
         Zugang::mit_umgebung(&crate::Outline, |_| None)
     }

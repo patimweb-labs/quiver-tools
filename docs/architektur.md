@@ -1,7 +1,6 @@
 # Architektur
 
-> Stand: 2026-11-23, nach Aufgabe 06. Gilt für den Kern (`crates/kern`) und alle
-> Stand: 2026-11-23, nach Aufgabe 05. Gilt für den Kern (`crates/kern`) und alle
+> Stand: 2026-11-23, nach Aufgabe 07. Gilt für den Kern (`crates/kern`) und alle
 > Tools, die darauf aufsetzen. Festlegungen und Preise: [../SPEC.md](../SPEC.md).
 
 ## Richtung
@@ -332,3 +331,57 @@ funktioniert: [adr/0004-zep-offizieller-mcp.md](adr/0004-zep-offizieller-mcp.md)
   und Schlüssel-Anmeldung, `authorized_keys` im Speicher, ein simuliertes
   `sudo -S -p ''` und SFTP über einen temp-Ordner. `HOME` und `QUIVER_SSH_DATEN` zeigen
   auf temp-Ordner; die echte `~/.ssh` wird nie gelesen oder geschrieben.
+
+## Ein fünftes Tool: `crates/abap`
+
+Die Vorlage `pi-abap-fs` (TypeScript, Bibliothek `abap-adt-api`) liefert die Semantik,
+nicht den Code (SPEC §6). Teil 1 ist **nur lesend**; die Anfragen sind bei
+`abap-adt-api` abgelesen und in Rust neu gebaut
+([adr/0005-adt-client-in-rust.md](adr/0005-adt-client-in-rust.md)).
+
+| Modul | Aufgabe | Zustand |
+|---|---|---|
+| `werkzeug` | `Abap` (sechs Felder, `mehrfach` = „Systeme“, `testen`) | keiner |
+| `systeme` | `QUIVER_ZUGAENGE` → geprüfte `System`e, Auswahl (`waehlen`) | Umgebungsvariable |
+| `adt::client` | der **einzige** Ort mit Netzverkehr: Basic-Auth, `sap-client`/`sap-language`, Cookies je System, CSRF, 401 | Token + Cookies je System |
+| `adt::xml` | `quick-xml` → `Knoten`, Namensräume fallen weg | keiner |
+| `adt::daten` | je Endpunkt ein reiner Leser: XML → Daten | keiner |
+| `adt::fehler` | `AdtFehler`: Ausnahme, HTTP, 401, Netz – nie mit Geheimnis | keiner |
+| `format` | reine Funktionen: Daten → knapper Text, gekürzt über `mcp::kuerzen` | keiner |
+| `server` | die neunzehn lesenden MCP-Werkzeuge | Systeme aus der Umgebung |
+
+Datenfluss eines Aufrufs:
+
+```
+MCP tools/call
+  → server::aufrufen          Name → Werkzeug, Argumente → Parametertyp
+  → server::waehlen           System aus QUIVER_ZUGAENGE (fehlt die Liste: Hinweistext)
+  → adt::client::anfrage      Token (fetch) → Aufruf; 403 Required → Token neu, einmal wiederholen
+  → adt::daten                XML → Daten
+  → format                    Daten → knapper Text
+  → CallToolResult
+```
+
+Regeln, die dort gelten:
+
+- **Anmeldung ohne Wiederholung.** `401` heißt „Anmeldung abgelehnt“ und wird nicht
+  wiederholt: SAP sperrt Benutzer nach zu vielen Fehlversuchen. Das Passwort steht nur
+  im Basic-Auth-Kopf; `Debug` von `System` und `Client` zeigt höchstens, *ob* eines
+  gesetzt ist.
+- **CSRF genau einmal.** Ein `403` mit `x-csrf-token: Required` (oder eine CSRF-Meldung
+  im Rumpf) holt ein neues Token und wiederholt den Aufruf **einmal**; ein zweiter
+  Fehlschlag geht als Fehler hinaus.
+- **Cookies je System.** `SAP_SESSIONID_*` liegt im Client des Systems, nicht im
+  Prozess; zwei Systeme teilen sich nichts.
+- **Zertifikate.** `reqwest` mit rustls und den Wurzeln des System-Zertifikatsspeichers
+  (`rustls-native-certs`); `zertifikat_pruefen = aus` ist der Notausgang.
+- **Ausnahmen durchreichen.** `exc:exception` wird zu Typ und Nachricht; ein Agent soll
+  die SAP-Meldung sehen, nicht `HTTP 400`.
+- **Alles lesend.** Auch Syntax-Check, Unit-Tests und ATC tragen `read_only_hint`: sie
+  rechnen im System, ändern aber nichts.
+- **Grenzen.** `max_zeichen` (Standard 20000) bei `abap_read`, `max_zeilen` (Standard
+  100, höchstens 1000) bei `abap_table`/`abap_query`.
+- `crates/abap/tests/attrappe` bildet einen ADT-Server nach: CSRF-Token mit
+  `403 Required`, Cookies, Basic-Auth, je Endpunkt eine Antwort und auf Wunsch eine
+  ADT-Ausnahme. Kein Test spricht mit einem echten SAP-System; das Passwort der
+  Attrappe ist erfunden.

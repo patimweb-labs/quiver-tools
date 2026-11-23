@@ -5,7 +5,6 @@
 Eigene MCP-Tools für [mcp-quiver](https://github.com/patimweb-labs/mcp-quiver) in reinem Rust:
 **Outline-Wiki**, **E-Mail** (IMAP/SMTP), **ZEP** (über den offiziellen ZEP-MCP), **SSH/SFTP** und
 **ABAP** (SAP ADT). Die Zugangsdaten trägt
-**Outline-Wiki**, **SSH/SFTP**, **E-Mail** (IMAP/SMTP) und **ABAP** (SAP ADT). Die Zugangsdaten trägt
 der User **im quiver-Fenster** ein – unter Tools → <Titel>. quiver legt Geheimes in den Schlüsselbund
 und setzt beim Start die Umgebung des Tools; Passwörter und API-Keys gehen nie durch einen Agenten.
 
@@ -26,8 +25,9 @@ Beim Start setzt quiver die Umgebung: `OUTLINE_URL`, `OUTLINE_API_KEY` – also 
 Großbuchstaben. Der Kern liest nur diese Umgebung, kein Profil aus einer Datei, keine Seite im Browser.
 
 - Es gibt **einen** Zugang je Tool (`standard`). Wer zwei Wikis braucht, braucht zwei Einträge.
-  **Ausnahme: quiver-ssh.** Dort pflegt der User eine Liste von Verbindungen (`Eintrag.mehrfach`);
-  quiver übergibt sie als JSON in `QUIVER_ZUGAENGE`, die Felder stehen im Eintrag unter `mehrfach`.
+  **Ausnahme: quiver-ssh und quiver-abap.** Dort pflegt der User eine Liste (`Eintrag.mehrfach`) –
+  Verbindungen bzw. SAP-Systeme; quiver übergibt sie als JSON in `QUIVER_ZUGAENGE`, die Felder
+  stehen im Eintrag unter `mehrfach`.
 - Fehlt ein Pflichtfeld, antwortet jedes Werkzeug mit dem Hinweis
   „Zugang fehlt – bitte im quiver-Fenster unter Tools → <Titel> die Angaben eintragen.“ – als Text,
   nicht als Fehler.
@@ -353,6 +353,95 @@ and special cases, otherwise the platform's data directory):
 schluessel/web-01_ed25519      (+ .pub)   0600 / 0700
 known_hosts                              0600
 ```
+
+## quiver-abap (ABAP over SAP ADT)
+
+`quiver-abap` reads ABAP objects, table contents, syntax messages, unit tests, ATC
+findings, dumps, traces and transports from a SAP system over the ADT REST service –
+**read only** in this part; the writing tools (lock/write/activate/create) come later.
+
+Setup (once per system, in quiver): **Tools → ABAP → Systeme** → add a system with the
+SAP user, the ADT address (e.g. `https://sap-dev.example.com:44300`), the client
+(mandant), the logon language (default `DE`) and the SAP password. quiver keeps the
+password in the keychain and passes every system to the tool as JSON in
+`QUIVER_ZUGAENGE`, exactly like `quiver-ssh`.
+
+### Multiple systems, one list
+
+The entry uses `mehrfach`, so it has no `felder` and no `umgebung` of its own:
+
+```json
+{
+  "id": "abap",
+  "titel": "ABAP",
+  "herkunft": "eigen",
+  "laufzeit": { "art": "stdio", "befehl": "/pfad/zu/quiver-abap", "umgebung": {} },
+  "felder": [],
+  "mehrfach": {
+    "titel": "Systeme",
+    "einzahl": "System",
+    "felder": [
+      { "name": "benutzer", "quelle": "client", "pflicht": true },
+      { "name": "url", "quelle": "client", "pflicht": true },
+      { "name": "mandant", "quelle": "client", "pflicht": true },
+      { "name": "sprache", "quelle": "client", "pflicht": false, "standard": "DE" },
+      { "name": "passwort", "quelle": "geheim", "pflicht": true },
+      { "name": "zertifikat_pruefen", "quelle": "client", "pflicht": false, "standard": "an" }
+    ]
+  }
+}
+```
+
+Every tool takes `system`; with exactly one system the name may be omitted.
+`abap_status` lists the systems without a password, `abap_test_connection` logs on and
+reports how many ADT areas the system announces.
+
+### TLS, logon and CSRF
+
+- **Company CAs work out of the box.** The client uses rustls with the roots of the
+  system certificate store (`rustls-native-certs`). `Serverzertifikat prüfen` stays on;
+  only switch it off if your CA really is not in the store.
+- **Logon** is HTTP Basic with `sap-client` (mandant) and `sap-language` as query
+  parameters, plus a cookie jar per system (`SAP_SESSIONID_*`).
+- **CSRF** as ADT wants it: the first call fetches a token with `x-csrf-token: fetch`;
+  a `403` with `x-csrf-token: Required` fetches a new token and repeats the call **once**.
+- **401 is final.** A rejected password is reported as such and never retried – SAP
+  locks users after too many failed logons.
+- **ADT exceptions** (`exc:exception`) reach the agent as type plus message, never as a
+  bare HTTP code. Passwords and cookies appear in no answer, no error text and no log.
+
+### Tools
+
+All nineteen tools are read-only (`read_only_hint`), including syntax check, unit tests
+and ATC: they compute, they change nothing.
+
+| Tool | What it does |
+|---|---|
+| `abap_status` | The systems from the quiver window: name, user@host, client, language, certificate check. No connection, no password |
+| `abap_test_connection` | Log on and report the ADT areas; without `system` it checks all systems |
+| `abap_search` | Search objects by pattern (`query`, `objectType`, `max`); returns name, type, package, description and object URL |
+| `abap_object_structure` | Metadata plus includes and the address of the main source (`name` or `objectUrl`) |
+| `abap_read` | The main source, shortened via `max_zeichen` (default 20000) with a note |
+| `abap_where_used` | Where-used list of an object |
+| `abap_object_types` | The object types search can filter on (`CLAS`, `PROG`, `FUGR`, …) |
+| `abap_node_contents` | Contents of a package or function group (`parentType` `DEVC/K`, `parentName`; `$TMP` = local objects) |
+| `abap_table` | First rows of a DDIC table or view; `filter` is a SQL condition without WHERE; `max_zeilen` default 100, max 1000 |
+| `abap_query` | Free ABAP SQL SELECT (data preview); `max_zeilen` default 100, max 1000 |
+| `abap_syntax_check` | Syntax check of the saved main source or of a given `source` – nothing is saved |
+| `abap_unit_test` | ABAP Unit run; by default only short, harmless tests, more via `dangerous`/`critical`/`medium`/`long` |
+| `abap_atc` | ATC run for an object with findings, priority, check and line (`variant`, default `DEFAULT`) |
+| `abap_dumps` | Short dumps, optionally filtered by `query` |
+| `abap_traces` | Performance traces of a user (default: the logged-on user) |
+| `abap_trace_hitlist` | Hot spots and the aggregated statement tree of a trace (`traceId`) |
+| `abap_transports` | Transport requests of a user, grouped by target |
+| `abap_transport_details` | One request with status, owner, tasks and objects (`transportNumber`) |
+| `abap_text_elements` | Text symbols, selection texts or headings (`category` `symbols`/`selections`/`headings`) |
+
+Parameter names follow the template (`query`, `objectType`, `objectUrl`, `parentType`,
+`traceId`, `transportNumber`, `category`); only `max_zeichen` and `max_zeilen` are German,
+as the task requires.
+
+Decision record: [docs/adr/0005-adt-client-in-rust.md](docs/adr/0005-adt-client-in-rust.md).
 
 ## Entwickeln
 

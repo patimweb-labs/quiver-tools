@@ -27,3 +27,9 @@
 - [ ] SSH: Der Schlüssel hat keine Passphrase; er liegt mit 0600 im Datenordner. Eine Passphrase bräuchte einen Schlüsselbund-Zugriff im Tool.
 - [ ] SSH: Nur ed25519 – kein RSA, keine Zertifikate, kein Agent, keine Sprung-Hosts (`ProxyJump`).
 - [ ] SSH: `ssh_list` zeigt keine Änderungszeiten (die SFTP-Attrappe und das Format lassen sie aus); die Vorlage zeigt das Datum.
+- [ ] ABAP: Teil 2 fehlt – `lock`/`unlock`/`write`/`activate`/`create_object`/`set_text_elements`. Dafür braucht `adt::client` eine **zustandsbehaftete** Sitzung (`X-sap-adt-sessiontype: stateful`), ein Lock-Handle und einen Transport; heute ist der Client bewusst zustandslos.
+- [ ] ABAP: Tabellenwerte kommen als Text, nicht typisiert (`C`/`N`/`D`/`P` wie in der Vorlage). Für Anzeige reicht das; ein Agent, der rechnen will, muss selbst wandeln.
+- [ ] ABAP: `abap_atc` liest die Prüfliste ohne `timestamp`/`usedObjectSet` aus dem Lauf-Ergebnis; neuere Systeme verlangen beides. Bei Bedarf nachziehen (Vorlage: `atcWorklists(run.id, timestamp, usedObjectSet)`).
+- [ ] ABAP: Klassenkomponenten (`objectstructure`, `classComponents`) werden nicht angezeigt; `abap_object_structure` nennt nur die Includes.
+- [ ] ABAP: kein Debugger, kein Refactoring, kein abapGit, kein RAP-Generator – bewusst (ADR 0005).
+- [ ] ABAP: CSRF-Token und Cookies leben nur im Prozess; jeder Start meldet sich neu an. Ein Token-Cache über Prozesse wäre eine Datei mit Geheimnis – nicht gewollt.

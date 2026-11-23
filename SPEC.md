@@ -17,11 +17,27 @@ Läuft auch ohne quiver: ein Programm `quiver-m365`, MCP über stdio.
 Rückleitung über Loopback (`http://localhost:<freier Port>`).
 *Begründung:* Der User meldet sich im gewohnten Browser an (inkl. MFA, SSO, Conditional Access),
 kein Client-Secret auf dem Gerät, von Microsoft für Desktop-Apps empfohlen.
-*Preis:* Es braucht eine App-Registrierung in Entra ID (siehe `docs/entra-app.md`).
+*Preis:* Es braucht eine App-Registrierung in Entra ID – **einmal**, nicht pro Firma (siehe §2a).
 *Verworfen:* Device Code Flow (Code abtippen, in vielen Tenants per Richtlinie gesperrt);
 Client Credentials (App-Rechte statt User-Rechte – widerspricht dem Rechtemodell).
 
-Ablauf:
+## 2a. Eine Registrierung für alle, Freigabe im Browser
+
+**Festlegung:** `quiver-m365` ist **eine** Multi-Tenant-App (öffentlicher Client), registriert im
+Tenant von neoimpulse.de, Client-ID `9ae8e0db-e05f-4db8-adde-83d70d416eeb` – eingebaut als Standard.
+*Begründung:* Kein User und keine Firma muss etwas registrieren oder konfigurieren. Beim ersten Login
+sieht der User die Zustimmungsseite von Microsoft („quiver-m365 möchte: …“) und gibt frei.
+*Preis:* Der Herausgeber auf der Zustimmungsseite ist dieser Tenant. Firmen, die Usern keine eigene
+Zustimmung erlauben (häufig bei `Mail.Send`, `Files.Read.All`), brauchen **einmal** eine Admin-Freigabe.
+*Verworfen:* Client-IDs von Microsoft-eigenen Apps (z. B. Graph PowerShell) – gibt sich als Microsoft aus,
+wird von vielen Tenants blockiert.
+
+- **Admin-Freigabe im Browser:** `quiver-m365 freigeben [--tenant <id|domain>]` öffnet
+  `https://login.microsoftonline.com/<tenant>/v2.0/adminconsent?client_id=<id>&scope=<Scopes>&redirect_uri=http://localhost:<port>`
+  und wartet auf die Rückleitung (`admin_consent=True` bzw. `error`). Danach sieht kein User der Firma mehr eine Rückfrage.
+- **Eigene Registrierung** bleibt möglich: `M365_CLIENT_ID` überschreibt den Standard.
+
+Ablauf der Anmeldung:
 
 ```
 1. Tool-Aufruf, kein gültiges Token
@@ -50,7 +66,7 @@ Ablauf:
 
 | Variable | Pflicht | Bedeutung |
 |---|---|---|
-| `M365_CLIENT_ID` | ja | Application (client) ID der App-Registrierung |
+| `M365_CLIENT_ID` | nein | Standard: die eingebaute Client-ID (§2a); eigene Registrierung möglich |
 | `M365_TENANT` | nein | Tenant-ID oder `organizations` (Standard) |
 | `M365_SCOPES` | nein | Standard: siehe §4 |
 | `M365_AUTHORITY` | nein | Standard `https://login.microsoftonline.com` (Tests: Attrappe) |
@@ -58,8 +74,8 @@ Ablauf:
 | `M365_ACCESS_TOKEN` | nein | fertiges Token von außen (siehe §2, später quiver) |
 | `M365_TRESOR` | nein | `speicher` = Token nur im Speicher (Tests, Entwicklung) |
 
-In mcp-quiver: Eintrag mit Feldern `client_id` und `tenant` (Quelle `server`), Laufzeit
-`stdio` → `quiver-m365`, Umgebung `M365_CLIENT_ID=${client_id}`, `M365_TENANT=${tenant}`.
+In mcp-quiver: Eintrag mit Laufzeit `stdio` → `quiver-m365`, ohne Pflichtfelder. Optional Feld
+`tenant` (Quelle `server`, Standard `organizations`) → `M365_TENANT=${tenant}`.
 
 ## 4. Tools (MVP)
 
@@ -97,6 +113,7 @@ Der „Browser“ ist im Test eine Funktion, die die Authorize-URL direkt aufruf
 
 ## 7. Offene Punkte
 
-1. App-Registrierung in eurem Tenant (wer legt an, Admin-Consent für `Mail.Send` usw.?).
+1. Admin-Freigabe im Tenant von neoimpulse.de für den ersten echten Test (`quiver-m365 freigeben`).
+4. Herausgeber-Verifizierung (Verified Publisher) – macht die Zustimmungsseite vertrauenswürdiger und erlaubt in vielen Tenants die User-Zustimmung.
 2. Teams-Chats und Kanäle (`Chat.ReadWrite`, `ChannelMessage.Send`) – nach dem MVP.
 3. Übergabe der Anmeldung an den quiver-Client (§2 „Später“).

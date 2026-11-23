@@ -35,6 +35,17 @@ Genau die Tabelle aus SPEC §4. Parameter mit `schemars`-Beschreibungen auf Deut
 - `main`: Konfig aus Umgebung, Tresor `Schluesselbund` (oder `SpeicherTresor` bei `M365_TRESOR=speicher`),
   Browser `OeffneBrowser`, rmcp über stdio. `quiver-m365 --version` gibt die Version aus.
 
+## Nachtrag: eingebaute Client-ID und Admin-Freigabe (SPEC §2a)
+
+- `Konfig::aus_umgebung`: `M365_CLIENT_ID` ist **optional**, Standard
+  `9ae8e0db-e05f-4db8-adde-83d70d416eeb` (Konstante `STANDARD_CLIENT_ID` in `crates/anmeldung`);
+  `M365_TENANT` Standard `organizations`.
+- Unterbefehl `quiver-m365 freigeben [--tenant <id|domain>]`: Lauscher auf `127.0.0.1:0`, öffnet
+  `<authority>/<tenant>/v2.0/adminconsent?client_id=…&scope=<Scopes mit https://graph.microsoft.com/-Präfix, ohne offline_access>&redirect_uri=http://localhost:<port>&state=…`,
+  wartet bis 5 min auf `?admin_consent=True&tenant=…&state=…` bzw. `?error=…`, prüft `state`,
+  zeigt im Browser eine kurze Seite und gibt auf der Konsole „Freigegeben für Tenant …“ bzw. den Fehler aus.
+  Test gegen die Attrappe (Endpunkt `adminconsent` dort ergänzen).
+
 ## Abnahme
 
 - Integrationstests mit Graph-Attrappe (axum) + Anmelde-Attrappe aus Aufgabe 01:

@@ -1,6 +1,6 @@
 # Architektur
 
-> Stand: 2026-11-23, nach Aufgabe 03. Gilt für den Kern (`crates/kern`) und alle
+> Stand: 2026-11-23, nach Aufgabe 04. Gilt für den Kern (`crates/kern`) und alle
 > Tools, die darauf aufsetzen. Festlegungen und Preise: [../SPEC.md](../SPEC.md).
 
 ## Richtung
@@ -134,9 +134,72 @@ Regeln, die dort gelten:
 - **Parameternamen sind deutsch** (`collection_id`, `max_zeichen`, `save_dir`); die
   **Werkzeugnamen** bleiben die der Vorlage, damit Skills und Gewohnheiten weiter passen.
 
+## Ein zweites Tool: `crates/email`
+
+Die Vorlage `pi-email` (TypeScript) liefert die Semantik, nicht den Code (SPEC §6).
+Der Microsoft-/Graph-Teil der Vorlage fehlt: den macht `quiver-m365`. Hier gibt es nur
+IMAP und SMTP.
+
+| Modul | Aufgabe | Zustand |
+|---|---|---|
+| `werkzeug` | `Email` (Name, Titel, Felder, `testen`), `konto` (Felder → Vorgaben) | keiner |
+| `domain` | Daten und reine Regeln: Adressen, Empfänger einer Antwort, `References`, Zitat, Suche | keiner |
+| `fehler` | `MailFehler`; jeder Text verliert das Passwort | keiner |
+| `postfach` | Naht `Postfach` und die echte Umsetzung mit `async-imap` + `tokio-rustls` | Verbindung je Aufruf |
+| `versand` | Naht `Versand` und die echte Umsetzung mit `lettre` (rustls) | Verbindung je Aufruf |
+| `format` | reine Funktionen: Daten → knapper Text, gekürzt über `mcp::kuerzen` | keiner |
+| `server` | die zwölf MCP-Werkzeuge, Parameter als `schemars`-Typen | Zugang aus der Umgebung |
+
+Datenfluss eines Aufrufs:
+
+```
+MCP tools/call
+  → server::aufrufen        Name → Werkzeug, Argumente → Parametertyp
+  → mcp::zugang             Zugang aus der Umgebung (fehlt er: Hinweistext, kein Fehler)
+  → werkzeug::konto         Felder + Vorgaben (Ports, TLS, Zertifikat) → Konto
+  → server::Fabrik          Echt → ImapPostfach / LettreVersand, Tests → Attrappe
+  → Postfach / Versand      Naht: async-imap bzw. lettre, Fehler → MailFehler
+  → format                  Daten → knapper Text
+  → CallToolResult
+```
+
+Zwei Nähte statt eines Clients, weil zwei Protokolle im Spiel sind:
+
+- **`Postfach`** (IMAP): Postfächer, Kopfzeilen, Suche, Nachricht, Flaggen,
+  Verschieben, Löschen, APPEND, `\Sent` finden, `prüfen`.
+- **`Versand`** (SMTP): senden, `prüfen`. Die Antwort trägt die fertigen Bytes, damit
+  dieselbe Nachricht in den Ordner „Gesendet“ geht.
+
+Regeln, die dort gelten:
+
+- **Kein Geheimnis im Text.** `postfach` und `versand` ersetzen das Passwort in jedem
+  Fehlertext durch `[geheim]`; `MailFehler::ohne_geheimnis` ist das zweite Netz.
+  `Debug` von `Konto`, `ImapKonfiguration`, `SmtpKonfiguration` und `LettreVersand`
+  zeigt `[geheim]`.
+- **Zertifikat.** rustls prüft gegen `webpki-roots`. `zertifikat_pruefen = aus` gilt
+  nur für `127.0.0.1`/`localhost`; jeder andere Host behält die Prüfung (mit Warnung).
+- **Vorgaben.** `imap_port` 993 / `smtp_port` 587, `imap_sicherheit` `tls`,
+  `smtp_sicherheit` `starttls`, `benutzer` = `adresse`. `limit` 20, höchstens 100;
+  `email_read` kürzt nach `max_zeichen` (Standard 6000, `0` = ungekürzt).
+- **Text statt HTML.** `mail-parser` liefert `text_bodies`; ein HTML-only-Teil wird
+  dabei in Text umgewandelt. Anhänge werden nur genannt (Name, Typ, Größe).
+- **Threading.** `In-Reply-To` und die ganze `References`-Kette kommen aus der
+  Ursprungsnachricht; `Re:`/`Fwd:` werden nicht gestapelt.
+- **Gesendet.** Nach dem Senden sucht das Tool den Ordner mit `\Sent` (RFC 6154),
+  sonst einen bekannten Namen, und legt die Bytes dort ab (`\Seen`). Gmail bekommt
+  keine zweite Kopie. Scheitert nur die Kopie, bleibt die Nachricht gesendet und die
+  Antwort sagt es.
+- **Werkzeugnamen** bleiben die der Vorlage; Parameter ebenso (`mailbox`, `limit`,
+  `unseen`, `reply_all` …), nur `max_zeichen` ist deutsch wie in `quiver-outline`.
+
+Die Wahl der IMAP-Crate und die eine zusätzliche Abhängigkeit stehen in
+[adr/0003-imap-mit-async-imap.md](adr/0003-imap-mit-async-imap.md).
+
 ## Tests
 
-- Attrappen (axum) auf `127.0.0.1`, kein echter Dienst.
+- Attrappen (axum) auf `127.0.0.1`, kein echter Dienst. Bei E-Mail stehen die
+  Attrappen hinter den Traits `Postfach`/`Versand`; sie schreiben jeden Aufruf mit
+  (Postfach, UID, Grenze, Empfänger, Flaggen) und geben feste Daten zurück.
 - Der Zugang kommt als Paar-Menge über `Zugang::mit_umgebung` – kein Prozesszustand,
   keine parallelen Umgebungsvariablen.
 - `tests/ende_zu_ende.rs` startet `quiver-outline` als Kindprozess: einmal mit
@@ -145,3 +208,8 @@ Regeln, die dort gelten:
 - Der Eintrag wird gegen eine Kopie von `quiver_domain::Eintrag` deserialisiert
   (`eintrag::tests`), damit Formatfehler auffallen, ohne das andere Projekt zu
   importieren.
+- SMTP wird zusätzlich gegen `lettre`s Stub-Transport geprüft: Kopfzeilen, Threading
+  und Umschlag (CC/BCC im Umschlag, BCC **nicht** in den Kopfzeilen).
+- `crates/email/tests/imap_echt.rs` ist `#[ignore]` und spricht nur auf Anforderung mit
+  einem echten IMAP-Server (`EMAIL_TEST_*`, z. B. GreenMail im Docker). Ohne diese
+  Umgebung geht kein Test ins Netz.

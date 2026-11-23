@@ -368,14 +368,26 @@ fn ist_rueckleitung(ort: &Url, rueckleitung: &Url) -> bool {
 
 /// Liegt die Adresse auf dem erlaubten Host?
 ///
+/// Ein vorangestelltes `www.` zählt als derselbe Host: ZEP nennt im
+/// Authorization-Server `zep-online.de`, das Anmeldeformular liegt aber auf
+/// `www.zep-online.de`. Jeder andere Host – auch eine andere Subdomain – ist
+/// fremd.
+///
 /// Ohne bekannten Host (die Metadaten nannten keinen) bleibt der Ablauf wie er
 /// ist – es gibt dann nichts, wogegen zu prüfen wäre.
 fn gleicher_host(ziel: &Url, erlaubt: Option<&str>) -> bool {
+    fn ohne_www(host: &str) -> String {
+        let klein = host.to_ascii_lowercase();
+        match klein.strip_prefix("www.") {
+            Some(rest) if !rest.is_empty() => rest.to_string(),
+            _ => klein,
+        }
+    }
     match erlaubt {
         None => true,
         Some(host) => ziel
             .host_str()
-            .is_some_and(|eigener| eigener.eq_ignore_ascii_case(host)),
+            .is_some_and(|eigener| ohne_www(eigener) == ohne_www(host)),
     }
 }
 
@@ -480,6 +492,19 @@ mod tests {
         assert!(gleicher_host(&zep, Some("www.zep-online.de")));
         assert!(gleicher_host(&zep, Some("WWW.ZEP-ONLINE.DE")));
         assert!(!gleicher_host(&zep, Some("boese.example.test")));
+        // ZEP: Authorization-Server ohne www, Anmeldeformular mit www.
+        assert!(gleicher_host(&zep, Some("zep-online.de")));
+        let ohne = Url::parse("https://zep-online.de/zep/view/login.php").unwrap();
+        assert!(gleicher_host(&ohne, Some("www.zep-online.de")));
+        // Andere Subdomains oder angehängte Domains bleiben fremd.
+        let fremd = Url::parse("https://login.zep-online.de/x").unwrap();
+        assert!(!gleicher_host(&fremd, Some("zep-online.de")));
+        let angehaengt = Url::parse("https://www.zep-online.de.boese.test/x").unwrap();
+        assert!(!gleicher_host(&angehaengt, Some("zep-online.de")));
+        let nur_www = Url::parse("https://www./x");
+        if let Ok(nur_www) = nur_www {
+            assert!(!gleicher_host(&nur_www, Some("zep-online.de")));
+        }
         // Ohne bekannten Host wird nicht geprüft.
         assert!(gleicher_host(&zep, None));
         // Eine Adresse ohne Host taugt nie.

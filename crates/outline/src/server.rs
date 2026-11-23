@@ -3,19 +3,17 @@
 
 //! Der MCP-Server: 14 Werkzeuge über stdio (SPEC §6).
 //!
-//! Jedes Werkzeug nimmt `profil` (ohne Angabe das Standardprofil, SPEC §2) und
-//! antwortet ohne eingerichtetes Profil mit dem Hinweistext des Kerns – **kein**
-//! MCP-Fehler. Fehler von Outline werden zu MCP-Fehlern mit Status und Text,
-//! nie mit dem API-Schlüssel.
+//! Es gibt genau einen Zugang (aus der Umgebung, SPEC §2); jedes Werkzeug
+//! antwortet ohne Zugang mit dem Hinweistext des Kerns – **kein** MCP-Fehler.
+//! Fehler von Outline werden zu MCP-Fehlern mit Status und Text, nie mit dem
+//! API-Schlüssel.
 
 use std::any::Any;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use quiver_tools_kern::mcp::{fehler_als_mcp, profile_antwort, profile_tool};
-use quiver_tools_kern::{
-    antwort, hinweis_einrichten, zugang, OhneProfil, Profil, ProfilWahl, Profile,
-};
+use quiver_tools_kern::mcp::{profile_antwort, profile_tool};
+use quiver_tools_kern::{antwort, zugang, OhneProfil, Profil, Zugang};
 use rmcp::handler::server::tool::schema_for_type;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, JsonObject, ListToolsResult,
@@ -35,15 +33,15 @@ use crate::{datei, format};
 /// Was ein Werkzeug zurückgibt.
 type Ergebnis = Result<CallToolResult, McpError>;
 
-/// Der Outline-Server: der Profilspeicher und die Werkzeugliste.
+/// Der Outline-Server: der Zugang und die Werkzeugliste.
 pub struct OutlineServer {
-    profile: Profile,
+    zugang: Zugang,
 }
 
 impl OutlineServer {
-    /// Ein Server über den Profilen eines Werkzeugs.
-    pub fn neu(profile: Profile) -> Self {
-        OutlineServer { profile }
+    /// Ein Server über dem Zugang eines Werkzeugs.
+    pub fn neu(zugang: Zugang) -> Self {
+        OutlineServer { zugang }
     }
 
     /// Alle Werkzeuge, wie `tools/list` sie meldet.
@@ -65,7 +63,7 @@ impl OutlineServer {
             lese_werkzeug::<SuchParam>(
                 "outline_search",
                 "Suche",
-                "Volltextsuche im Outline-Wiki: Treffer mit Textausschnitt und id, den ganzen Text holt outline_read. Zwei oder drei eigentümliche Wörter suchen besser als ein ganzer Satz. Mit mehreren Profilen entweder eines über `profil` wählen oder `alle_profile` setzen.",
+                "Volltextsuche im Outline-Wiki: Treffer mit Textausschnitt und id, den ganzen Text holt outline_read. Zwei oder drei eigentümliche Wörter suchen besser als ein ganzer Satz.",
             ),
             lese_werkzeug::<ListenParam>(
                 "outline_list",
@@ -117,7 +115,7 @@ impl OutlineServer {
                 "Seiten exportieren",
                 "Schreibt eine Seite (optional mit Kindern) oder eine ganze Sammlung als Markdown-Dateien in einen Ordner. Holt Wiki-Inhalte in ein Repository, ohne jede Seite durch das Modell zu schicken.",
             ),
-            profile_tool(&self.profile),
+            profile_tool(&self.zugang),
         ]
     }
 
@@ -137,7 +135,7 @@ impl OutlineServer {
             "outline_delete" => self.loeschen(argumente).await,
             "outline_comment" => self.kommentieren(argumente).await,
             "outline_export" => self.exportieren(argumente).await,
-            "outline_profile" => profile_antwort(&self.profile),
+            "outline_profile" => profile_antwort(&self.zugang),
             sonst => Err(McpError::invalid_params(
                 format!("Unbekanntes Werkzeug „{sonst}“."),
                 None,
@@ -145,16 +143,16 @@ impl OutlineServer {
         }
     }
 
-    /// Das gewählte Profil oder die fertige Antwort (Hinweis oder Fehler).
-    fn waehlen(&self, wahl: &ProfilWahl) -> Result<Profil, OhneProfil> {
-        zugang(self.profile.titel(), self.profile.holen(wahl.name()))
+    /// Der Zugang oder die fertige Antwort (Hinweis oder Fehler).
+    fn hole_profil(&self) -> Result<Profil, OhneProfil> {
+        zugang(self.zugang.titel(), self.zugang.profil())
     }
 
     // ------------------------------------------------------------- lesend
 
     async fn sammlungen(&self, roh: Option<JsonObject>) -> Ergebnis {
         let p: SammlungenParam = argumente(roh)?;
-        let profil = match self.waehlen(&p.profil) {
+        let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),
         };
@@ -182,7 +180,7 @@ impl OutlineServer {
                 "outline_structure braucht eine collection_id.",
             ));
         }
-        let profil = match self.waehlen(&p.profil) {
+        let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),
         };
@@ -240,70 +238,19 @@ impl OutlineServer {
             }
         }
 
-        let kriterien = suchkriterien(&p, &suchbegriff);
-        if !p.alle_profile.unwrap_or(false) {
-            let profil = match self.waehlen(&p.profil) {
-                Ok(profil) => profil,
-                Err(ohne) => return ohne.in_ergebnis(),
-            };
-            let ergebnis = client(&profil)?
-                .aufrufen::<Vec<Treffer>>("documents.search", kriterien)
-                .await
-                .map_err(mcp_fehler)?;
-            return Ok(antwort(format::suche(
-                &ergebnis.daten,
-                &suchbegriff,
-                ergebnis.seiten.as_ref(),
-            )));
-        }
-
-        // „Alle Workspaces“ der Vorlage heißt hier: über alle Profile.
-        if p.profil.name().is_some() {
-            return Err(parameter_fehler(
-                "`profil` und `alle_profile` widersprechen sich: entweder ein Wiki wählen oder alle durchsuchen.",
-            ));
-        }
-        if p.collection_id.is_some() || p.document_id.is_some() {
-            return Err(parameter_fehler(
-                "`collection_id` und `document_id` gelten nur in einem Wiki und passen nicht zu `alle_profile`. Stattdessen mit `profil` in diesem Wiki suchen.",
-            ));
-        }
-
-        let stand = self
-            .profile
-            .stand()
-            .map_err(|fehler| fehler_als_mcp(&fehler))?;
-        if stand.profile.is_empty() {
-            return Ok(antwort(hinweis_einrichten(self.profile.titel())));
-        }
-
-        // Ein hängendes oder falsch eingerichtetes Profil darf die Suche in den
-        // anderen nicht verschlucken: jeder Fehler wird daneben berichtet.
-        let mut ergebnisse = Vec::with_capacity(stand.profile.len());
-        for eintrag in &stand.profile {
-            let mut ergebnis = format::Profiltreffer {
-                profil: eintrag.name.clone(),
-                beschreibung: Some(eintrag.beschreibung.clone()),
-                ..format::Profiltreffer::default()
-            };
-            match self.profile.holen(Some(&eintrag.name)) {
-                Err(fehler) => ergebnis.fehler = Some(fehler.to_string()),
-                Ok(profil) => match client(&profil) {
-                    Err(fehler) => ergebnis.fehler = Some(fehler.to_string()),
-                    Ok(client) => {
-                        match client
-                            .aufrufen::<Vec<Treffer>>("documents.search", kriterien.clone())
-                            .await
-                        {
-                            Ok(antwort) => ergebnis.treffer = antwort.daten,
-                            Err(fehler) => ergebnis.fehler = Some(fehler.to_string()),
-                        }
-                    }
-                },
-            }
-            ergebnisse.push(ergebnis);
-        }
-        Ok(antwort(format::mehrfachsuche(&ergebnisse, &suchbegriff)))
+        let profil = match self.hole_profil() {
+            Ok(profil) => profil,
+            Err(ohne) => return ohne.in_ergebnis(),
+        };
+        let ergebnis = client(&profil)?
+            .aufrufen::<Vec<Treffer>>("documents.search", suchkriterien(&p, &suchbegriff))
+            .await
+            .map_err(mcp_fehler)?;
+        Ok(antwort(format::suche(
+            &ergebnis.daten,
+            &suchbegriff,
+            ergebnis.seiten.as_ref(),
+        )))
     }
 
     async fn liste(&self, roh: Option<JsonObject>) -> Ergebnis {
@@ -325,7 +272,7 @@ impl OutlineServer {
             )));
         }
 
-        let profil = match self.waehlen(&p.profil) {
+        let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),
         };
@@ -381,7 +328,7 @@ impl OutlineServer {
         if p.id.trim().is_empty() {
             return Err(parameter_fehler("outline_read braucht eine id."));
         }
-        let profil = match self.waehlen(&p.profil) {
+        let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),
         };
@@ -430,7 +377,7 @@ impl OutlineServer {
                 "outline_comments braucht eine document_id.",
             ));
         }
-        let profil = match self.waehlen(&p.profil) {
+        let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),
         };
@@ -467,7 +414,7 @@ impl OutlineServer {
             ));
         }
 
-        let profil = match self.waehlen(&p.profil) {
+        let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),
         };
@@ -512,7 +459,7 @@ impl OutlineServer {
             ));
         }
 
-        let profil = match self.waehlen(&p.profil) {
+        let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),
         };
@@ -568,7 +515,7 @@ impl OutlineServer {
             ));
         }
 
-        let profil = match self.waehlen(&p.profil) {
+        let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),
         };
@@ -647,7 +594,7 @@ impl OutlineServer {
             }
         };
 
-        let profil = match self.waehlen(&p.profil) {
+        let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),
         };
@@ -671,7 +618,7 @@ impl OutlineServer {
         }
         let endgueltig = p.permanent.unwrap_or(false);
 
-        let profil = match self.waehlen(&p.profil) {
+        let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),
         };
@@ -717,7 +664,7 @@ impl OutlineServer {
             return Err(parameter_fehler("outline_comment braucht einen Text."));
         }
 
-        let profil = match self.waehlen(&p.profil) {
+        let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),
         };
@@ -779,7 +726,7 @@ impl OutlineServer {
             _ => {}
         }
 
-        let profil = match self.waehlen(&p.profil) {
+        let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),
         };
@@ -1003,8 +950,6 @@ pub struct SammlungenParam {
     /// Wie viele Sammlungen übersprungen werden (Seitenweise blättern). Standard 0.
     #[serde(default)]
     pub offset: Option<u32>,
-    #[serde(flatten)]
-    pub profil: ProfilWahl,
 }
 
 /// Parameter von `outline_structure`.
@@ -1012,8 +957,6 @@ pub struct SammlungenParam {
 pub struct StrukturParam {
     /// Kennung der Sammlung; steht in outline_collections.
     pub collection_id: String,
-    #[serde(flatten)]
-    pub profil: ProfilWahl,
 }
 
 /// Parameter von `outline_search`.
@@ -1039,11 +982,6 @@ pub struct SuchParam {
     /// Nur Seiten, die in diesem Zeitraum geändert wurden: day, week, month, year.
     #[serde(default)]
     pub date_filter: Option<String>,
-    /// Alle Profile durchsuchen statt nur eines und bei jedem Treffer das Profil nennen. Standard false.
-    #[serde(default)]
-    pub alle_profile: Option<bool>,
-    #[serde(flatten)]
-    pub profil: ProfilWahl,
 }
 
 /// Parameter von `outline_list`.
@@ -1070,8 +1008,6 @@ pub struct ListenParam {
     /// ASC oder DESC. Standard DESC.
     #[serde(default)]
     pub direction: Option<String>,
-    #[serde(flatten)]
-    pub profil: ProfilWahl,
 }
 
 /// Parameter von `outline_read`.
@@ -1088,8 +1024,6 @@ pub struct LeseParam {
     /// Die Seite zusätzlich als Markdown-Datei in diesem Ordner ablegen.
     #[serde(default)]
     pub save_dir: Option<String>,
-    #[serde(flatten)]
-    pub profil: ProfilWahl,
 }
 
 /// Parameter von `outline_comments`.
@@ -1103,8 +1037,6 @@ pub struct KommentareParam {
     /// Wie viele Kommentare übersprungen werden. Standard 0.
     #[serde(default)]
     pub offset: Option<u32>,
-    #[serde(flatten)]
-    pub profil: ProfilWahl,
 }
 
 /// Parameter von `outline_create`.
@@ -1130,8 +1062,6 @@ pub struct ErstellenParam {
     /// Sofort veröffentlichen. Standard true; false legt einen persönlichen Entwurf an.
     #[serde(default)]
     pub publish: Option<bool>,
-    #[serde(flatten)]
-    pub profil: ProfilWahl,
 }
 
 /// Parameter von `outline_update`.
@@ -1154,8 +1084,6 @@ pub struct AendernParam {
     /// Einen Entwurf veröffentlichen.
     #[serde(default)]
     pub publish: Option<bool>,
-    #[serde(flatten)]
-    pub profil: ProfilWahl,
 }
 
 /// Parameter von `outline_move`.
@@ -1175,8 +1103,6 @@ pub struct VerschiebenParam {
     /// Platz unter den neuen Geschwistern (0 = erstes).
     #[serde(default)]
     pub index: Option<u32>,
-    #[serde(flatten)]
-    pub profil: ProfilWahl,
 }
 
 /// Parameter von `outline_archive`.
@@ -1187,8 +1113,6 @@ pub struct ArchivParam {
     /// archive (Standard), restore oder unpublish.
     #[serde(default)]
     pub action: Option<String>,
-    #[serde(flatten)]
-    pub profil: ProfilWahl,
 }
 
 /// Parameter von `outline_delete`.
@@ -1199,8 +1123,6 @@ pub struct LoeschenParam {
     /// Endgültig löschen statt in den Papierkorb legen. Nicht umkehrbar. Standard false.
     #[serde(default)]
     pub permanent: Option<bool>,
-    #[serde(flatten)]
-    pub profil: ProfilWahl,
 }
 
 /// Parameter von `outline_comment`.
@@ -1213,8 +1135,6 @@ pub struct KommentarParam {
     /// In diesem Kommentarstrang antworten.
     #[serde(default)]
     pub parent_comment_id: Option<String>,
-    #[serde(flatten)]
-    pub profil: ProfilWahl,
 }
 
 /// Parameter von `outline_export`.
@@ -1234,8 +1154,6 @@ pub struct ExportParam {
     /// Höchstens so viele Dokumente schreiben. Standard 50.
     #[serde(default)]
     pub limit: Option<u32>,
-    #[serde(flatten)]
-    pub profil: ProfilWahl,
 }
 
 // -------------------------------------------------------------- MCP-Anker
@@ -1243,12 +1161,12 @@ pub struct ExportParam {
 impl ServerHandler for OutlineServer {
     fn get_info(&self) -> ServerConfig {
         ServerConfig::new(ServerCapabilities::builder().enable_tools().build())
-            .with_server_info(quiver_tools_kern::mcp::server_info(&self.profile))
+            .with_server_info(quiver_tools_kern::mcp::server_info(&self.zugang))
             .with_instructions(
                 "Outline-Wiki: Sammlungen und Seiten lesen, durchsuchen, anlegen, ändern, \
-                 verschieben, archivieren, löschen und kommentieren. Profile richtet der User \
-                 im quiver-Fenster unter Tools → Outline-Wiki ein; jedes Werkzeug nimmt dafür \
-                 `profil` (ohne Angabe das Standardprofil)."
+                 verschieben, archivieren, löschen und kommentieren. Den Zugang trägt der User \
+                 im quiver-Fenster unter Tools → Outline-Wiki ein; fehlt er, sagen die \
+                 Werkzeuge das als Text."
                     .to_string(),
             )
     }
@@ -1278,8 +1196,7 @@ mod tests {
 
     #[test]
     fn lesende_und_schreibende_werkzeuge_tragen_die_richtigen_hinweise() {
-        let (profile, _ordner) = leerer_speicher();
-        let server = OutlineServer::neu(profile);
+        let server = OutlineServer::neu(ohne_zugang());
         let werkzeuge = server.werkzeuge();
         assert_eq!(werkzeuge.len(), 14);
 
@@ -1322,14 +1239,11 @@ mod tests {
                 assert_eq!(hinweise.destructive_hint, Some(true), "{}", werkzeug.name);
             }
             assert!(!werkzeug.description.as_deref().unwrap_or("").is_empty());
-            // Jedes Werkzeug außer `outline_profile` nimmt `profil`.
-            if werkzeug.name == "outline_profile" {
-                continue;
-            }
+            // Es gibt nur einen Zugang: kein Werkzeug nimmt mehr `profil`.
             let eigenschaften = werkzeug.input_schema.get("properties");
             assert!(
-                eigenschaften.is_some_and(|werte| werte.get("profil").is_some()),
-                "{} kennt `profil` nicht: {:?}",
+                !eigenschaften.is_some_and(|werte| werte.get("profil").is_some()),
+                "{} kennt noch `profil`: {:?}",
                 werkzeug.name,
                 werkzeug.input_schema
             );
@@ -1338,8 +1252,7 @@ mod tests {
 
     #[test]
     fn ein_unbekanntes_werkzeug_ist_ein_parameterfehler() {
-        let (profile, _ordner) = leerer_speicher();
-        let server = OutlineServer::neu(profile);
+        let server = OutlineServer::neu(ohne_zugang());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -1350,9 +1263,8 @@ mod tests {
     }
 
     #[test]
-    fn ohne_profil_kommt_der_hinweis_und_kein_fehler() {
-        let (profile, _ordner) = leerer_speicher();
-        let server = OutlineServer::neu(profile);
+    fn ohne_zugang_kommt_der_hinweis_und_kein_fehler() {
+        let server = OutlineServer::neu(ohne_zugang());
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
             .unwrap();
@@ -1360,18 +1272,12 @@ mod tests {
             .block_on(server.aufrufen("outline_collections", Some(JsonObject::new())))
             .unwrap();
         let text = ergebnis.content[0].as_text().unwrap().text.clone();
-        assert!(text.contains("Noch kein Zugang eingerichtet"), "{text}");
-        assert!(text.contains("Outline-Wiki"));
+        assert!(text.contains("Zugang fehlt"), "{text}");
+        assert!(text.contains("Outline-Wiki"), "{text}");
     }
 
-    /// Ein Profilspeicher ohne Profile – im Speicher, ohne Schlüsselbund.
-    fn leerer_speicher() -> (Profile, tempfile::TempDir) {
-        let ordner = tempfile::tempdir().unwrap();
-        let profile = Profile::im_ordner(
-            &crate::Outline,
-            std::sync::Arc::new(quiver_tools_kern::SpeicherTresor),
-            ordner.path().to_path_buf(),
-        );
-        (profile, ordner)
+    /// Ein Zugang ohne Umgebung – nichts gesetzt, kein Schlüsselbund.
+    fn ohne_zugang() -> Zugang {
+        Zugang::mit_umgebung(&crate::Outline, |_| None)
     }
 }

@@ -24,9 +24,7 @@ async fn ruf(server: &OutlineServer, name: &str, argumente: Value) -> Result<Str
 #[tokio::test]
 async fn lesende_werkzeuge_holen_und_formatieren() {
     let mock = Attrappe::starte().await;
-    let ordner = tempfile::tempdir().unwrap();
-    let (profile, _tresor) = attrappe::speicher(ordner.path(), &[("arbeit", &mock.adresse)]);
-    let server = OutlineServer::neu(profile);
+    let server = OutlineServer::neu(attrappe::zugang(&mock.adresse));
 
     // Sammlungen: Pfad, Rumpf, Anmeldung und Antwortform.
     let text = ruf(&server, "outline_collections", json!({}))
@@ -121,22 +119,21 @@ async fn lesende_werkzeuge_holen_und_formatieren() {
     assert!(text.contains("  - Bob am - (id k2)"), "{text}");
     assert!(text.contains("    Ja, seit gestern."), "{text}");
 
-    // Profile: aus dem Kern, ohne Geheimnis.
+    // Der Zugang: aus dem Kern, ohne Geheimnis.
     let text = ruf(&server, "outline_profile", json!({})).await.unwrap();
-    assert!(text.contains("- arbeit (Standard)"), "{text}");
+    assert!(
+        text.contains("Zugang für Outline-Wiki (aus der Umgebung)"),
+        "{text}"
+    );
+    assert!(text.contains("- standard"), "{text}");
     assert!(text.contains(&mock.adresse), "{text}");
-    assert!(!text.contains(SCHLUESSEL), "Schlüssel in der Profilliste");
-
-    // Auch die Profilliste nennt den Schlüssel nicht.
-    assert!(!text.contains(SCHLUESSEL));
+    assert!(!text.contains(SCHLUESSEL), "Schlüssel im Zugangsbericht");
 }
 
 #[tokio::test]
 async fn schreibende_werkzeuge_senden_den_erwarteten_rumpf() {
     let mock = Attrappe::starte().await;
-    let ordner = tempfile::tempdir().unwrap();
-    let (profile, _tresor) = attrappe::speicher(ordner.path(), &[("arbeit", &mock.adresse)]);
-    let server = OutlineServer::neu(profile);
+    let server = OutlineServer::neu(attrappe::zugang(&mock.adresse));
 
     // Anlegen.
     let text = ruf(
@@ -233,9 +230,7 @@ async fn schreibende_werkzeuge_senden_den_erwarteten_rumpf() {
 #[tokio::test]
 async fn export_schreibt_markdown_dateien() {
     let mock = Attrappe::starte().await;
-    let ordner = tempfile::tempdir().unwrap();
-    let (profile, _tresor) = attrappe::speicher(ordner.path(), &[("arbeit", &mock.adresse)]);
-    let server = OutlineServer::neu(profile);
+    let server = OutlineServer::neu(attrappe::zugang(&mock.adresse));
     let ziel = tempfile::tempdir().unwrap();
     let ziel_pfad = ziel.path().join("wiki");
 
@@ -284,9 +279,7 @@ async fn export_schreibt_markdown_dateien() {
 #[tokio::test]
 async fn eine_seite_mit_kindern_exportieren() {
     let mock = Attrappe::starte().await;
-    let ordner = tempfile::tempdir().unwrap();
-    let (profile, _tresor) = attrappe::speicher(ordner.path(), &[("arbeit", &mock.adresse)]);
-    let server = OutlineServer::neu(profile);
+    let server = OutlineServer::neu(attrappe::zugang(&mock.adresse));
     let ziel = tempfile::tempdir().unwrap();
 
     let text = ruf(
@@ -307,14 +300,8 @@ async fn eine_seite_mit_kindern_exportieren() {
 #[tokio::test]
 async fn fehler_von_outline_nennen_status_und_nie_den_schluessel() {
     let mock = Attrappe::starte().await;
-    let ordner = tempfile::tempdir().unwrap();
-
     // 403: Outline spiegelt den Kopf zurück – das Werkzeug gibt ihn nicht weiter.
-    let (profile, _tresor) = attrappe::speicher(
-        ordner.path(),
-        &[("kaputt", &format!("{}/kaputt", mock.adresse))],
-    );
-    let server = OutlineServer::neu(profile);
+    let server = OutlineServer::neu(attrappe::zugang(&format!("{}/kaputt", mock.adresse)));
     let fehler = ruf(&server, "outline_collections", json!({}))
         .await
         .unwrap_err();
@@ -323,12 +310,7 @@ async fn fehler_von_outline_nennen_status_und_nie_den_schluessel() {
     assert!(fehler.message.contains("403"), "{}", fehler.message);
 
     // 401: der abgelehnte Schlüssel kommt gar nicht erst in den Text.
-    let dritter = tempfile::tempdir().unwrap();
-    let (profile, _tresor) = attrappe::speicher(
-        dritter.path(),
-        &[("abgelehnt", &format!("{}/abgelehnt", mock.adresse))],
-    );
-    let server = OutlineServer::neu(profile);
+    let server = OutlineServer::neu(attrappe::zugang(&format!("{}/abgelehnt", mock.adresse)));
     let fehler = ruf(&server, "outline_collections", json!({}))
         .await
         .unwrap_err();
@@ -337,12 +319,7 @@ async fn fehler_von_outline_nennen_status_und_nie_den_schluessel() {
     assert!(!fehler.message.contains(SCHLUESSEL), "{}", fehler.message);
 
     // HTML statt JSON: die Adresse ist kein Outline.
-    let zweiter = tempfile::tempdir().unwrap();
-    let (profile, _tresor) = attrappe::speicher(
-        zweiter.path(),
-        &[("falsch", &format!("{}/nichts", mock.adresse))],
-    );
-    let server = OutlineServer::neu(profile);
+    let server = OutlineServer::neu(attrappe::zugang(&format!("{}/nichts", mock.adresse)));
     let fehler = ruf(&server, "outline_collections", json!({}))
         .await
         .unwrap_err();
@@ -355,18 +332,16 @@ async fn fehler_von_outline_nennen_status_und_nie_den_schluessel() {
 }
 
 #[tokio::test]
-async fn ohne_profil_kommt_der_hinweis_und_kein_fehler() {
-    let ordner = tempfile::tempdir().unwrap();
-    let (profile, _tresor) = attrappe::speicher(ordner.path(), &[]);
-    let server = OutlineServer::neu(profile);
+async fn ohne_zugang_kommt_der_hinweis_und_kein_fehler() {
+    let server = OutlineServer::neu(attrappe::ohne_zugang());
 
     let text = ruf(&server, "outline_collections", json!({}))
         .await
         .unwrap();
-    assert!(text.contains("Noch kein Zugang eingerichtet"), "{text}");
-    assert!(text.contains("Outline-Wiki"), "{text}");
+    assert!(text.contains("Zugang fehlt"), "{text}");
+    assert!(text.contains("Tools → Outline-Wiki"), "{text}");
 
-    // Auch für schreibende Werkzeuge und für die Suche über alle Profile.
+    // Auch für schreibende Werkzeuge.
     let text = ruf(
         &server,
         "outline_create",
@@ -374,95 +349,23 @@ async fn ohne_profil_kommt_der_hinweis_und_kein_fehler() {
     )
     .await
     .unwrap();
-    assert!(text.contains("Noch kein Zugang eingerichtet"), "{text}");
-    let text = ruf(
-        &server,
-        "outline_search",
-        json!({ "query": "x", "alle_profile": true }),
-    )
-    .await
-    .unwrap();
-    assert!(text.contains("Noch kein Zugang eingerichtet"), "{text}");
-}
+    assert!(text.contains("Zugang fehlt"), "{text}");
 
-#[tokio::test]
-async fn das_profil_waehlt_das_wiki() {
-    let mock = Attrappe::starte().await;
-    let ordner = tempfile::tempdir().unwrap();
-    let zweig = format!("{}/zweig", mock.adresse);
-    let (profile, _tresor) = attrappe::speicher(
-        ordner.path(),
-        &[("arbeit", &mock.adresse), ("kunde", &zweig)],
-    );
-    let server = OutlineServer::neu(profile);
-
-    ruf(&server, "outline_collections", json!({ "profil": "kunde" }))
+    // Und für die Suche.
+    let text = ruf(&server, "outline_search", json!({ "query": "x" }))
         .await
         .unwrap();
-    assert_eq!(
-        mock.aufzeichnung.alle().last().unwrap().pfad,
-        "/zweig/api/collections.list"
-    );
+    assert!(text.contains("Zugang fehlt"), "{text}");
 
-    let fehler = ruf(
-        &server,
-        "outline_collections",
-        json!({ "profil": "gibtsnicht" }),
-    )
-    .await
-    .unwrap_err();
-    assert!(
-        fehler.message.contains("gibt es nicht"),
-        "{}",
-        fehler.message
-    );
-}
-
-#[tokio::test]
-async fn alle_profile_durchsucht_jedes_wiki() {
-    let mock = Attrappe::starte().await;
-    let ordner = tempfile::tempdir().unwrap();
-    let zweig = format!("{}/zweig", mock.adresse);
-    let (profile, _tresor) = attrappe::speicher(
-        ordner.path(),
-        &[("arbeit", &mock.adresse), ("kunde", &zweig)],
-    );
-    let server = OutlineServer::neu(profile);
-
-    let text = ruf(
-        &server,
-        "outline_search",
-        json!({ "query": "handbuch", "alle_profile": true }),
-    )
-    .await
-    .unwrap();
-    assert!(text.contains("über 2 Profile – 2 Treffer"), "{text}");
-    assert!(text.contains("[arbeit] 1 Treffer:"), "{text}");
-    assert!(text.contains("[kunde] 1 Treffer:"), "{text}");
-    assert!(text.contains("profil arbeit"), "{text}");
-    assert_eq!(mock.aufzeichnung.anzahl("documents.search"), 2);
-
-    // Widersprüchliche Parameter werden abgewiesen.
-    let fehler = ruf(
-        &server,
-        "outline_search",
-        json!({ "query": "x", "alle_profile": true, "collection_id": "c1" }),
-    )
-    .await
-    .unwrap_err();
-    assert!(
-        fehler.message.contains("passen nicht zu `alle_profile`"),
-        "{}",
-        fehler.message
-    );
+    // Der Zugangsbericht sagt dasselbe, ohne Fehler.
+    let text = ruf(&server, "outline_profile", json!({})).await.unwrap();
+    assert!(text.contains("Zugang fehlt"), "{text}");
 }
 
 #[tokio::test]
 async fn parameterfehler_kosten_kein_netz() {
     let mock = Attrappe::starte().await;
-    let ordner = tempfile::tempdir().unwrap();
-    let (profile, _tresor) = attrappe::speicher(ordner.path(), &[("arbeit", &mock.adresse)]);
-    let server = OutlineServer::neu(profile);
+    let server = OutlineServer::neu(attrappe::zugang(&mock.adresse));
 
     for (werkzeug, argumente) in [
         ("outline_search", json!({ "query": "   " })),
@@ -510,9 +413,7 @@ async fn parameterfehler_kosten_kein_netz() {
 #[tokio::test]
 async fn saemtliche_texte_bleiben_ohne_schluessel() {
     let mock = Attrappe::starte().await;
-    let ordner = tempfile::tempdir().unwrap();
-    let (profile, _tresor) = attrappe::speicher(ordner.path(), &[("arbeit", &mock.adresse)]);
-    let server = OutlineServer::neu(profile);
+    let server = OutlineServer::neu(attrappe::zugang(&mock.adresse));
 
     let texte = [
         ruf(&server, "outline_collections", json!({}))

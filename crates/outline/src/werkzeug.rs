@@ -3,7 +3,7 @@
 
 //! Das Werkzeug „Outline-Wiki“ (SPEC §2, §4).
 //!
-//! [`Outline`] sagt dem Kern, welche Felder ein Profil hat und wie man die
+//! [`Outline`] sagt dem Kern, welche Felder der Zugang hat und wie man die
 //! Verbindung prüft. Die Adresse wird dabei so nachsichtig gelesen, wie die
 //! Vorlage sie liest: ein nackter Host, ein Schrägstrich am Ende, `/api` oder
 //! `/mcp` aus der Dokumentation – alles wird zur Wurzel des Arbeitsbereichs.
@@ -14,13 +14,13 @@ use crate::client::Client;
 use crate::domain::Info;
 use crate::format;
 
-/// Kurzname: Teil der Pfade und des Schlüsselbund-Dienstes.
+/// Kurzname: Teil der Umgebungsvariablen (`OUTLINE_…`) und der Werkzeugnamen.
 pub const NAME: &str = "outline";
-/// Anzeigename auf der Einrichtungsseite und in MCP.
+/// Anzeigename im quiver-Fenster und in MCP.
 pub const TITEL: &str = "Outline-Wiki";
-/// Feldname der Adresse im Profil.
+/// Feldname der Adresse im Zugang (Umgebungsvariable `OUTLINE_URL`).
 pub const ADRESSE: &str = "url";
-/// Feldname des API-Schlüssels im Profil (geheim).
+/// Feldname des API-Schlüssels im Zugang (`OUTLINE_API_KEY`, geheim).
 pub const SCHLUESSEL: &str = "api_key";
 
 /// Das Outline-Werkzeug.
@@ -36,23 +36,33 @@ impl Werkzeug for Outline {
         TITEL
     }
 
+    fn beschreibung(&self) -> &'static str {
+        "Outline-Wiki lesen, schreiben, sortieren und kommentieren."
+    }
+
     fn felder(&self) -> Vec<Feld> {
         vec![
             Feld {
                 name: ADRESSE,
-                titel: "Adresse",
+                titel: "Basis-URL",
                 art: FeldArt::Url,
                 pflicht: true,
                 standard: None,
-                hilfe: "Adresse deines Outline, z. B. https://firma.getoutline.com",
+                hilfe: "z. B. https://wiki.firma.de oder https://firma.getoutline.com",
+                link: None,
             },
             Feld {
                 name: SCHLUESSEL,
-                titel: "API-Schlüssel",
+                titel: "API-Token",
                 art: FeldArt::Passwort,
                 pflicht: true,
                 standard: None,
-                hilfe: "Einstellungen → API & Apps, beginnt mit ol_api_",
+                hilfe:
+                    "In Outline unter Einstellungen → API & Access erstellen, beginnt mit ol_api_",
+                link: Some((
+                    "Token in Outline erstellen",
+                    "${url}/settings/api-and-access",
+                )),
             },
         ]
     }
@@ -172,10 +182,11 @@ mod tests {
     }
 
     #[test]
-    fn werkzeug_nennt_name_titel_und_zwei_felder() {
+    fn werkzeug_nennt_name_titel_beschreibung_und_zwei_felder() {
         let werkzeug = Outline;
         assert_eq!(werkzeug.name(), "outline");
         assert_eq!(werkzeug.titel(), "Outline-Wiki");
+        assert!(werkzeug.beschreibung().contains("Outline-Wiki"));
         let felder = werkzeug.felder();
         assert_eq!(felder.len(), 2);
         assert_eq!(felder[0].name, "url");

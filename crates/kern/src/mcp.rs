@@ -1,43 +1,23 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Was jedes Tool für MCP braucht (SPEC §2, §6): den gemeinsamen Parameter
-//! `profil`, den Hinweis statt eines Fehlers, wenn noch nichts eingerichtet ist,
-//! das lesende Tool `<name>_profile` und das Kürzen langer Texte.
+//! Was jedes Tool für MCP braucht (SPEC §2, §6): den Hinweis statt eines
+//! Fehlers, wenn der Zugang fehlt, das lesende Tool `<name>_profile` und das
+//! Kürzen langer Texte.
 
-use rmcp::ErrorData as McpError;
-// `schemars` heißt so, wie das Derive-Makro es erwartet.
 use rmcp::model::{
     CallToolResult, ContentBlock, Implementation, JsonObject, Tool, ToolAnnotations,
 };
-use rmcp::schemars;
-use serde::Deserialize;
+use rmcp::ErrorData as McpError;
 
-use crate::profil::{ProfilFehler, Profile};
-use crate::{hinweis_einrichten, Profil};
+use crate::hinweis_zugang;
+use crate::profil::{Profil, ProfilFehler};
+use crate::umgebung::Zugang;
 
-/// Der gemeinsame Parameter jedes Tools: welches Profil gemeint ist.
-///
-/// Ohne Angabe gilt das Standardprofil. Tools, die weitere Parameter haben,
-/// binden dieses Feld per `#[serde(flatten)]` ein.
-#[derive(Debug, Clone, Default, Deserialize, rmcp::schemars::JsonSchema)]
-pub struct ProfilWahl {
-    /// Name eines Profils; ohne Angabe das Standardprofil.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profil: Option<String>,
-}
-
-impl ProfilWahl {
-    /// Der gewählte Profilname, falls einer genannt wurde.
-    pub fn name(&self) -> Option<&str> {
-        self.profil.as_deref()
-    }
-}
-
-/// Was ein Tool zurückgibt, wenn kein Profil bereitsteht.
+/// Was ein Tool zurückgibt, wenn kein Zugang bereitsteht.
 #[derive(Debug)]
 pub enum OhneProfil {
-    /// Noch kein Zugang eingerichtet: ein Text, **kein** MCP-Fehler (SPEC §2).
+    /// Zugang fehlt: ein Text, **kein** MCP-Fehler (SPEC §2).
     Hinweis(CallToolResult),
     /// Ein anderer Fehler, als MCP-Fehler ohne Geheimnisse.
     Fehler(McpError),
@@ -60,48 +40,39 @@ pub fn antwort(text: impl Into<String>) -> CallToolResult {
 
 /// Ein Profil holen oder sagen, was der Agent stattdessen sehen soll.
 ///
-/// `ProfilFehler::Keins` wird zum Einrichtungshinweis (kein Fehler), alles
-/// andere zum MCP-Fehler.
+/// [`ProfilFehler::Keins`] wird zum Hinweis auf das quiver-Fenster – ein Text,
+/// **kein** MCP-Fehler (SPEC §2).
 pub fn zugang(titel: &str, ergebnis: Result<Profil, ProfilFehler>) -> Result<Profil, OhneProfil> {
-    ergebnis.map_err(|fehler| match fehler {
-        ProfilFehler::Keins => OhneProfil::Hinweis(antwort(hinweis_einrichten(titel))),
-        sonst => OhneProfil::Fehler(fehler_als_mcp(&sonst)),
-    })
-}
-
-/// Ein Profilfehler als MCP-Fehler. Die Texte der [`ProfilFehler`] nennen keine
-/// Geheimnisse – sie beschreiben nur, was fehlt.
-pub fn fehler_als_mcp(fehler: &ProfilFehler) -> McpError {
-    McpError::internal_error(fehler.to_string(), None)
+    ergebnis.map_err(|_| OhneProfil::Hinweis(antwort(hinweis_zugang(titel))))
 }
 
 /// Der Name, unter dem sich das Tool bei `initialize` meldet:
 /// `quiver-<werkzeug>` mit der Version des Pakets.
-pub fn server_info(profile: &Profile) -> Implementation {
+pub fn server_info(zugang: &Zugang) -> Implementation {
     Implementation::new(
-        format!("quiver-{}", profile.werkzeug()),
+        format!("quiver-{}", zugang.werkzeug()),
         env!("CARGO_PKG_VERSION"),
     )
-    .with_title(profile.titel().to_string())
+    .with_title(zugang.titel().to_string())
 }
 
 /// Name des lesenden Profil-Tools: `<name>_profile`.
-pub fn profile_tool_name(profile: &Profile) -> String {
-    format!("{}_profile", profile.werkzeug())
+pub fn profile_tool_name(zugang: &Zugang) -> String {
+    format!("{}_profile", zugang.werkzeug())
 }
 
-/// Das lesende Tool `<name>_profile`: es ändert nichts, es listet nur.
-pub fn profile_tool(profile: &Profile) -> Tool {
+/// Das lesende Tool `<name>_profile`: es ändert nichts, es zeigt den Zugang.
+pub fn profile_tool(zugang: &Zugang) -> Tool {
     Tool::new(
-        profile_tool_name(profile),
+        profile_tool_name(zugang),
         format!(
-            "Listet die eingerichteten Profile für {} (Name, Beschreibung, Standard, nicht-geheime Felder).",
-            profile.titel()
+            "Zeigt den Zugang für {} aus der Umgebung: Name und nicht-geheime Felder. Geheimnisse stehen nie darin.",
+            zugang.titel()
         ),
         JsonObject::new(),
     )
     .annotate(ToolAnnotations::from_raw(
-        Some(format!("Profile von {}", profile.titel())),
+        Some(format!("Zugang von {}", zugang.titel())),
         Some(true),
         Some(false),
         Some(true),
@@ -109,33 +80,27 @@ pub fn profile_tool(profile: &Profile) -> Tool {
     ))
 }
 
-/// Antwort für `<name>_profile`: alle Profile, ohne Geheimnisse.
+/// Antwort für `<name>_profile`: das eine Profil, ohne Geheimnisse.
 ///
-/// Ist noch keins eingerichtet, kommt der Einrichtungshinweis – wie bei jedem
+/// Fehlt der Zugang, kommt der Hinweis auf das quiver-Fenster – wie bei jedem
 /// anderen Tool.
-pub fn profile_antwort(profile: &Profile) -> Result<CallToolResult, McpError> {
-    let stand = profile.stand().map_err(|fehler| fehler_als_mcp(&fehler))?;
-    if stand.profile.is_empty() {
-        return Ok(antwort(hinweis_einrichten(profile.titel())));
-    }
-
+pub fn profile_antwort(zugang: &Zugang) -> Result<CallToolResult, McpError> {
     // Nur die nicht-geheimen Werte: die Geheimnisse kommen hier nie an.
-    let mut text = format!("Profile für {}:", profile.titel());
-    for profil in &stand.profile {
-        let standard = stand.standard.as_deref() == Some(profil.name.as_str());
-        text.push_str(&format!("\n- {}", profil.name));
-        if standard {
-            text.push_str(" (Standard)");
+    let profil = match zugang.profil() {
+        Ok(profil) => profil,
+        Err(_) => return Ok(antwort(hinweis_zugang(zugang.titel()))),
+    };
+
+    let mut text = format!(
+        "Zugang für {} (aus der Umgebung):\n- {}",
+        zugang.titel(),
+        profil.name
+    );
+    for (name, wert) in &profil.werte {
+        if wert.is_empty() {
+            continue;
         }
-        if !profil.beschreibung.is_empty() {
-            text.push_str(&format!(": {}", profil.beschreibung));
-        }
-        for (name, wert) in &profil.werte {
-            if wert.is_empty() {
-                continue;
-            }
-            text.push_str(&format!("\n  {name}: {wert}"));
-        }
+        text.push_str(&format!("\n  {name}: {wert}"));
     }
     Ok(antwort(text))
 }
@@ -216,21 +181,11 @@ mod tests {
     }
 
     #[test]
-    fn ohne_profil_ist_ein_hinweis_und_kein_fehler() {
+    fn ohne_zugang_ist_ein_hinweis_und_kein_fehler() {
         let ergebnis = zugang("Outline-Wiki", Err(ProfilFehler::Keins));
         let antwort = ergebnis.unwrap_err().in_ergebnis().unwrap();
         let text = antwort.content[0].as_text().unwrap().text.clone();
-        assert!(text.contains("Noch kein Zugang eingerichtet"));
-        assert!(text.contains("Outline-Wiki"));
-    }
-
-    #[test]
-    fn anderer_fehler_wird_zum_mcp_fehler() {
-        let ergebnis = zugang(
-            "Outline-Wiki",
-            Err(ProfilFehler::Unbekannt("gibtsnicht".into())),
-        );
-        let fehler = ergebnis.unwrap_err().in_ergebnis().unwrap_err();
-        assert!(fehler.message.contains("gibtsnicht"));
+        assert!(text.contains("Zugang fehlt"), "{text}");
+        assert!(text.contains("Outline-Wiki"), "{text}");
     }
 }

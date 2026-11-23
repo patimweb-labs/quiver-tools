@@ -11,7 +11,6 @@
 
 #![allow(dead_code)]
 
-use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -22,7 +21,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
 use quiver_outline::Outline;
-use quiver_tools_kern::{Profil, Profile, Tresor, TresorFehler};
+use quiver_tools_kern::Zugang;
 use serde_json::{json, Value};
 
 /// Der Schlüssel, den die Attrappe erwartet. Kein echtes Geheimnis.
@@ -345,52 +344,17 @@ fn antwort(methode: &str, rumpf: &Value) -> Option<Value> {
     Some(daten)
 }
 
-/// Ein eigener Tresor je Test: kein Schlüsselbund, keine gemeinsame Ablage.
-#[derive(Default)]
-pub struct EigenTresor {
-    werte: Mutex<BTreeMap<(String, String), String>>,
+/// Der Zugang, den quiver für dieses Tool setzen würde: `OUTLINE_URL` und
+/// `OUTLINE_API_KEY`. Kein Schlüsselbund, keine Umgebungsvariablen im Prozess.
+pub fn zugang(adresse: &str) -> Zugang {
+    Zugang::mit_umgebung(&Outline, |name| match name {
+        "OUTLINE_URL" => Some(adresse.to_string()),
+        "OUTLINE_API_KEY" => Some(SCHLUESSEL.to_string()),
+        _ => None,
+    })
 }
 
-impl Tresor for EigenTresor {
-    fn lesen(&self, dienst: &str, schluessel: &str) -> Result<Option<String>, TresorFehler> {
-        Ok(griff(&self.werte)
-            .get(&(dienst.to_string(), schluessel.to_string()))
-            .cloned())
-    }
-
-    fn schreiben(&self, dienst: &str, schluessel: &str, wert: &str) -> Result<(), TresorFehler> {
-        griff(&self.werte).insert(
-            (dienst.to_string(), schluessel.to_string()),
-            wert.to_string(),
-        );
-        Ok(())
-    }
-
-    fn loeschen(&self, dienst: &str, schluessel: &str) -> Result<(), TresorFehler> {
-        griff(&self.werte).remove(&(dienst.to_string(), schluessel.to_string()));
-        Ok(())
-    }
-}
-
-/// Ein Profilspeicher mit den genannten Profilen; das erste wird Standard.
-///
-/// `eintraege` sind `(Name, Adresse)`; der API-Schlüssel kommt in den Tresor,
-/// nie in die Datei.
-pub fn speicher(
-    ordner: &std::path::Path,
-    eintraege: &[(&str, &str)],
-) -> (Profile, Arc<EigenTresor>) {
-    let tresor = Arc::new(EigenTresor::default());
-    let profile = Profile::im_ordner(&Outline, tresor.clone(), ordner.to_path_buf());
-    for (name, adresse) in eintraege {
-        let mut profil = Profil::leer(*name);
-        profil
-            .werte
-            .insert("url".to_string(), (*adresse).to_string());
-        profil
-            .geheim
-            .insert("api_key".to_string(), SCHLUESSEL.to_string());
-        profile.speichern(&profil).unwrap();
-    }
-    (profile, tresor)
+/// Ein Zugang, dem nichts gesetzt ist – wie vor dem Eintragen im quiver-Fenster.
+pub fn ohne_zugang() -> Zugang {
+    Zugang::mit_umgebung(&Outline, |_| None)
 }

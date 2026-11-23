@@ -15,8 +15,9 @@
 //! | [`datei`] | Markdown auf die Platte, ohne aus dem Zielordner auszubrechen |
 //! | [`server`] | die MCP-Werkzeuge über stdio |
 //!
-//! Zugänge richtet nur der User auf der Einrichtungsseite ein (SPEC §2); der
-//! API-Schlüssel liegt im Schlüsselbund und erscheint in keiner Antwort.
+//! Den Zugang trägt der User im quiver-Fenster ein (SPEC §2); der Kern liest
+//! ihn aus der Umgebung (`OUTLINE_URL`, `OUTLINE_API_KEY`). Der API-Schlüssel
+//! liegt im Schlüsselbund und erscheint in keiner Antwort.
 
 pub mod client;
 pub mod datei;
@@ -29,4 +30,4 @@ pub use client::{Client, OutlineFehler, Seiten};
 pub use server::OutlineServer;
 pub use werkzeug::{wurzel, Outline, ADRESSE, NAME, SCHLUESSEL, TITEL};
 
-pub use quiver_tools_kern::{starten, Profil, Profile, Werkzeug};
+pub use quiver_tools_kern::{starten, Profil, Werkzeug, Zugang};

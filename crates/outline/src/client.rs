@@ -309,7 +309,7 @@ mod tests {
     const GEHEIM: &str = "ol_api_test_4711";
 
     fn client() -> Client {
-        let mut profil = Profil::leer("arbeit");
+        let mut profil = Profil::leer();
         profil
             .werte
             .insert("url".to_string(), "https://example.test".to_string());
@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn ohne_adresse_und_ohne_schluessel_kein_client() {
-        let mut profil = Profil::leer("arbeit");
+        let mut profil = Profil::leer();
         assert!(matches!(
             Client::aus_profil(&profil),
             Err(OutlineFehler::KeineAdresse)
@@ -338,7 +338,7 @@ mod tests {
 
     #[test]
     fn ungueltige_adresse_wird_gemeldet_ohne_schluessel() {
-        let mut profil = Profil::leer("arbeit");
+        let mut profil = Profil::leer();
         profil
             .werte
             .insert("url".to_string(), "ht tp://example.test".to_string());
@@ -352,7 +352,7 @@ mod tests {
 
     #[test]
     fn die_wurzel_ist_normalisiert() {
-        let mut profil = Profil::leer("arbeit");
+        let mut profil = Profil::leer();
         profil
             .werte
             .insert("url".to_string(), "firma.getoutline.com/api/".to_string());

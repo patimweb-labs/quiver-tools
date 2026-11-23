@@ -45,7 +45,7 @@ pub fn zustandszeichen(dokument: &Dokument) -> String {
     }
 }
 
-/// Was `Werkzeug::testen` auf der Einrichtungsseite meldet.
+/// Was `Werkzeug::testen` meldet (Unterbefehl `testen`).
 pub fn info(info: &Info) -> String {
     let name = info
         .user
@@ -302,110 +302,6 @@ pub fn kommentare(kommentare: &[Kommentar], dokument_id: &str) -> String {
     zeilen.join("\n")
 }
 
-/// Ein Treffer einer Suche über mehrere Profile.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct Profiltreffer {
-    pub profil: String,
-    pub beschreibung: Option<String>,
-    pub treffer: Vec<Treffer>,
-    /// Warum dieses Profil nicht durchsucht werden konnte.
-    pub fehler: Option<String>,
-}
-
-/// Eine Suche über **alle** Profile (SPEC §6: „alle Workspaces“ der Vorlage).
-pub fn mehrfachsuche(ergebnisse: &[Profiltreffer], suche: &str) -> String {
-    let mit_treffern: Vec<&Profiltreffer> = ergebnisse
-        .iter()
-        .filter(|ergebnis| !ergebnis.treffer.is_empty())
-        .collect();
-    let anzahl: usize = mit_treffern
-        .iter()
-        .map(|ergebnis| ergebnis.treffer.len())
-        .sum();
-    let gescheitert: Vec<&Profiltreffer> = ergebnisse
-        .iter()
-        .filter(|ergebnis| ergebnis.fehler.is_some())
-        .collect();
-
-    let mut abschnitte: Vec<String> = Vec::new();
-    if anzahl == 0 {
-        abschnitte.push(format!(
-            "Kein Dokument passt zu „{suche}“ in den {} durchsuchten Profilen.",
-            ergebnisse.len()
-        ));
-    } else {
-        abschnitte.push(format!(
-            "Suche „{suche}“ über {} Profile – {anzahl} Treffer.",
-            ergebnisse.len()
-        ));
-        abschnitte.push(
-            "Ids gelten nur im eigenen Profil: zum Lesen dasselbe `profil` mitgeben.".to_string(),
-        );
-    }
-
-    for ergebnis in &mit_treffern {
-        let name = match &ergebnis.beschreibung {
-            Some(beschreibung) if !beschreibung.is_empty() => {
-                format!("{} ({beschreibung})", ergebnis.profil)
-            }
-            _ => ergebnis.profil.clone(),
-        };
-        let mut zeilen = vec![format!("[{name}] {} Treffer:", ergebnis.treffer.len())];
-        for (nummer, treffer) in ergebnis.treffer.iter().enumerate() {
-            let dokument = &treffer.document;
-            zeilen.push(format!(
-                "  {}. {}{}",
-                nummer + 1,
-                dokument.titel(),
-                zustandszeichen(dokument)
-            ));
-            zeilen.push(format!(
-                "     id {} | profil {} | geändert {}",
-                dokument.kennung(),
-                ergebnis.profil,
-                kurzdatum(dokument.geaendert_am.as_deref())
-            ));
-            let kontext = treffer
-                .context
-                .split_whitespace()
-                .collect::<Vec<_>>()
-                .join(" ");
-            if !kontext.is_empty() {
-                zeilen.push(format!("     {}", kuerzen_roh(&kontext, KONTEXT_MAX)));
-            }
-        }
-        abschnitte.push(zeilen.join("\n"));
-    }
-
-    if anzahl > 0 {
-        let leer: Vec<&str> = ergebnisse
-            .iter()
-            .filter(|ergebnis| ergebnis.fehler.is_none() && ergebnis.treffer.is_empty())
-            .map(|ergebnis| ergebnis.profil.as_str())
-            .collect();
-        if !leer.is_empty() {
-            abschnitte.push(format!("\nNichts gefunden in: {}.", leer.join(", ")));
-        }
-    }
-
-    if !gescheitert.is_empty() {
-        let mut zeilen = vec![format!(
-            "\n{} Profil(e) ließen sich nicht durchsuchen:",
-            gescheitert.len()
-        )];
-        for ergebnis in gescheitert {
-            zeilen.push(format!(
-                "- {}: {}",
-                ergebnis.profil,
-                ergebnis.fehler.clone().unwrap_or_default()
-            ));
-        }
-        abschnitte.push(zeilen.join("\n"));
-    }
-
-    abschnitte.join("\n")
-}
-
 /// Der Hinweis, wie es weitergeht, wenn eine Seite voll war.
 pub fn weitere(seiten: Option<&Seiten>, anzahl: usize) -> String {
     let Some(seiten) = seiten else {
@@ -616,45 +512,6 @@ mod tests {
         );
         assert!(text.contains("  - Bob am - (id k2)\n    Antwort"), "{text}");
         assert!(f::kommentare(&[], "d1").contains("Keine Kommentare"));
-    }
-
-    #[test]
-    fn mehrfachsuche_nennt_profil_und_fehler() {
-        let treffer: Treffer = serde_json::from_value(json!({
-            "context": "Kontext",
-            "document": { "id": "d1", "title": "Handbuch" }
-        }))
-        .unwrap();
-        let ergebnisse = vec![
-            Profiltreffer {
-                profil: "arbeit".to_string(),
-                beschreibung: Some("Büro-Wiki".to_string()),
-                treffer: vec![treffer],
-                fehler: None,
-            },
-            Profiltreffer {
-                profil: "kunde".to_string(),
-                beschreibung: None,
-                treffer: Vec::new(),
-                fehler: Some("Nicht erreichbar".to_string()),
-            },
-        ];
-        let text = f::mehrfachsuche(&ergebnisse, "handbuch");
-        assert!(text.contains("über 2 Profile – 1 Treffer"), "{text}");
-        assert!(text.contains("[arbeit (Büro-Wiki)] 1 Treffer:"), "{text}");
-        assert!(text.contains("profil arbeit"), "{text}");
-        assert!(
-            text.contains("1 Profil(e) ließen sich nicht durchsuchen:"),
-            "{text}"
-        );
-        assert!(text.contains("- kunde: Nicht erreichbar"), "{text}");
-
-        let leer = vec![Profiltreffer {
-            profil: "arbeit".to_string(),
-            treffer: Vec::new(),
-            ..Profiltreffer::default()
-        }];
-        assert!(f::mehrfachsuche(&leer, "nichts").contains("Kein Dokument"));
     }
 
     #[test]

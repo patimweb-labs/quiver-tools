@@ -3,34 +3,29 @@
 
 //! Gemeinsamer Kern aller quiver-tools (SPEC.md §2–§4).
 //!
-//! Ein Tool beschreibt sich über [`Werkzeug`]: Name, Titel, die Felder eines
-//! Profils und wie man eine Verbindung testet. Der Kern liefert daraus
-//! Profilspeicher, Tresor, Einrichtungsseite und MCP-Hilfen.
-//!
-//! Die Schnittstelle legt der Architekt fest; die Umsetzung steht in
-//! `docs/aufgaben/01-kern.md`.
+//! Ein Tool beschreibt sich über [`Werkzeug`]: Name, Titel, Beschreibung, die
+//! Felder seines Zugangs und wie man eine Verbindung testet. Der Kern liest
+//! daraus den Zugang aus der Umgebung (quiver füllt die Felder des
+//! Bibliothekseintrags), baut den Bibliothekseintrag für mcp-quiver und liefert
+//! die MCP-Hilfen.
 
-use std::collections::BTreeMap;
-
-pub mod browser;
+pub mod eintrag;
 pub mod mcp;
 pub mod profil;
-pub mod seite;
 pub mod start;
-pub mod tresor;
+pub mod umgebung;
 
-pub use browser::{Browser, EchterBrowser, Merker};
-pub use mcp::{antwort, kuerzen, zugang, OhneProfil, ProfilWahl};
-pub use profil::{ProfilFehler, Profile, Stand};
-pub use seite::{einrichten, einrichten_mit, einrichten_mit_profilen, Ende};
+pub use eintrag::{eintrag, Eintrag, Herkunft, Laufzeit, Quelle};
+pub use mcp::{antwort, kuerzen, zugang, OhneProfil};
+pub use profil::{Profil, ProfilFehler};
 pub use start::{aufruf_aus_args, starten, Aufruf};
-pub use tresor::{Schluesselbund, SpeicherTresor, Tresor, TresorFehler};
+pub use umgebung::Zugang;
 
-/// Art eines Feldes auf der Einrichtungsseite.
+/// Art eines Feldes im quiver-Fenster.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FeldArt {
     Text,
-    /// Geheim: liegt im Schlüsselbund, kommt nie zurück an Browser, Log oder Agent.
+    /// Geheim: kommt als Umgebungsvariable, aber nie zurück an Agent, Log oder Datei.
     Passwort,
     Zahl,
     Schalter,
@@ -39,48 +34,32 @@ pub enum FeldArt {
     Auswahl(Vec<(String, String)>),
 }
 
-/// Ein Feld eines Profils.
+/// Ein Feld des Zugangs, wie der User es im quiver-Fenster sieht.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Feld {
-    /// Schlüssel, z. B. `api_key`.
+    /// Schlüssel, z. B. `api_key`; Teil der Umgebungsvariablen `<NAME>_<FELD>`.
     pub name: &'static str,
-    /// Beschriftung auf der Seite.
+    /// Beschriftung im quiver-Fenster.
     pub titel: &'static str,
     pub art: FeldArt,
     pub pflicht: bool,
     pub standard: Option<&'static str>,
     /// Kurzer Hilfetext unter dem Feld.
     pub hilfe: &'static str,
-}
-
-/// Ein gespeichertes Profil: nicht-geheime Werte plus geladene Geheimnisse.
-/// `Debug` zeigt Geheimnisse nie.
-#[derive(Clone, PartialEq, Eq)]
-pub struct Profil {
-    pub name: String,
-    pub beschreibung: String,
-    pub werte: BTreeMap<String, String>,
-    pub geheim: BTreeMap<String, String>,
-}
-
-impl std::fmt::Debug for Profil {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Profil")
-            .field("name", &self.name)
-            .field("beschreibung", &self.beschreibung)
-            .field("werte", &self.werte)
-            .field("geheim", &self.geheim.keys().collect::<Vec<_>>())
-            .finish()
-    }
+    /// Optionaler Hilfe-Link (Text, Adresse). Die Adresse darf `${feld}` anderer Felder enthalten;
+    /// quiver zeigt ihn als Knopf neben dem Feld und öffnet ihn im Browser.
+    pub link: Option<(&'static str, &'static str)>,
 }
 
 /// Was ein Tool dem Kern über sich sagt.
 pub trait Werkzeug: Send + Sync + 'static {
-    /// Kurzname, Teil der Pfade und des Schlüsselbund-Dienstes: `outline` → `quiver-outline`.
+    /// Kurzname, Teil der Umgebungsvariablen und der Werkzeugnamen: `outline` → `quiver-outline`.
     fn name(&self) -> &'static str;
     /// Anzeigename, z. B. „Outline-Wiki“.
     fn titel(&self) -> &'static str;
-    /// Die Felder eines Profils.
+    /// Ein Satz, der im quiver-Fenster unter dem Titel steht.
+    fn beschreibung(&self) -> &'static str;
+    /// Die Felder des Zugangs.
     fn felder(&self) -> Vec<Feld>;
     /// Verbindung prüfen; `Ok` mit einer kurzen Meldung („Angemeldet als …“).
     /// Fehlertexte dürfen keine Geheimnisse enthalten.
@@ -90,9 +69,21 @@ pub trait Werkzeug: Send + Sync + 'static {
     ) -> impl std::future::Future<Output = anyhow::Result<String>> + Send;
 }
 
-/// Text, den jedes Tool liefert, wenn noch kein Profil existiert (SPEC §2).
-pub fn hinweis_einrichten(titel: &str) -> String {
-    format!(
-        "Noch kein Zugang eingerichtet – bitte im quiver-Fenster unter Tools → {titel} auf „Einrichten“ klicken."
-    )
+/// Text, den jedes Tool liefert, wenn der Zugang fehlt (SPEC §2).
+pub fn hinweis_zugang(titel: &str) -> String {
+    format!("Zugang fehlt – bitte im quiver-Fenster unter Tools → {titel} die Angaben eintragen.")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn der_hinweis_nennt_das_quiver_fenster_und_den_titel() {
+        let text = hinweis_zugang("Outline-Wiki");
+        assert_eq!(
+            text,
+            "Zugang fehlt – bitte im quiver-Fenster unter Tools → Outline-Wiki die Angaben eintragen."
+        );
+    }
 }

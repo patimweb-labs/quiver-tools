@@ -13,3 +13,8 @@
 - [ ] E-Mail: Gmail wird über die Domain (`gmail.com`, `googlemail.com`) erkannt, damit keine zweite Kopie in „Gesendet“ landet. Andere Anbieter, die selbst ablegen, bekommen die Kopie doppelt.
 - [ ] E-Mail: STARTTLS (IMAP) ist eigener Code und nur über den ignorierten `imap_echt`-Test gegen einen echten Server geprüft.
 - [ ] E-Mail: mehrere Nachrichten je Aufruf (UID-Bereiche, Massen-Flaggen) gibt es nicht; die Vorlage auch nicht.
+- [ ] ZEP: Den Aufbau der echten ZEP-Anmeldeseiten kennen wir nicht. Der HTML-Formularleser ist gegen die eigene Attrappe getestet; der begleitete erste Test ist `quiver-zep routine-pruefen`. MFA/Einmalcode/Captcha enden mit einer Meldung – dann bleibt `anmelden --browser`.
+- [ ] ZEP: `ZEP_TRESOR=speicher` (statt Schlüsselbund) ist ein Cheat für die Kindprozess-Tests und für Läufe ohne Schlüsselbund. Ticket: entweder einen Test-Tresor nur hinter `#[cfg(test)]` oder den Schalter dokumentiert lassen.
+- [ ] ZEP: Sperrzustand liegt je Zustandsordner (`ZEP_ZUSTAND`, sonst `$XDG_STATE_HOME/quiver-zep`). Zwei quiver-Profile auf einem Gerät teilen ihn – gewollt (ein Konto), aber nicht geprüft.
+- [ ] ZEP: Die Rückleitung wird als `http://127.0.0.1` registriert (Port egal, RFC 8252 §7.3). Akzeptiert ein Server das nicht, braucht der Notfall eine Registrierung je Port (ADR 0004).
+- [ ] ZEP: `tracing`-Ereignisse des Werkzeugs sind stumm, weil der Kern keinen Subscriber setzt – die Meldungen von `anmelden`/`routine-pruefen` gehen stattdessen auf stdout.

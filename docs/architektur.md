@@ -1,6 +1,6 @@
 # Architektur
 
-> Stand: 2026-11-23, nach Aufgabe 04. Gilt für den Kern (`crates/kern`) und alle
+> Stand: 2026-11-23, nach Aufgabe 06. Gilt für den Kern (`crates/kern`) und alle
 > Tools, die darauf aufsetzen. Festlegungen und Preise: [../SPEC.md](../SPEC.md).
 
 ## Richtung
@@ -195,6 +195,61 @@ Regeln, die dort gelten:
 Die Wahl der IMAP-Crate und die eine zusätzliche Abhängigkeit stehen in
 [adr/0003-imap-mit-async-imap.md](adr/0003-imap-mit-async-imap.md).
 
+## Ein drittes Tool: `crates/zep` – ein Vermittler
+
+`quiver-zep` baut ZEP **nicht** nach: es ist ein lokaler stdio-MCP, der den offiziellen
+ZEP-MCP (Streamable HTTP, OAuth) anspricht und dessen Werkzeuge 1:1 durchreicht. Eigene
+Aufgabe: angemeldet bleiben.
+
+| Modul | Aufgabe | Zustand |
+|---|---|---|
+| `werkzeug` | `Zep` (Name, Titel, Felder, `testen`), `ZepKonfig` (Adresse, Benutzer, Passwort, Zustandsordner, Takt) | keiner |
+| `metadaten` | `/.well-known/oauth-protected-resource…` und `…/oauth-authorization-server…` (RFC 9728/8414) | einmal je Lauf |
+| `oauth` | Registrierung (DCR), Authorize-Adresse, Code-Tausch, Erneuerung | keiner |
+| `pkce` | Verifier, Challenge (S256), `state` | keiner |
+| `html` | Formularleser: Formulare, Felder, Auswahllisten, Knöpfe | keiner |
+| `cookies` | Cookie-Speicher des Ablaufs (Host, Pfad, `Secure`) | je Ablauf |
+| `routine` | der Ablauf ohne Browser: Formular, Zustimmung, Rückleitung abfangen, Code tauschen | je Ablauf |
+| `browser` | `Browser`-Naht: `OeffneBrowser` (Notfall), `KeinBrowser` | keiner |
+| `anmeldung` | Token, Tresor, Sperrschutz, Hintergrund-Erneuerung, `status` | ein Token im Speicher, Refresh im Tresor |
+| `tresor` | `Tresor`-Naht: `Schluesselbund` (Dienst `quiver-zep`), `SpeicherTresor` | Refresh-Token, `client_id` |
+| `sperre` | Sperrzustand als Datei (`routine-gesperrt.json`) | eine Datei |
+| `vermittler` | rmcp-Client zum ZEP-MCP, 401 → erneuern → einmal wiederholen | eine Verbindung |
+| `server` | der MCP-Server über stdio, Liste beim Start, `list_changed` weitergeben | Werkzeugliste |
+| `befehle` | `anmelden`, `anmelden --browser`, `status`, `abmelden`, `routine-pruefen` | keiner |
+
+Datenfluss eines Aufrufs:
+
+```
+MCP tools/call                 quiver-zep anmelden
+  → server::aufrufen             → befehle::ausfuehren
+  → mcp::zugang (Umgebung)        → anmeldung::routine_lauf
+  → vermittler::aufrufen          → routine::ausfuehren (HTML, Cookies, PKCE)
+    → anmeldung::access_token     → oauth::code_tauschen
+      (Speicher → Refresh → Routine)
+    → rmcp-Client (Bearer) → ZEP-MCP
+  → CallToolResult (1:1)
+```
+
+Regeln, die dort gelten:
+
+- **Der Ablauf meldet, was er sieht.** `html::Seite::kurzfassung` nennt Formular- und
+  Feld**namen**; Werte stehen in keinem Bericht, keinem Fehler und keinem Log.
+- **Zugangsdaten gehen nur an den Authorization-Host.** Eine Weiterleitung auf einen
+  fremden Host bricht ab, statt das Passwort dorthin zu tragen.
+- **Ein Versuch, dann Sperre.** Jeder Fehlschlag der Routine schreibt
+  `routine-gesperrt.json`; frei wird sie nur durch eine erfolgreiche Anmeldung über den
+  Knopf (`anmelden`). Automatische Wege wiederholen nie.
+- **Nur eine Erneuerung gleichzeitig.** Refresh und Routine liegen unter einer Sperre;
+  sonst nähmen sich zwei Erneuerungen das rotierte Refresh-Token weg.
+- **Der Browser ist Notfall.** `KeinBrowser` ist der Normalfall; nur `anmelden --browser`
+  öffnet den Standardbrowser und lauscht auf `127.0.0.1`.
+- **Werkzeuge unverändert.** Namen, Schemas und Annotationen kommen von ZEP; nur
+  `zep_profile` ergänzt der Kern.
+
+Warum Vermittler statt Nachbau, warum eine eigene Routine und wie der Sperrschutz
+funktioniert: [adr/0004-zep-offizieller-mcp.md](adr/0004-zep-offizieller-mcp.md).
+
 ## Tests
 
 - Attrappen (axum) auf `127.0.0.1`, kein echter Dienst. Bei E-Mail stehen die
@@ -210,6 +265,11 @@ Die Wahl der IMAP-Crate und die eine zusätzliche Abhängigkeit stehen in
   importieren.
 - SMTP wird zusätzlich gegen `lettre`s Stub-Transport geprüft: Kopfzeilen, Threading
   und Umschlag (CC/BCC im Umschlag, BCC **nicht** in den Kopfzeilen).
+- `crates/zep/tests/attrappe` bildet den ZEP-MCP nach: Metadaten, DCR, Anmelde- und
+  Zustimmungsseite mit CSRF und Cookies, Token mit Rotation und `invalid_grant`, dazu
+  ein Mini-MCP-Server hinter `Bearer`, der auf Wunsch `tools/list_changed` schickt.
+  Kein Test spricht mit zep-online.de; `ZEP_TRESOR=speicher` hält den Schlüsselbund aus
+  dem Spiel.
 - `crates/email/tests/imap_echt.rs` ist `#[ignore]` und spricht nur auf Anforderung mit
   einem echten IMAP-Server (`EMAIL_TEST_*`, z. B. GreenMail im Docker). Ohne diese
   Umgebung geht kein Test ins Netz.

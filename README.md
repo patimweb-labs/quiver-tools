@@ -3,7 +3,8 @@
 > **Status: in Arbeit.** Spezifikation in [SPEC.md](SPEC.md).
 
 Eigene MCP-Tools für [mcp-quiver](https://github.com/patimweb-labs/mcp-quiver) in reinem Rust:
-**Outline-Wiki**, **E-Mail** (IMAP/SMTP), **SSH/SFTP** und **ABAP** (SAP ADT). Die Zugangsdaten trägt
+**Outline-Wiki**, **E-Mail** (IMAP/SMTP), **ZEP** (über den offiziellen ZEP-MCP), **SSH/SFTP** und
+**ABAP** (SAP ADT). Die Zugangsdaten trägt
 der User **im quiver-Fenster** ein – unter Tools → <Titel>. quiver legt Geheimes in den Schlüsselbund
 und setzt beim Start die Umgebung des Tools; Passwörter und API-Keys gehen nie durch einen Agenten.
 
@@ -198,6 +199,66 @@ IMAP `1143`, SMTP `1025`, and switch `zertifikat_pruefen` off – the bridge pre
 self-signed certificate. The tool honours that switch **only** for `127.0.0.1` and
 `localhost`; for any other host certificate checking stays on.
 
+## quiver-zep (ZEP über den offiziellen ZEP-MCP)
+
+`quiver-zep` is the third tool, and the only one that is a **broker**: it does not
+rebuild ZEP. It is a local stdio MCP that talks to the official ZEP MCP (Streamable
+HTTP, OAuth) and passes its tools through unchanged – names, schemas and annotations.
+Its own job is only to **stay logged in**.
+
+Setup (once), in quiver under **Tools → ZEP**:
+
+| Field | Required | Notes |
+|---|---|---|
+| `url` | yes | MCP address, e.g. `https://www.zep-online.de/zepneoimpulse/next/mcp` |
+| `benutzer` | yes | ZEP user name |
+| `passwort` | yes | ZEP password; lives in the keychain and reaches the tool only as `ZEP_PASSWORT` |
+
+```bash
+quiver-zep eintrag           # library entry with these fields
+quiver-zep testen            # signs in and names the tools ZEP offers
+quiver-zep anmelden          # the normal sign-in: user name + password, no browser
+quiver-zep anmelden --browser  # emergency only: browser with loopback 127.0.0.1
+quiver-zep status            # is a session there? (exit 1 if not)
+quiver-zep abmelden          # delete the refresh token, lift the lock
+quiver-zep routine-pruefen   # run the routine once and report every step
+```
+
+What it does on its own:
+
+- **Client registration (DCR)** once per installation: `client_name "quiver-zep"`,
+  `redirect_uris ["http://127.0.0.1"]`, `token_endpoint_auth_method "none"`. Everything
+  else – authorization, token and registration endpoints, the scope (`mcp:use`), PKCE
+  S256 – comes from the `/.well-known` metadata. Only the base address is hard-coded.
+- **Tokens:** the (rotating) refresh token in the keychain (service `quiver-zep`, key
+  `<url>`), the access token in memory only. A rotated refresh token is stored at once.
+- **Background renewal:** while the process runs, the access token is renewed at 80 % of
+  its lifetime, even when no tool is called – so the refresh token never expires from
+  idleness.
+- **Routine without a browser:** the authorize flow runs over HTTP with its own cookie
+  jar – load the login form, read its fields (action, hidden fields, CSRF), send user
+  name and password, confirm the consent page, intercept the redirect to
+  `127.0.0.1` (not followed), exchange code + PKCE verifier. The pages are unknown, so
+  a small HTML form reader (`src/html.rs`) reads them and the routine reports step by
+  step what it sees – form and field **names**, never values. A page it cannot classify
+  aborts with that message.
+- **Credentials stay on the authorization host.** User name and password are only sent to
+  a form whose address is on the same host as the authorization endpoint; a redirect to a
+  foreign host aborts the routine instead of carrying the password there.
+- **Lockout protection:** ZEP locks an account after five failed attempts. Every
+  failure of the routine is **one** attempt; after it the routine is locked (state in a
+  file, so it survives restarts) until the next successful sign-in via the button.
+  It never retries in a loop.
+- **Pass-through:** `list_tools`/`call_tool` go 1:1 to ZEP; a 401 renews the token and
+  repeats the call once. The tool list is fetched at startup, and when ZEP sends
+  `tools/list_changed` the broker refetches it and sends `list_changed` itself.
+  `zep_profile` (the usual read-only tool of every quiver tool) is added.
+
+If nothing works, every tool answers “ZEP-Anmeldung nötig – bitte im quiver-Fenster
+unter Tools → ZEP auf „Anmelden“ klicken.” as text, not as an MCP error; `status` exits 1.
+
+Decision record: [docs/adr/0004-zep-offizieller-mcp.md](docs/adr/0004-zep-offizieller-mcp.md).
+
 ## Entwickeln
 
 ```bash
@@ -216,11 +277,14 @@ cargo run -p quiver-tools-kern --example demo
 ```
 
 Tests laufen nur gegen Attrappen – bei Outline ein axum-Server auf `127.0.0.1`, bei
-E-Mail die Traits `Postfach`/`Versand` – und setzen die Umgebung als Paare im Speicher;
+E-Mail die Traits `Postfach`/`Versand`, bei ZEP eine axum-Attrappe mit Metadaten, DCR,
+Anmelde- und Zustimmungsseite, Token-Endpunkt und einem Mini-MCP-Server hinter Bearer –
+und setzen die Umgebung als Paare im Speicher;
 kein Test spricht mit einem echten Dienst, kein Test braucht einen Schlüsselbund. Der
 SMTP-Teil wird zusätzlich gegen `lettre`s Stub-Transport geprüft (Kopfzeilen, Threading,
-Empfänger). Die Ende-zu-Ende-Tests starten `quiver-outline` bzw. `quiver-email` als
-Kindprozess mit gesetzter und ohne Umgebung.
+Empfänger). Die Ende-zu-Ende-Tests starten `quiver-outline`, `quiver-email` bzw.
+`quiver-zep` als Kindprozess mit gesetzter und ohne Umgebung. `quiver-zep` läuft dabei mit
+`ZEP_TRESOR=speicher`, damit kein Test je an den echten Schlüsselbund kommt.
 
 Ein Test spricht auf Anforderung mit einem echten IMAP-Server: `tests/imap_echt.rs` ist
 `#[ignore]` und wird über `EMAIL_TEST_*` gesteuert. Beispiel mit GreenMail im Docker

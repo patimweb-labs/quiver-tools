@@ -12,6 +12,7 @@ name = "quiver-zep"
 path = "src/main.rs"
 
 [dependencies]
+httpdate = "1.0.3"
 quiver-tools-kern = { path = "../kern" }
 anyhow = "1"
 base64 = "0.22"

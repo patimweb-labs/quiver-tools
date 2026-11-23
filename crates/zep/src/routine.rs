@@ -46,6 +46,15 @@ pub enum RoutineFehler {
     /// Benutzer oder Passwort stimmt nicht.
     #[error("Benutzer oder Passwort wurde abgelehnt – die Anmeldung kommt nicht weiter.")]
     Abgelehnt,
+    /// Nach dem Absenden kam eine Weiterleitung (die Anmeldung wurde
+    /// angenommen), am Ende aber wieder das Anmeldeformular: die Sitzung ist
+    /// unterwegs verloren gegangen – kein falsches Passwort.
+    #[error(
+        "ZEP hat die Anmeldung angenommen und weitergeleitet, danach kam aber wieder das \
+         Anmeldeformular – die Sitzung ging unterwegs verloren. Kein falsches Passwort; \
+         bitte den Bericht an den Entwickler geben."
+    )]
+    SitzungVerloren,
     /// Der Anmeldedienst hat einen Fehler zurückgegeben (`error=…`).
     #[error("Der Anmeldedienst meldet: {0}")]
     Dienst(String),
@@ -140,16 +149,26 @@ impl<'a> Routine<'a> {
         let mut methode = Methode::Get;
         let mut rumpf: Option<Vec<(String, String)>> = None;
         let mut anmeldung_gesendet = false;
+        // Wurde nach dem Absenden weitergeleitet? Dann hat der Dienst die
+        // Anmeldung angenommen.
+        let mut nach_anmeldung_weitergeleitet = false;
 
         for nummer in 2..=MAX_SCHRITTE {
+            let gesendet = kekse.namen_fuer(&ziel);
             let antwort = self.sende(methode, &ziel, rumpf.take(), &mut kekse).await?;
+            // Nur Namen, Domain und Pfad – nie Werte.
+            self.melde(format!(
+                "{nummer}. Kekse gesendet: {gesendet}; danach gespeichert: {}",
+                kekse.uebersicht()
+            ));
 
             match antwort {
                 Antwort::Weiterleitung(ort) => {
                     self.melde(format!(
-                        "{nummer}. {} → Weiterleitung nach {}",
+                        "{nummer}. {} → Weiterleitung nach {}{}",
                         kurz(&ziel),
-                        kurz(&ort)
+                        kurz(&ort),
+                        parameternamen(&ort)
                     ));
                     if ist_rueckleitung(&ort, &rueckleitung) {
                         let (code, zurueck_state, fehler) = aus_query(&ort);
@@ -177,6 +196,9 @@ impl<'a> Routine<'a> {
                         self.melde("Code gegen Token getauscht – angemeldet.".to_string());
                         return Ok(antwort);
                     }
+                    if anmeldung_gesendet {
+                        nach_anmeldung_weitergeleitet = true;
+                    }
                     ziel = ort;
                     methode = Methode::Get;
                 }
@@ -191,7 +213,11 @@ impl<'a> Routine<'a> {
 
                     if let Some(formular) = seite.anmeldeformular() {
                         if anmeldung_gesendet {
-                            return Err(RoutineFehler::Abgelehnt);
+                            return Err(if nach_anmeldung_weitergeleitet {
+                                RoutineFehler::SitzungVerloren
+                            } else {
+                                RoutineFehler::Abgelehnt
+                            });
                         }
                         let paare = formular.anmeldepaar(self.benutzer, self.passwort).map_err(
                             |fehler| {
@@ -364,6 +390,20 @@ fn ist_rueckleitung(ort: &Url, rueckleitung: &Url) -> bool {
         && ort.host_str() == rueckleitung.host_str()
         && ort.port() == rueckleitung.port()
         && pfad(ort.path()) == pfad(rueckleitung.path())
+}
+
+/// Die Namen der Query-Parameter einer Adresse – ohne Werte (der Code und
+/// Sitzungskennungen gehören nicht in einen Bericht).
+fn parameternamen(url: &Url) -> String {
+    let namen: Vec<String> = url
+        .query_pairs()
+        .map(|(name, _)| name.into_owned())
+        .collect();
+    if namen.is_empty() {
+        String::new()
+    } else {
+        format!(" (Parameter: {})", namen.join(", "))
+    }
 }
 
 /// Liegt die Adresse auf dem erlaubten Host?

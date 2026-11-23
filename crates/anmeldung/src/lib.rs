@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Patrick Weppelmann
 
 //! Anmeldung an Microsoft Entra ID im Browser (SPEC.md §2):
-//! Authorization Code + PKCE, Rückleitung über `http://localhost:<port>`.
+//! Authorization Code + PKCE, Rückleitung über `http://127.0.0.1:<port>`.
 //!
 //! Die Schnittstelle legt der Architekt fest; die Umsetzung steht in
 //! `docs/aufgaben/01-anmeldung.md`.
@@ -23,6 +23,12 @@ pub struct Konfig {
     /// Wie lange der Lauscher im Hintergrund höchstens offen bleibt (Standard 5 min).
     pub lauscher_hoechstens: Duration,
 }
+
+/// Eingebaute Client-ID der einen Multi-Tenant-Registrierung (SPEC.md §2a).
+///
+/// Kein User und keine Firma muss etwas registrieren; eine eigene Registrierung
+/// ist möglich, `M365_CLIENT_ID` überschreibt diesen Wert.
+pub const STANDARD_CLIENT_ID: &str = "9ae8e0db-e05f-4db8-adde-83d70d416eeb";
 
 pub const STANDARD_SCOPES: &[&str] = &[
     "User.Read",

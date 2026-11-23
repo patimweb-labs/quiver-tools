@@ -289,16 +289,19 @@ fn konfig_aus_der_umgebung() {
     std::env::remove_var("M365_TENANT");
     std::env::remove_var("M365_SCOPES");
     std::env::remove_var("M365_AUTHORITY");
-    assert!(Konfig::aus_umgebung().is_err(), "client_id ist Pflicht");
 
-    std::env::set_var("M365_CLIENT_ID", "  abc-123  ");
+    // Ohne `M365_CLIENT_ID` gilt die eingebaute Registrierung (SPEC.md §2a).
     let konfig = Konfig::aus_umgebung().expect("konfig");
-    assert_eq!(konfig.client_id, "abc-123");
+    assert_eq!(konfig.client_id, m365_anmeldung::STANDARD_CLIENT_ID);
     assert_eq!(konfig.tenant, "organizations");
     assert_eq!(konfig.scopes.len(), m365_anmeldung::STANDARD_SCOPES.len());
     assert_eq!(konfig.authority, "https://login.microsoftonline.com");
     assert_eq!(konfig.warten, Duration::from_secs(45));
     assert_eq!(konfig.lauscher_hoechstens, Duration::from_secs(300));
+
+    std::env::set_var("M365_CLIENT_ID", "  abc-123  ");
+    let konfig = Konfig::aus_umgebung().expect("konfig");
+    assert_eq!(konfig.client_id, "abc-123", "eigene Registrierung gewinnt");
 
     std::env::set_var("M365_TENANT", "mein-tenant");
     std::env::set_var("M365_SCOPES", "User.Read, Mail.Send");

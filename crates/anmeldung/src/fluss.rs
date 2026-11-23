@@ -3,6 +3,9 @@
 
 //! Der Browser-Ablauf (SPEC.md §2): Loopback-Lauscher, PKCE (S256), `state`,
 //! Code-Tausch. Hier steht keine Politik – nur der eine Vorgang.
+//!
+//! Die Rückleitung zeigt auf `http://127.0.0.1:<port>`: der Lauscher bindet an
+//! 127.0.0.1, und `localhost` kann im Browser zuerst als `::1` aufgelöst werden.
 
 use std::borrow::Cow;
 use std::sync::{Arc, Mutex};
@@ -133,7 +136,7 @@ pub(crate) async fn browser_anmeldung<B: Browser>(
         .local_addr()
         .map_err(|fehler| FlussFehler::Sonstiges(format!("Lauscher ohne Adresse: {fehler}")))?
         .port();
-    let umleitung = RedirectUrl::new(format!("http://localhost:{port}"))
+    let umleitung = RedirectUrl::new(format!("http://127.0.0.1:{port}"))
         .map_err(|fehler| FlussFehler::Sonstiges(format!("Umleitung ungültig: {fehler}")))?;
 
     let state = zufalls_state();

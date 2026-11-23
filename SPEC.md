@@ -14,7 +14,7 @@ Läuft auch ohne quiver: ein Programm `quiver-m365`, MCP über stdio.
 ## 2. Anmeldung: Browser, Authorization Code + PKCE
 
 **Festlegung:** OAuth 2.0 Authorization Code Flow mit PKCE (S256) als *öffentlicher Client*,
-Rückleitung über Loopback (`http://localhost:<freier Port>`).
+Rückleitung über Loopback (`http://127.0.0.1:<freier Port>`; nicht `localhost`, das Browser zuerst als `::1` auflösen können).
 *Begründung:* Der User meldet sich im gewohnten Browser an (inkl. MFA, SSO, Conditional Access),
 kein Client-Secret auf dem Gerät, von Microsoft für Desktop-Apps empfohlen.
 *Preis:* Es braucht eine App-Registrierung in Entra ID – **einmal**, nicht pro Firma (siehe §2a).
@@ -33,7 +33,7 @@ Zustimmung erlauben (häufig bei `Mail.Send`, `Files.Read.All`), brauchen **einm
 wird von vielen Tenants blockiert.
 
 - **Admin-Freigabe im Browser:** `quiver-m365 freigeben [--tenant <id|domain>]` öffnet
-  `https://login.microsoftonline.com/<tenant>/v2.0/adminconsent?client_id=<id>&scope=<Scopes>&redirect_uri=http://localhost:<port>`
+  `https://login.microsoftonline.com/<tenant>/v2.0/adminconsent?client_id=<id>&scope=<Scopes>&redirect_uri=http://127.0.0.1:<port>`
   und wartet auf die Rückleitung (`admin_consent=True` bzw. `error`). Danach sieht kein User der Firma mehr eine Rückfrage.
 - **Eigene Registrierung** bleibt möglich: `M365_CLIENT_ID` überschreibt den Standard.
 
@@ -43,7 +43,7 @@ Ablauf der Anmeldung:
 1. Tool-Aufruf, kein gültiges Token
 2. quiver-m365 lauscht auf 127.0.0.1:<freier Port>, erzeugt state + PKCE-Verifier
 3. öffnet den Browser: https://login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize?...
-4. User meldet sich an → Rückleitung http://localhost:<port>/?code=…&state=…
+4. User meldet sich an → Rückleitung http://127.0.0.1:<port>/?code=…&state=…
 5. state prüfen, Code + Verifier gegen Token tauschen (…/oauth2/v2.0/token)
 6. Refresh-Token in den Schlüsselbund, Access-Token nur im Speicher
 7. Browser-Seite: „Angemeldet – Fenster kann geschlossen werden“ (Tokens: keine)

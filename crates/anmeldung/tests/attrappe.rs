@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Attrappe für Microsoft Entra ID (SPEC.md §6): `/authorize`, `/token`.
-//! Wird von den Tests als Modul genutzt; nie echte Microsoft-Server.
+//! Attrappe für Microsoft Entra ID (SPEC.md §6): `/authorize`, `/token` und
+//! `/adminconsent`. Wird von den Tests als Modul genutzt; nie echte Microsoft-Server.
 #![allow(dead_code)]
 
 use std::collections::HashSet;
@@ -57,6 +57,9 @@ struct Zustand {
     widerrufen: Mutex<HashSet<String>>,
     /// Wenn gesetzt, antwortet `/token` immer mit `invalid_request`.
     fehler: AtomicBool,
+    /// Die letzte Anfrage an `/adminconsent` (nur die Felder, die der Test prüft).
+    freigabe: Mutex<Option<FreigabeAnfrage>>,
+    freigabe_abgelehnt: AtomicBool,
 }
 
 impl Zustand {
@@ -71,6 +74,8 @@ impl Zustand {
             gueltigkeit: AtomicU64::new(3600),
             widerrufen: Mutex::new(HashSet::new()),
             fehler: AtomicBool::new(false),
+            freigabe: Mutex::new(None),
+            freigabe_abgelehnt: AtomicBool::new(false),
         }
     }
 
@@ -100,6 +105,7 @@ impl Attrappe {
         let app = Router::new()
             .route("/{tenant}/oauth2/v2.0/authorize", get(autorisieren))
             .route("/{tenant}/oauth2/v2.0/token", post(token))
+            .route("/{tenant}/v2.0/adminconsent", get(adminconsent))
             .with_state(Arc::clone(&zustand));
 
         let lauscher = tokio::net::TcpListener::bind(("127.0.0.1", 0))
@@ -142,6 +148,18 @@ impl Attrappe {
     /// `/token` antwortet ab jetzt immer mit einem Fehler.
     pub fn fehler_im_token_endpunkt(&self) {
         self.zustand.fehler.store(true, Ordering::SeqCst);
+    }
+
+    /// Die letzte Anfrage an `/adminconsent`, falls eine kam.
+    pub fn freigabe_anfrage(&self) -> Option<FreigabeAnfrage> {
+        Zustand::fach(&self.zustand.freigabe).clone()
+    }
+
+    /// `/adminconsent` leitet mit `?error=access_denied` zurück (Admin lehnt ab).
+    pub fn freigabe_ablehnen(&self) {
+        self.zustand
+            .freigabe_abgelehnt
+            .store(true, Ordering::SeqCst);
     }
 }
 
@@ -254,7 +272,7 @@ async fn token(
             if code != CODE {
                 return token_fehler("invalid_grant", "Code unbekannt");
             }
-            if !umleitung.starts_with("http://localhost:") {
+            if !umleitung.starts_with("http://127.0.0.1:") {
                 return token_fehler("invalid_request", "redirect_uri unerwartet");
             }
             let erwartet = Zustand::fach(&zustand.challenge).clone();
@@ -278,6 +296,51 @@ async fn token(
         }
         anderes => token_fehler("unsupported_grant_type", anderes),
     }
+}
+
+// ---------------------------------------------------------------------------
+// Admin-Freigabe (SPEC.md §2a): `quiver-m365 freigeben` öffnet
+// `<authority>/<tenant>/v2.0/adminconsent`; die Attrappe leitet auf den
+// Loopback zurück, den der Befehl selbst geöffnet hat.
+// ---------------------------------------------------------------------------
+
+/// Was `quiver-m365 freigeben` an `/adminconsent` schickt.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct FreigabeAnfrage {
+    pub client_id: Option<String>,
+    pub scope: Option<String>,
+    pub redirect_uri: Option<String>,
+    pub state: Option<String>,
+}
+
+async fn adminconsent(
+    State(zustand): State<Arc<Zustand>>,
+    Path(tenant): Path<String>,
+    Query(anfrage): Query<FreigabeAnfrage>,
+) -> Response {
+    if tenant != TENANT {
+        return (StatusCode::NOT_FOUND, "unbekannter Mandant").into_response();
+    }
+    if anfrage.client_id.as_deref() != Some(CLIENT_ID) {
+        return (StatusCode::BAD_REQUEST, "client_id falsch").into_response();
+    }
+    let Some(umleitung) = anfrage.redirect_uri.clone() else {
+        return (StatusCode::BAD_REQUEST, "redirect_uri fehlt").into_response();
+    };
+    if !umleitung.starts_with("http://127.0.0.1:") {
+        return (StatusCode::BAD_REQUEST, "redirect_uri unerwartet").into_response();
+    }
+    let state = anfrage.state.clone().unwrap_or_default();
+    *Zustand::fach(&zustand.freigabe) = Some(anfrage);
+
+    let ziel = if zustand.freigabe_abgelehnt.load(Ordering::SeqCst) {
+        format!(
+            "{umleitung}?error=access_denied&error_description=Admin+hat+abgelehnt&state={state}"
+        )
+    } else {
+        format!("{umleitung}?admin_consent=True&tenant={tenant}&state={state}")
+    };
+    Redirect::temporary(&ziel).into_response()
 }
 
 // ---------------------------------------------------------------------------

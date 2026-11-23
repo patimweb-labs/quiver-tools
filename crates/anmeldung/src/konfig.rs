@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use crate::{Konfig, STANDARD_SCOPES};
+use crate::{Konfig, STANDARD_CLIENT_ID, STANDARD_SCOPES};
 
 /// Standard-Mandant, wenn `M365_TENANT` fehlt.
 pub const STANDARD_TENANT: &str = "organizations";
@@ -17,12 +17,12 @@ pub const STANDARD_WARTEN: Duration = Duration::from_secs(45);
 pub const STANDARD_LAUSCHER: Duration = Duration::from_secs(300);
 
 impl Konfig {
-    /// Liest die Konfiguration aus der Umgebung. `M365_CLIENT_ID` ist Pflicht.
+    /// Liest die Konfiguration aus der Umgebung. `M365_CLIENT_ID` ist optional
+    /// (Standard: [`STANDARD_CLIENT_ID`], SPEC.md §2a).
     ///
     /// Getrimmte, leere Werte gelten als nicht gesetzt.
     pub fn aus_umgebung() -> anyhow::Result<Konfig> {
-        let client_id = wert("M365_CLIENT_ID")
-            .ok_or_else(|| anyhow::anyhow!("M365_CLIENT_ID fehlt (Application (client) ID)"))?;
+        let client_id = wert("M365_CLIENT_ID").unwrap_or_else(|| STANDARD_CLIENT_ID.to_string());
 
         Ok(Konfig {
             client_id,

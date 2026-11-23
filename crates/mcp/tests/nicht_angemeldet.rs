@@ -74,6 +74,8 @@ async fn ohne_token_kommt_der_hinweis_und_kein_browser() {
             server
                 .mail_lesen(Parameters(MailLesenAnfrage {
                     id: "m1".to_string(),
+                    verlauf: None,
+                    max_zeichen: None,
                 }))
                 .await
         ),

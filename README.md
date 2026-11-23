@@ -17,7 +17,7 @@ selbst auf – es läuft mit jedem MCP-Client.
 |---|---|---|
 | `profil` | Name, Mail-Adresse, Abteilung | `GET /me` |
 | `mails_suchen` | Suche im Postfach; ohne Suchtext die neuesten Mails im Posteingang | `GET /me/messages`, `GET /me/mailFolders/inbox/messages` |
-| `mail_lesen` | eine Mail als Text (nicht HTML) | `GET /me/messages/{id}` |
+| `mail_lesen` | eine Mail als Text (nicht HTML); standardmäßig nur der neue Teil ohne zitierten Verlauf | `GET /me/messages/{id}` |
 | `mail_senden` | Mail senden (**verändernd**) | `POST /me/sendMail` |
 | `termine` | Termine eines Zeitraums | `GET /me/calendarView` |
 | `termin_anlegen` | Termin anlegen (**verändernd**) | `POST /me/events` |
@@ -27,6 +27,30 @@ selbst auf – es läuft mit jedem MCP-Client.
 Antworten sind knappes JSON als Text. Fehlt die Anmeldung, antwortet jedes Tool (außer `abmelden`)
 nicht mit einem Fehler, sondern mit: „Nicht angemeldet – bitte im quiver-Fenster unter Tools →
 Microsoft 365 auf „Anmelden“ klicken.“ Der Agent kann das dem User so weitergeben.
+
+### `mail_lesen`: nur der neue Teil, gedeckelt
+
+Eine lange Mailwechsel-Kette kostet Kontext. `mail_lesen` gibt deshalb standardmäßig nur den
+**neuen Teil** der Mail zurück (Graph-Feld `uniqueBody`, ohne den zitierten Verlauf):
+
+| Parameter | Standard | Bedeutung |
+|---|---|---|
+| `id` | – | id der Mail aus `mails_suchen` |
+| `verlauf` | `false` | `true` = ganzer Text samt zitiertem Verlauf (Graph-Feld `body`) – nur, wenn die Vorgeschichte gebraucht wird |
+| `max_zeichen` | `4000` | höchstens so viele Zeichen Mailtext (höchstens 50 000), gekürzt an einer Wortgrenze |
+
+Wird gekürzt, steht in der Antwort zusätzlich `"gekuerzt": true` und `"laenge_gesamt"` (Zeichen der
+vollen Mail); sonst fehlen beide Felder. Mehr als zwei Leerzeilen hintereinander werden zu zwei
+zusammengefasst – das ist meist nur Luft.
+
+### Zeiten
+
+Alle Zeiten in Antworten stehen als RFC 3339 **mit Versatz** in der Zone aus `M365_ZEITZONE`,
+ohne Sekundenbruchteile: `2026-11-23T08:40:00+01:00`, im Sommer `2026-07-15T08:40:00+02:00`. Das gilt
+für `termine` (start/ende), `mails_suchen`/`mail_lesen` (datum), `dateien_suchen` (geaendert) und die
+Rückgabe von `termin_anlegen`. Ganztägige Termine tragen nur ein Datum (`2026-11-24`) und
+`ganztags: true`. Eingaben (`von`, `bis`, `start`, `ende`) sind Ortszeit in dieser Zone, dürfen jetzt
+aber auch einen Versatz tragen (`…+01:00`, `…Z`) – der Zeitpunkt bleibt dabei derselbe.
 
 ## Anmeldung
 
@@ -78,7 +102,7 @@ Alles über Umgebung, alles optional:
 | `M365_SCOPES` | `User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.Read.All offline_access` | delegierte Rechte |
 | `M365_AUTHORITY` | `https://login.microsoftonline.com` | Anmeldedienst (Tests: Attrappe) |
 | `M365_GRAPH_URL` | `https://graph.microsoft.com/v1.0` | Graph (Tests: Attrappe) |
-| `M365_ZEITZONE` | `Europe/Berlin` | Zeitzone für Termine |
+| `M365_ZEITZONE` | `Europe/Berlin` | Zeitzone für Termine und alle Zeiten in Antworten |
 | `M365_ACCESS_TOKEN` | – | fertiges Token von außen; dann keine eigene Anmeldung |
 | `M365_BROWSER` | `aus` | `erlaubt` = Browser-Ablauf auch aus einem Tool-Aufruf heraus (Standard: nie) |
 | `M365_TRESOR` | Schlüsselbund | `speicher` = Token nur im Arbeitsspeicher (Tests, Entwicklung) |

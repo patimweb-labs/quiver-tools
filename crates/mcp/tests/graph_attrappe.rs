@@ -23,6 +23,28 @@ use serde_json::{json, Value};
 /// So lange darf eine Anfrage in der Attrappe höchstens dauern.
 pub const GEDULD: Duration = Duration::from_secs(10);
 
+/// Wörter im langen Mailtext der Attrappe – mehr als die 4000 Zeichen, die
+/// `mail_lesen` standardmäßig zurückgibt (Aufgabe 04).
+pub const LANGE_MAIL_WOERTER: u32 = 1200;
+
+/// Ein langer Mailtext aus lauter Wörtern (keine Satzzeichen, damit die
+/// Wortgrenze eindeutig ist).
+pub fn langer_text() -> String {
+    (1..=LANGE_MAIL_WOERTER)
+        .map(|nummer| format!("Wort{nummer}"))
+        .collect::<Vec<String>>()
+        .join(" ")
+}
+
+/// Eine Mail mit Leerzeilen-Wüsten (fünf, dann vier Leerzeilen hintereinander).
+pub const LEERZEILEN_MAIL: &str =
+    "Zeile 1\r\n\r\n\r\n\r\n\r\nZeile 2\r\n  \r\n\t\r\n\r\n\r\nZeile 3";
+
+/// Der neue Teil der Mail `m1` – ohne den zitierten Verlauf.
+pub const NEUER_TEIL: &str = "Nur der neue Teil.";
+/// Der ganze Text von `m1` samt Zitat (`verlauf: true`).
+pub const GANZER_TEXT: &str = "Nur der neue Teil.\n\nAm 20.11. schrieb Bert:\n> Der alte Teil.";
+
 /// Antwort, die die Attrappe statt der normalen Daten schickt.
 #[derive(Debug, Clone)]
 pub struct Fehlerantwort {
@@ -250,27 +272,64 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
                  "receivedDateTime": "2026-11-27T09:00:00Z", "bodyPreview": "Kurz"},
             ]
         }),
-        ("GET", pfad) if pfad.starts_with("/me/messages/") => json!({
-            "id": "m1",
-            "subject": "Lage",
-            "from": {"emailAddress": {"name": "Anna", "address": "anna@firma.de"}},
-            "toRecipients": [{"emailAddress": {"address": "bert@firma.de"}}],
-            "ccRecipients": [{"emailAddress": {"name": "Clara", "address": "clara@firma.de"}}],
-            "receivedDateTime": "2026-11-27T09:00:00Z",
-            "body": {"contentType": "text", "content": "Der ganze Text."},
-            "webLink": "https://outlook.office365.com/mail/m1",
-        }),
+        ("GET", pfad) if pfad.starts_with("/me/messages/") => {
+            let ohne_basis = pfad.strip_prefix("/me/messages/").unwrap_or_default();
+            let (id, neu, ganz) = match ohne_basis {
+                "lang" => ("lang", langer_text(), langer_text()),
+                "leerzeilen" => (
+                    "leerzeilen",
+                    LEERZEILEN_MAIL.to_string(),
+                    LEERZEILEN_MAIL.to_string(),
+                ),
+                _ => ("m1", NEUER_TEIL.to_string(), GANZER_TEXT.to_string()),
+            };
+            json!({
+                "id": id,
+                "subject": if id == "m1" { "Lage" } else { "Lang" },
+                "from": {"emailAddress": {"name": "Anna", "address": "anna@firma.de"}},
+                "toRecipients": [{"emailAddress": {"address": "bert@firma.de"}}],
+                "ccRecipients": [{"emailAddress": {"name": "Clara", "address": "clara@firma.de"}}],
+                "receivedDateTime": "2026-11-27T09:00:00Z",
+                "uniqueBody": {"contentType": "text", "content": neu},
+                "body": {"contentType": "text", "content": ganz},
+                "webLink": format!("https://outlook.office365.com/mail/{id}"),
+            })
+        }
+        // `calendarView`: Ortszeit **und** `timeZone`, wie Graph es liefert.
         ("GET", "/me/calendarView") => json!({
-            "value": [{
-                "id": "t1",
-                "subject": "Jour fixe",
-                "start": {"dateTime": "2026-11-27T10:00:00.0000000", "timeZone": "Europe/Berlin"},
-                "end": {"dateTime": "2026-11-27T11:00:00.0000000", "timeZone": "Europe/Berlin"},
-                "location": {"displayName": "Raum 1"},
-                "attendees": [{"emailAddress": {"name": "Bert", "address": "bert@firma.de"}, "type": "required"}],
-                "isAllDay": false,
-                "webLink": "https://outlook.office365.com/calendar/t1",
-            }]
+            "value": [
+                {
+                    "id": "t1",
+                    "subject": "Jour fixe",
+                    "start": {"dateTime": "2026-11-27T10:00:00.0000000", "timeZone": "Europe/Berlin"},
+                    "end": {"dateTime": "2026-11-27T11:00:00.0000000", "timeZone": "Europe/Berlin"},
+                    "location": {"displayName": "Raum 1"},
+                    "attendees": [{"emailAddress": {"name": "Bert", "address": "bert@firma.de"}, "type": "required"}],
+                    "isAllDay": false,
+                    "webLink": "https://outlook.office365.com/calendar/t1",
+                },
+                {
+                    "id": "t2",
+                    "subject": "Sommerfest",
+                    "start": {"dateTime": "2026-07-15T08:40:00.0000000", "timeZone": "Europe/Berlin"},
+                    "end": {"dateTime": "2026-07-15T09:40:00.0000000", "timeZone": "Europe/Berlin"},
+                    "isAllDay": false,
+                },
+                {
+                    "id": "t3",
+                    "subject": "Urlaub",
+                    "start": {"dateTime": "2026-11-24T00:00:00.0000000", "timeZone": "Europe/Berlin"},
+                    "end": {"dateTime": "2026-11-25T00:00:00.0000000", "timeZone": "Europe/Berlin"},
+                    "isAllDay": true,
+                },
+                {
+                    "id": "t4",
+                    "subject": "Von woanders",
+                    "start": {"dateTime": "2026-11-27T09:00:00.0000000", "timeZone": "UTC"},
+                    "end": {"dateTime": "2026-11-27T10:00:00.0000000", "timeZone": "UTC"},
+                    "isAllDay": false,
+                },
+            ]
         }),
         ("GET", pfad) if pfad.starts_with("/me/drive/root/search") => json!({
             "value": [{

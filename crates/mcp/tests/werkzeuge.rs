@@ -113,7 +113,10 @@ async fn mails_suchen_ohne_suchtext_liest_den_posteingang() {
     assert_eq!(liste[0]["id"], "m1");
     assert_eq!(liste[0]["betreff"], "Lage");
     assert_eq!(liste[0]["von"], "Anna <anna@firma.de>");
-    assert_eq!(liste[0]["datum"], "2026-11-27T09:00:00Z");
+    assert_eq!(
+        liste[0]["datum"], "2026-11-27T10:00:00+01:00",
+        "Datum mit Versatz in M365_ZEITZONE"
+    );
     assert_eq!(liste[0]["vorschau"], "Kurz");
     // Der Volltext gehört in `mail_lesen`, nicht in die Liste.
     assert!(liste[0].get("text").is_none());
@@ -151,13 +154,15 @@ async fn mails_suchen_mit_suchtext_und_grenze() {
 }
 
 #[tokio::test]
-async fn mail_lesen_holt_text_statt_html() {
+async fn mail_lesen_holt_den_neuen_teil_statt_des_ganzen_verlaufs() {
     let (_anmelde, graph, server, _tresor) = aufbau().await;
 
     let wert = json(
         &server
             .mail_lesen(Parameters(MailLesenAnfrage {
                 id: "m1".to_string(),
+                verlauf: None,
+                max_zeichen: None,
             }))
             .await
             .expect("mail"),
@@ -166,8 +171,15 @@ async fn mail_lesen_holt_text_statt_html() {
     assert_eq!(wert["betreff"], "Lage");
     assert_eq!(wert["an"], serde_json::json!(["bert@firma.de"]));
     assert_eq!(wert["cc"], serde_json::json!(["Clara <clara@firma.de>"]));
-    assert_eq!(wert["text"], "Der ganze Text.");
+    assert_eq!(
+        wert["text"],
+        graph_attrappe::NEUER_TEIL,
+        "Standard: nur der neue Teil, ohne zitierten Verlauf"
+    );
+    assert_eq!(wert["datum"], "2026-11-27T10:00:00+01:00");
     assert_eq!(wert["link"], "https://outlook.office365.com/mail/m1");
+    assert!(wert.get("gekuerzt").is_none(), "nichts gekürzt");
+    assert!(wert.get("laenge_gesamt").is_none());
 
     let anfrage = graph.einzige();
     assert_eq!(anfrage.pfad, "/v1.0/me/messages/m1");
@@ -175,6 +187,141 @@ async fn mail_lesen_holt_text_statt_html() {
         anfrage.kopf("prefer"),
         Some("outlook.body-content-type=\"text\"")
     );
+    let felder = feldliste(&anfrage);
+    assert!(felder.contains(&"uniqueBody"), "$select: {felder:?}");
+    assert!(
+        !felder.contains(&"body"),
+        "der ganze Verlauf wird gar nicht erst geholt: {felder:?}"
+    );
+}
+
+#[tokio::test]
+async fn mail_lesen_mit_verlauf_holt_den_ganzen_text() {
+    let (_anmelde, graph, server, _tresor) = aufbau().await;
+
+    let wert = json(
+        &server
+            .mail_lesen(Parameters(MailLesenAnfrage {
+                id: "m1".to_string(),
+                verlauf: Some(true),
+                max_zeichen: None,
+            }))
+            .await
+            .expect("mail"),
+    );
+    assert_eq!(wert["text"], graph_attrappe::GANZER_TEXT);
+
+    let anfrage = graph.einzige();
+    let felder = feldliste(&anfrage);
+    assert!(felder.contains(&"body"), "$select: {felder:?}");
+    assert!(!felder.contains(&"uniqueBody"), "$select: {felder:?}");
+}
+
+/// `$select` als Liste einzelner Felder (`id,subject,…`).
+fn feldliste(anfrage: &graph_attrappe::Aufzeichnung) -> Vec<&str> {
+    anfrage
+        .query("$select")
+        .expect("$select")
+        .split(',')
+        .collect()
+}
+
+/// Ohne `max_zeichen` sind es 4000 Zeichen, gekürzt an einer Wortgrenze.
+#[tokio::test]
+async fn mail_lesen_kuerzt_standardmaessig_auf_4000_zeichen() {
+    let (_anmelde, graph, server, _tresor) = aufbau().await;
+
+    let wert = json(
+        &server
+            .mail_lesen(Parameters(MailLesenAnfrage {
+                id: "lang".to_string(),
+                verlauf: None,
+                max_zeichen: None,
+            }))
+            .await
+            .expect("mail"),
+    );
+    let text = wert["text"].as_str().expect("Text");
+    let voll = graph_attrappe::langer_text();
+
+    assert_eq!(wert["gekuerzt"], true);
+    assert_eq!(wert["laenge_gesamt"], voll.chars().count());
+    assert!(text.chars().count() <= 4000, "zu lang: {}", text.len());
+    assert!(text.chars().count() > 3900, "zu kurz gekürzt");
+    assert!(
+        voll.starts_with(text),
+        "die Kürzung ist der Anfang des Textes"
+    );
+    // Hinter einem ganzen Wort: das nächste Zeichen im Original ist ein
+    // Leerzeichen, nicht mitten im Wort.
+    let naechstes = voll[text.len()..].chars().next().expect("Rest");
+    assert_eq!(naechstes, ' ');
+    assert!(
+        text.chars().last().expect("Text").is_ascii_alphanumeric(),
+        "endet mit einem Wort: {:?}",
+        &text[text.len().saturating_sub(20)..]
+    );
+    assert!(graph.einzige().query("$select").is_some());
+}
+
+#[tokio::test]
+async fn mail_lesen_kuerzt_auf_max_zeichen() {
+    let (_anmelde, _graph, server, _tresor) = aufbau().await;
+
+    let wert = json(
+        &server
+            .mail_lesen(Parameters(MailLesenAnfrage {
+                id: "lang".to_string(),
+                verlauf: None,
+                max_zeichen: Some(20),
+            }))
+            .await
+            .expect("mail"),
+    );
+    // "Wort1 Wort2 Wort3 Wo" → zurück bis zum Wortende.
+    assert_eq!(wert["text"], "Wort1 Wort2 Wort3");
+    assert_eq!(wert["gekuerzt"], true);
+    assert_eq!(
+        wert["laenge_gesamt"],
+        graph_attrappe::langer_text().chars().count()
+    );
+}
+
+#[tokio::test]
+async fn mail_lesen_ist_bei_kurzem_text_nicht_gekuerzt() {
+    let (_anmelde, _graph, server, _tresor) = aufbau().await;
+
+    let wert = json(
+        &server
+            .mail_lesen(Parameters(MailLesenAnfrage {
+                id: "m1".to_string(),
+                verlauf: None,
+                max_zeichen: Some(50_000),
+            }))
+            .await
+            .expect("mail"),
+    );
+    assert_eq!(wert["text"], graph_attrappe::NEUER_TEIL);
+    assert!(wert.get("gekuerzt").is_none());
+    assert!(wert.get("laenge_gesamt").is_none());
+}
+
+#[tokio::test]
+async fn mail_lesen_fasst_leerzeilen_zusammen() {
+    let (_anmelde, _graph, server, _tresor) = aufbau().await;
+
+    let wert = json(
+        &server
+            .mail_lesen(Parameters(MailLesenAnfrage {
+                id: "leerzeilen".to_string(),
+                verlauf: None,
+                max_zeichen: None,
+            }))
+            .await
+            .expect("mail"),
+    );
+    assert_eq!(wert["text"], "Zeile 1\n\n\nZeile 2\n\n\nZeile 3");
+    assert!(wert.get("gekuerzt").is_none());
 }
 
 #[tokio::test]
@@ -226,19 +373,66 @@ async fn termine_fragt_den_kalender_mit_zeitzone() {
             .expect("termine"),
     );
     let liste = wert.as_array().expect("Liste");
-    assert_eq!(liste.len(), 1);
-    assert_eq!(liste[0]["betreff"], "Jour fixe");
-    assert_eq!(liste[0]["ort"], "Raum 1");
+    assert_eq!(liste.len(), 4, "Attrappe liefert vier Termine");
+
+    // Winterzeit: +01:00, ohne Sekundenbruchteile.
+    let winter = &liste[0];
+    assert_eq!(winter["betreff"], "Jour fixe");
+    assert_eq!(winter["ort"], "Raum 1");
     assert_eq!(
-        liste[0]["teilnehmer"],
+        winter["teilnehmer"],
         serde_json::json!(["Bert <bert@firma.de>"])
     );
-    assert_eq!(liste[0]["start"], "2026-11-27T10:00:00.0000000");
+    assert_eq!(winter["start"], "2026-11-27T10:00:00+01:00");
+    assert_eq!(winter["ende"], "2026-11-27T11:00:00+01:00");
+    assert_eq!(winter["ganztags"], false);
+
+    // Sommerzeit: +02:00.
+    assert_eq!(liste[1]["start"], "2026-07-15T08:40:00+02:00");
+    assert_eq!(liste[1]["ende"], "2026-07-15T09:40:00+02:00");
+
+    // Ganztags: nur Datum.
+    assert_eq!(liste[2]["ganztags"], true);
+    assert_eq!(liste[2]["start"], "2026-11-24");
+    assert_eq!(liste[2]["ende"], "2026-11-25");
+
+    // Ortszeit mit fremder Zone (UTC) wird umgerechnet.
+    assert_eq!(liste[3]["start"], "2026-11-27T10:00:00+01:00");
 
     let anfrage = graph.einzige();
     assert_eq!(anfrage.pfad, "/v1.0/me/calendarView");
     assert_eq!(anfrage.query("startDateTime"), Some("2026-11-27T10:00:00"));
     assert_eq!(anfrage.query("endDateTime"), Some("2026-11-28T00:00:00"));
+    assert_eq!(
+        anfrage.kopf("prefer"),
+        Some("outlook.timezone=\"Europe/Berlin\"")
+    );
+}
+
+/// Eingaben mit Versatz werden zur Ortszeit der Zone – der Zeitpunkt bleibt.
+#[tokio::test]
+async fn termine_nimmt_eingaben_mit_versatz() {
+    let (_anmelde, graph, server, _tresor) = aufbau().await;
+
+    server
+        .termine(Parameters(TermineAnfrage {
+            von: "2026-11-27T10:00:00+02:00".to_string(),
+            bis: "2026-11-28T00:00:00Z".to_string(),
+        }))
+        .await
+        .expect("termine");
+
+    let anfrage = graph.einzige();
+    assert_eq!(
+        anfrage.query("startDateTime"),
+        Some("2026-11-27T09:00:00"),
+        "10:00+02:00 ist 09:00 in Berlin"
+    );
+    assert_eq!(
+        anfrage.query("endDateTime"),
+        Some("2026-11-28T01:00:00"),
+        "00:00 UTC ist 01:00 in Berlin"
+    );
     assert_eq!(
         anfrage.kopf("prefer"),
         Some("outlook.timezone=\"Europe/Berlin\"")
@@ -263,6 +457,11 @@ async fn termin_anlegen_schickt_zeit_ort_und_teilnehmer() {
     );
     assert_eq!(wert["id"], "neu-1");
     assert_eq!(wert["betreff"], "Planung");
+    assert_eq!(
+        wert["start"], "2026-12-01T09:00:00+01:00",
+        "Rückgabe mit Versatz"
+    );
+    assert_eq!(wert["ende"], "2026-12-01T09:30:00+01:00");
     assert_eq!(wert["link"], "https://outlook.office365.com/calendar/neu-1");
 
     let anfrage = graph.einzige();
@@ -278,6 +477,33 @@ async fn termin_anlegen_schickt_zeit_ort_und_teilnehmer() {
         "bert@firma.de"
     );
     assert_eq!(body["attendees"][0]["type"], "required");
+}
+
+#[tokio::test]
+async fn termin_anlegen_nimmt_eingaben_mit_versatz() {
+    let (_anmelde, graph, server, _tresor) = aufbau().await;
+
+    let wert = json(
+        &server
+            .termin_anlegen(Parameters(TerminAnlegenAnfrage {
+                betreff: "Planung".to_string(),
+                start: "2026-12-01T09:00:00+02:00".to_string(),
+                ende: "2026-12-01T10:00:00Z".to_string(),
+                ort: None,
+                teilnehmer: None,
+            }))
+            .await
+            .expect("angelegt"),
+    );
+
+    let body = graph.einzige().body().clone();
+    // Berlin ist im Dezember +01:00: 09:00+02:00 ist 08:00 Ortszeit.
+    assert_eq!(body["start"]["dateTime"], "2026-12-01T08:00:00");
+    assert_eq!(body["start"]["timeZone"], "Europe/Berlin");
+    // 10:00 UTC ist 11:00 in Berlin.
+    assert_eq!(body["end"]["dateTime"], "2026-12-01T11:00:00");
+    assert_eq!(wert["start"], "2026-12-01T08:00:00+01:00");
+    assert_eq!(wert["ende"], "2026-12-01T11:00:00+01:00");
 }
 
 #[tokio::test]
@@ -298,7 +524,10 @@ async fn dateien_suchen_nutzt_die_graph_suche() {
     assert_eq!(liste[0]["name"], "Bericht.pdf");
     assert_eq!(liste[0]["pfad"], "/drive/root:/Projekte");
     assert_eq!(liste[0]["link"], "https://onedrive.example/bericht");
-    assert_eq!(liste[0]["geaendert"], "2026-11-20T08:00:00Z");
+    assert_eq!(
+        liste[0]["geaendert"], "2026-11-20T09:00:00+01:00",
+        "geändert mit Versatz"
+    );
 
     let anfrage = graph.einzige();
     assert_eq!(anfrage.pfad, "/v1.0/me/drive/root/search(q='Bericht')");

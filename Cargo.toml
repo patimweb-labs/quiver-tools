@@ -20,3 +20,6 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time",
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Zeitzonen mit Sommerzeit für die Antworten (Aufgabe 04): bringt die
+# Zeitzonendatenbank mit, deshalb kein zweites Crate nötig.
+jiff = "0.2"

@@ -74,6 +74,9 @@ pub struct Nachricht {
     pub body_preview: Option<String>,
     #[serde(default)]
     pub body: Option<Koerper>,
+    /// Nur der neue Teil der Mail, ohne den zitierten Verlauf (`uniqueBody`).
+    #[serde(default)]
+    pub unique_body: Option<Koerper>,
     #[serde(default)]
     pub web_link: Option<String>,
 }

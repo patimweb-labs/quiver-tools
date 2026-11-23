@@ -15,7 +15,10 @@
 
 Angelegt 2026-11-23 mit der Azure CLI (`az ad app create … --sign-in-audience AzureADMultipleOrgs`
 `--public-client-redirect-uris http://localhost --is-fallback-public-client true`, dann
-`az ad app permission add`). **Keine** Admin-Zustimmung erteilt – die passiert im Browser.
+`az ad app permission add`).
+
+**Admin-Zustimmung für neoimpulse.de** erteilt am 2026-11-23 (`az ad app permission admin-consent`,
+alle User des Tenants). Andere Tenants geben im Browser frei (siehe unten).
 
 ## Freigabe – im Browser
 

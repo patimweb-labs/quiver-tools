@@ -244,18 +244,24 @@ label {
   border-color: var(--wp-color-accent-pressed);
 }
 
-.knopf--still {
-  height: var(--wp-size-control-sm);
-  padding-inline: var(--wp-space-2);
-  background: transparent;
-  border-color: transparent;
-  color: var(--wp-color-text-muted);
-  font-size: var(--wp-font-size-sm);
+/* Löschen: derselbe Knopf, aber im Fehlerton (AGENTS.md §2.6: nur Tokens). */
+.knopf--fehler {
+  border-color: var(--wp-color-status-error);
+  color: var(--wp-color-status-error);
 }
 
-.knopf--still:hover {
-  background: var(--wp-color-bg-raised);
-  color: var(--wp-color-text-default);
+.knopf--fehler:hover {
+  background: var(--wp-color-bg-hover);
+  border-color: var(--wp-color-status-error);
+}
+
+/* Eine Aktion, die es für diese Zeile nicht gibt: sie hält ihren Platz frei.
+   Nicht klickbar, deshalb hier kein Hand-Cursor (AGENTS.md §2.12). */
+.knopf[disabled] {
+  background: transparent;
+  border-color: var(--wp-color-border-subtle);
+  color: var(--wp-color-text-faint);
+  cursor: not-allowed;
 }
 
 .reihe {

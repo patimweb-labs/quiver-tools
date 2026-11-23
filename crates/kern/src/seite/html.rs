@@ -219,70 +219,104 @@ fn liste(sicht: &Sicht) -> String {
             ));
         }
         html.push_str("</div>\n<div class=\"zeile__knoepfe\">\n");
-
-        // Bearbeiten ist ein Link, alles andere ändert etwas: nur per POST.
-        html.push_str(&format!(
-            "<a class=\"knopf\" href=\"{}\">Bearbeiten</a>\n",
-            encode_double_quoted_attribute(&format!(
-                "{}bearbeiten?name={}",
-                sicht.basis,
-                encode_text(&zeile.name)
-            ))
-        ));
-        html.push_str(&aktion(
-            sicht,
-            "testen",
-            &zeile.name,
-            "Testen",
-            "knopf",
-            None,
-        ));
-        if sicht.standard.as_deref() != Some(zeile.name.as_str()) {
-            html.push_str(&aktion(
-                sicht,
-                "standard",
-                &zeile.name,
-                "Als Standard",
-                "knopf knopf--still",
-                None,
-            ));
+        for knopf in zeilenknoepfe(sicht, zeile) {
+            html.push_str(&knopf_html(sicht, &zeile.name, &knopf));
         }
-        html.push_str(&aktion(
-            sicht,
-            "loeschen",
-            &zeile.name,
-            "Löschen",
-            "knopf knopf--still",
-            Some("Profil wirklich löschen? Das Passwort wird dabei vergessen."),
-        ));
         html.push_str("</div>\n</li>\n");
     }
     html.push_str("</ul>\n</section>\n");
     html
 }
 
-/// Ein kleiner POST-Knopf mit verstecktem Profilnamen.
-fn aktion(
-    sicht: &Sicht,
-    pfad: &str,
-    name: &str,
-    beschriftung: &str,
-    klasse: &str,
-    rueckfrage: Option<&str>,
-) -> String {
-    format!(
-        "<form method=\"post\" action=\"{ziel}\"{rueckfrage}><input type=\"hidden\" name=\"name\" value=\"{name}\"><button class=\"{klasse}\" type=\"submit\">{beschriftung}</button></form>\n",
-        ziel = encode_double_quoted_attribute(&format!("{}{}", sicht.basis, pfad)),
-        rueckfrage = rueckfrage
-            .map(|text| format!(
-                " onsubmit=\"return confirm('{}')\"",
-                text.replace('\'', "\\'")
-            ))
-            .unwrap_or_default(),
-        name = encode_double_quoted_attribute(name),
-        klasse = klasse,
-        beschriftung = encode_text(beschriftung),
-    )
+/// Eine Aktion der Profilzeile.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Zeilenknopf {
+    /// Öffnet eine Seite (GET).
+    Link {
+        pfad: String,
+        beschriftung: &'static str,
+    },
+    /// Ändert etwas und geht darum nur per POST.
+    Absenden {
+        ziel: &'static str,
+        beschriftung: &'static str,
+        klasse: &'static str,
+        rueckfrage: Option<&'static str>,
+    },
+    /// Diese Aktion gibt es für das Profil nicht; sie hält ihren Platz frei,
+    /// damit die Aktionsspalte in jeder Zeile gleich breit ist.
+    Gesperrt { beschriftung: &'static str },
+}
+
+/// Die Aktionen einer Profilzeile: immer dieselben, in derselben Reihenfolge.
+///
+/// Beim Standardprofil entfällt „Als Standard“ – es steht gesperrt da, statt
+/// die ganze Spalte nach rechts zu schieben.
+fn zeilenknoepfe(sicht: &Sicht, zeile: &ProfilZeile) -> Vec<Zeilenknopf> {
+    let standard = sicht.standard.as_deref() == Some(zeile.name.as_str()) || zeile.standard;
+    vec![
+        Zeilenknopf::Link {
+            pfad: format!("bearbeiten?name={}", zeile.name),
+            beschriftung: "Bearbeiten",
+        },
+        Zeilenknopf::Absenden {
+            ziel: "testen",
+            beschriftung: "Testen",
+            klasse: "knopf",
+            rueckfrage: None,
+        },
+        if standard {
+            Zeilenknopf::Gesperrt {
+                beschriftung: "Als Standard",
+            }
+        } else {
+            Zeilenknopf::Absenden {
+                ziel: "standard",
+                beschriftung: "Als Standard",
+                klasse: "knopf",
+                rueckfrage: None,
+            }
+        },
+        Zeilenknopf::Absenden {
+            ziel: "loeschen",
+            beschriftung: "Löschen",
+            klasse: "knopf knopf--fehler",
+            rueckfrage: Some("Profil wirklich löschen? Das Passwort wird dabei vergessen."),
+        },
+    ]
+}
+
+/// Ein Knopf der Zeile. Der Profilname geht als verstecktes Feld mit.
+fn knopf_html(sicht: &Sicht, name: &str, knopf: &Zeilenknopf) -> String {
+    match knopf {
+        Zeilenknopf::Link { pfad, beschriftung } => format!(
+            "<a class=\"knopf\" href=\"{ziel}\">{beschriftung}</a>\n",
+            ziel = encode_double_quoted_attribute(&format!("{}{}", sicht.basis, pfad)),
+            beschriftung = encode_text(beschriftung),
+        ),
+        Zeilenknopf::Absenden {
+            ziel,
+            beschriftung,
+            klasse,
+            rueckfrage,
+        } => format!(
+            "<form method=\"post\" action=\"{ziel}\"{rueckfrage}><input type=\"hidden\" name=\"name\" value=\"{name}\"><button class=\"{klasse}\" type=\"submit\">{beschriftung}</button></form>\n",
+            ziel = encode_double_quoted_attribute(&format!("{}{}", sicht.basis, ziel)),
+            rueckfrage = rueckfrage
+                .map(|text| format!(
+                    " onsubmit=\"return confirm('{}')\"",
+                    text.replace('\'', "\\'")
+                ))
+                .unwrap_or_default(),
+            name = encode_double_quoted_attribute(name),
+            klasse = klasse,
+            beschriftung = encode_text(beschriftung),
+        ),
+        Zeilenknopf::Gesperrt { beschriftung } => format!(
+            "<button class=\"knopf\" type=\"button\" disabled>{beschriftung}</button>\n",
+            beschriftung = encode_text(beschriftung),
+        ),
+    }
 }
 
 /// Das Formular aus dem Feldschema (SPEC §4).
@@ -362,7 +396,7 @@ fn formular(sicht: &Sicht, formular: &Formular) -> String {
         }
     ));
     html.push_str(&format!(
-        "<a class=\"knopf knopf--still\" href=\"{}\">Abbrechen</a>\n",
+        "<a class=\"knopf\" href=\"{}\">Abbrechen</a>\n",
         encode_double_quoted_attribute(&sicht.basis)
     ));
     html.push_str("</div>\n</form>\n</section>\n");
@@ -473,7 +507,7 @@ fn fuss(sicht: &Sicht) -> String {
         encode_double_quoted_attribute(&format!("{}fertig", sicht.basis))
     ));
     html.push_str(&format!(
-        "<a class=\"knopf knopf--still\" href=\"{}\">Neu laden</a>\n",
+        "<a class=\"knopf\" href=\"{}\">Neu laden</a>\n",
         encode_double_quoted_attribute(&sicht.basis)
     ));
     html.push_str("</div>\n");
@@ -656,5 +690,54 @@ mod tests {
         assert!(html.contains("action=\"/e/abc123/fertig\""));
         assert!(html.contains("action=\"/e/abc123/loeschen\""));
         assert!(!html.contains("action=\"/fertig\""));
+    }
+
+    /// Zwei Profile, eines davon Standard: beide Zeilen haben dieselben vier
+    /// Aktionen in derselben Reihenfolge, „Als Standard“ steht einmal gesperrt da.
+    #[test]
+    fn jede_zeile_hat_dieselben_knoepfe_und_der_standard_ist_gesperrt() {
+        let mut sicht = sicht();
+        sicht.profile.push(ProfilZeile {
+            name: "privat".to_string(),
+            beschreibung: String::new(),
+            werte: Vec::new(),
+            standard: false,
+        });
+        let html = seite(&sicht);
+
+        for beschriftung in ["Bearbeiten", "Testen", "Als Standard", "Löschen"] {
+            assert_eq!(
+                html.matches(&format!(">{beschriftung}</")).count(),
+                2,
+                "{beschriftung} fehlt in einer Zeile\n{html}"
+            );
+        }
+        // Genau eine gesperrte Aktion: das Standardprofil kann sich nicht
+        // selbst zum Standard machen.
+        assert_eq!(
+            html.matches("<button class=\"knopf\" type=\"button\" disabled>")
+                .count(),
+            1
+        );
+        assert_eq!(html.matches(">Als Standard</button>").count(), 2);
+    }
+
+    /// Alle Nebenaktionen sind normale Knöpfe mit Rahmen (control-md), Löschen
+    /// trägt den Fehlerton, Speichern und Fertig sind Hauptknöpfe.
+    #[test]
+    fn nebenaktionen_sind_knoepfe_und_die_hauptaktion_sticht_hervor() {
+        let mut sicht = sicht();
+        sicht.formular = Some(Formular {
+            neu: true,
+            ..Formular::default()
+        });
+        let html = seite(&sicht);
+
+        assert!(!html.contains("knopf--still"), "nackter Text als Aktion");
+        assert!(html.contains("class=\"knopf knopf--fehler\""));
+        assert!(html.contains("class=\"knopf knopf--haupt\" type=\"submit\">Profil anlegen"));
+        assert!(html.contains("class=\"knopf knopf--haupt\" type=\"submit\">Fertig"));
+        assert!(html.contains("<a class=\"knopf\" href=\"/e/abc123/\">Abbrechen</a>"));
+        assert!(html.contains("<a class=\"knopf\" href=\"/e/abc123/\">Neu laden</a>"));
     }
 }

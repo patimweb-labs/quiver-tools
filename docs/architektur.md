@@ -1,6 +1,6 @@
 # Architektur
 
-> Stand: 2026-11-23, nach Aufgabe 01. Gilt für den Kern (`crates/kern`) und alle
+> Stand: 2026-11-23, nach Aufgabe 02. Gilt für den Kern (`crates/kern`) und alle
 > Tools, die darauf aufsetzen. Festlegungen und Preise: [../SPEC.md](../SPEC.md).
 
 ## Richtung
@@ -109,3 +109,54 @@ Wortgrenzen kürzen.
 
 Begründung in [adr/0001-programm-geruest.md](adr/0001-programm-geruest.md). Logs und
 Meldungen gehen immer nach **stderr**; stdout gehört dem MCP-Protokoll.
+
+## Ein Tool: `crates/outline`
+
+Die Vorlage `pi-outline-wiki` (TypeScript) liefert die Semantik, nicht den Code
+(SPEC §6). Die Schichten sind dieselben wie im Kern, nur eine Ebene tiefer:
+
+| Modul | Aufgabe | Zustand |
+|---|---|---|
+| `werkzeug` | `Outline` (Name, Titel, Felder, `testen`), `wurzel` (Adresse normalisieren) | keiner |
+| `client` | der **einzige** Ort mit Netzverkehr: `POST <wurzel>/api/<methode>`, Bearer, 30 s | keiner |
+| `domain` | was Outline liefert (`serde`), ProseMirror → Prosa | keiner |
+| `format` | reine Funktionen: Daten → Text, gekürzt über `mcp::kuerzen` | keiner |
+| `datei` | Titel → Dateiname, Schreiben ohne Ausbruch aus dem Zielordner | Dateien |
+| `server` | die 14 MCP-Werkzeuge, Parameter als `schemars`-Typen | Profilspeicher |
+
+Datenfluss eines Aufrufs:
+
+```
+MCP tools/call
+  → server::aufrufen        Name → Werkzeug, Argumente → Parametertyp
+  → mcp::zugang            Profil holen (ohne Profil: Hinweistext, kein Fehler)
+  → client::aufrufen       POST /api/<methode>, Fehler → OutlineFehler ohne Schlüssel
+  → domain                 Antwort in Datenform
+  → format                 Daten → knapper Text (max_zeichen, Seitenhinweis)
+  → CallToolResult
+```
+
+Regeln, die dort gelten:
+
+- **Kein Geheimnis im Text.** `client::aufrufen` ersetzt den Schlüssel in jedem
+  Fehlertext durch `[geheim]`, auch wenn ein Server ihn zurückspiegelt.
+- **`outline_profile` kommt aus dem Kern** (`mcp::profile_tool` /
+  `mcp::profile_antwort`): bei jedem Tool dasselbe lesende Werkzeug.
+- **`alle_profile`** bildet „alle Workspaces“ der Vorlage ab: eine Suche über alle
+  Profile, jeder Treffer mit Profilnamen; ein kaputtes Profil verschluckt die anderen
+  nicht, sein Fehler steht daneben.
+- **Schreibende Werkzeuge** tragen `destructive_hint`, lesende `read_only_hint`
+  (AGENTS.md §8).
+- **Parameternamen sind deutsch** (`collection_id`, `max_zeichen`, `save_dir`), wie
+  `profil` im Kern; die **Werkzeugnamen** bleiben die der Vorlage, damit Skills und
+  Gewohnheiten weiter passen.
+
+## Einrichtungsseite: Aktionen
+
+Die Profilliste hat eine **feste Aktionsspalte**: jede Zeile trägt dieselben vier
+Aktionen in derselben Reihenfolge (`Bearbeiten`, `Testen`, `Als Standard`, `Löschen`).
+Beim Standardprofil steht „Als Standard“ gesperrt da, statt zu fehlen – sonst schiebt
+sich die Spalte von Zeile zu Zeile. Alle Nebenaktionen sind normale Knöpfe mit Rahmen
+(`--wp-size-control-md`), „Löschen“ trägt den Fehlerton, „Speichern“/„Fertig“ sind
+Hauptknöpfe. Was eine Zeile an Aktionen hat, entscheidet `zeilenknoepfe` im Modell,
+nicht ein `if` in der Darstellung.

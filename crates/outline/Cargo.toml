@@ -1,0 +1,33 @@
+[package]
+name = "quiver-outline"
+description = "Outline-Wiki als MCP-Tool: lesen, schreiben, sortieren, kommentieren."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "quiver-outline"
+path = "src/main.rs"
+
+[dependencies]
+quiver-tools-kern = { path = "../kern" }
+anyhow = "1"
+reqwest = { version = "0.12", default-features = false, features = [
+  "json",
+  "rustls-tls",
+] }
+rmcp = { version = "3.11", features = ["server", "transport-io", "macros", "schemars"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+url = "2"
+
+[dev-dependencies]
+axum = "0.8"
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net"] }

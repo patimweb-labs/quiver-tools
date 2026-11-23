@@ -11,8 +11,18 @@
 //!
 //! Der Tresor im Speicher ist Absicht: das Beispiel soll ohne Schlüsselbund
 //! laufen. Für den MCP-Weg ohne Argument starten.
+//!
+//! `QUIVER_TOOLS_KEIN_BROWSER=1` öffnet **keinen** Browser, sondern gibt die
+//! Adresse der Seite auf stdout aus und wartet, bis „Fertig“ gedrückt wird. So
+//! entstehen die Bilder in `docs/bilder` (`docs/bilder/erzeugen.mjs`) und so
+//! sieht man die Seite auf einem Rechner ohne Fenster an.
 
-use quiver_tools_kern::{starten, Feld, FeldArt, Profil, Werkzeug};
+use std::sync::Arc;
+use std::time::Duration;
+
+use quiver_tools_kern::{
+    einrichten_mit_profilen, starten, Browser, Feld, FeldArt, Merker, Profil, Profile, Werkzeug,
+};
 use rmcp::handler::server::ServerHandler;
 use rmcp::model::{CallToolResult, ServerCapabilities, ServerConfig};
 use rmcp::ErrorData as McpError;
@@ -118,5 +128,25 @@ impl ServerHandler for DemoServer {
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    if std::env::var_os("QUIVER_TOOLS_KEIN_BROWSER").is_some() {
+        return seite_ohne_browser().await;
+    }
     starten(Demo, |profile| DemoServer { profile }).await
+}
+
+/// Dieselbe Seite, aber ohne Browser: die Adresse geht auf stdout.
+async fn seite_ohne_browser() -> std::process::ExitCode {
+    let profile = Profile::laden(&Demo, quiver_tools_kern::tresor::aus_umgebung());
+    let merker = Arc::new(Merker::neu());
+    let seite = tokio::spawn(einrichten_mit_profilen(
+        Demo,
+        profile,
+        merker.clone() as Arc<dyn Browser>,
+        Duration::from_secs(10 * 60),
+    ));
+    println!("{}", merker.adresse().await);
+    match seite.await {
+        Ok(ende) => ende.exit_code(),
+        Err(_) => std::process::ExitCode::FAILURE,
+    }
 }

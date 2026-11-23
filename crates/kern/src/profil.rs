@@ -443,8 +443,55 @@ impl Profil {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Feld, FeldArt, SpeicherTresor};
+    use crate::tresor::{Tresor, TresorFehler};
+    use crate::{Feld, FeldArt};
     use std::future::Future;
+    use std::sync::Mutex;
+
+    /// Ein eigener Tresor je Test.
+    ///
+    /// [`crate::SpeicherTresor`] ist **ein** globaler Speicher für den ganzen
+    /// Prozess; parallele Tests würden einander die Geheimnisse leeren und
+    /// gelegentlich falsche Ergebnisse sehen. Darum hat jeder Test hier seinen
+    /// eigenen.
+    #[derive(Default)]
+    struct EigenTresor {
+        werte: Mutex<BTreeMap<(String, String), String>>,
+    }
+
+    impl EigenTresor {
+        fn griff(&self) -> std::sync::MutexGuard<'_, BTreeMap<(String, String), String>> {
+            self.werte.lock().unwrap_or_else(|gift| gift.into_inner())
+        }
+    }
+
+    impl Tresor for EigenTresor {
+        fn lesen(&self, dienst: &str, schluessel: &str) -> Result<Option<String>, TresorFehler> {
+            Ok(self
+                .griff()
+                .get(&(dienst.to_string(), schluessel.to_string()))
+                .cloned())
+        }
+
+        fn schreiben(
+            &self,
+            dienst: &str,
+            schluessel: &str,
+            wert: &str,
+        ) -> Result<(), TresorFehler> {
+            self.griff().insert(
+                (dienst.to_string(), schluessel.to_string()),
+                wert.to_string(),
+            );
+            Ok(())
+        }
+
+        fn loeschen(&self, dienst: &str, schluessel: &str) -> Result<(), TresorFehler> {
+            self.griff()
+                .remove(&(dienst.to_string(), schluessel.to_string()));
+            Ok(())
+        }
+    }
 
     struct Attrappe;
 
@@ -484,11 +531,10 @@ mod tests {
     const GEHEIM: &str = "nur-ein-testwert";
 
     fn aufbau() -> (tempfile::TempDir, Profile) {
-        SpeicherTresor::leeren();
         let ordner = tempfile::tempdir().unwrap();
         let profile = Profile::im_ordner(
             &Attrappe,
-            Arc::new(SpeicherTresor),
+            Arc::new(EigenTresor::default()),
             ordner.path().to_path_buf(),
         );
         (ordner, profile)
@@ -537,7 +583,8 @@ mod tests {
         assert_eq!(profile.alle().unwrap().len(), 1);
         assert_eq!(profile.standard().unwrap(), None);
         // Geheimnis ist weg.
-        assert!(SpeicherTresor
+        assert!(profile
+            .tresor
             .lesen(&profile.dienst(), "privat/token")
             .unwrap()
             .is_none());
@@ -561,7 +608,8 @@ mod tests {
 
         // Das Geheimnis liegt im Tresor.
         assert_eq!(
-            SpeicherTresor
+            profile
+                .tresor
                 .lesen(&profile.dienst(), "arbeit/token")
                 .unwrap()
                 .as_deref(),
@@ -657,11 +705,10 @@ mod tests {
             }
         }
 
-        SpeicherTresor::leeren();
         let ordner = tempfile::tempdir().unwrap();
         let profile = Profile::im_ordner(
             &MitAuswahl,
-            Arc::new(SpeicherTresor),
+            Arc::new(EigenTresor::default()),
             ordner.path().to_path_buf(),
         );
 

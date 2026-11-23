@@ -458,6 +458,35 @@ async fn standard_setzen_und_loeschen_raeumt_den_tresor() {
 }
 
 #[tokio::test]
+async fn jede_zeile_hat_dieselbe_aktionsspalte() {
+    let lauf = Lauf::starte().await;
+
+    for name in ["arbeit", "privat"] {
+        lauf.post("speichern", &vollstaendig(name, GEHEIM)).await;
+    }
+    let (status, seite) = lauf.get("").await;
+    assert_eq!(status, StatusCode::OK);
+
+    // Beide Zeilen tragen alle vier Aktionen an derselben Stelle.
+    for beschriftung in ["Bearbeiten", "Testen", "Als Standard", "Löschen"] {
+        assert_eq!(
+            seite.matches(&format!(">{beschriftung}</")).count(),
+            2,
+            "{beschriftung} fehlt in einer Zeile"
+        );
+    }
+    // Das Standardprofil bietet „Als Standard“ gesperrt an, statt den Knopf
+    // wegzulassen und die Spalte zu verschieben.
+    assert_eq!(seite.matches("type=\"button\" disabled").count(), 1);
+
+    // Keine nackten Text-Aktionen mehr, Löschen im Fehlerton.
+    assert!(!seite.contains("knopf--still"), "nackter Text als Aktion");
+    assert!(seite.contains("class=\"knopf knopf--fehler\""));
+
+    assert_eq!(lauf.fertig().await, Ende::Gespeichert);
+}
+
+#[tokio::test]
 async fn statische_dateien_kommen_mit_den_tokens() {
     let lauf = Lauf::starte().await;
 
@@ -465,6 +494,7 @@ async fn statische_dateien_kommen_mit_den_tokens() {
     assert_eq!(status, StatusCode::OK);
     assert!(css.contains("--wp-color-bg-canvas"));
     assert!(css.contains(".knopf--haupt"));
+    assert!(css.contains(".knopf--fehler"));
     assert!(css.contains("cursor: pointer"));
     assert!(css.contains("url(\"schrift/PlexSans-Regular.ttf\")"));
     // Keine Hex-Werte im eigenen Teil (die Tokens selbst sind Hex).

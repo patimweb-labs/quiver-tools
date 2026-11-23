@@ -1456,6 +1456,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "quiver-outline"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "quiver-tools-kern",
+ "reqwest",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "quiver-tools-kern"
 version = "0.1.0"
 dependencies = [

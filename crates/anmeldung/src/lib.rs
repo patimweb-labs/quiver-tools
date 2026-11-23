@@ -69,6 +69,11 @@ pub enum AnmeldeFehler {
     Abgelaufen,
     #[error("state passt nicht – Anmeldung verworfen")]
     StateFalsch,
+    /// Es gibt kein gültiges Refresh-Token und der Browser-Ablauf ist
+    /// abgeschaltet (MCP-Betrieb, Aufgabe 03): Der User meldet sich im
+    /// quiver-Fenster an, nicht aus einem Tool-Aufruf heraus.
+    #[error("Nicht angemeldet")]
+    NichtAngemeldet,
     #[error("{0}")]
     Sonstiges(#[from] anyhow::Error),
 }
@@ -99,5 +104,5 @@ mod konfig;
 mod tresor;
 
 pub use anmeldung::EntraAnmeldung;
-pub use browser::OeffneBrowser;
+pub use browser::{KeinBrowser, OeffneBrowser};
 pub use tresor::{Schluesselbund, SpeicherTresor};

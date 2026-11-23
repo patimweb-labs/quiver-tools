@@ -4,10 +4,12 @@
 //! Die MCP-Tools aus SPEC.md §4 – genau die acht der Tabelle.
 //!
 //! Regeln: Antworten sind knappes JSON als Text; `AnmeldungLaeuft` ist **kein**
-//! Fehler, sondern der Hinweistext aus SPEC.md §2; Fehler von Graph werden zu
-//! MCP-Fehlern mit Graph-Code und Text – ohne Token.
+//! Fehler, sondern der Hinweistext aus SPEC.md §2; fehlt die Anmeldung ganz, sagt
+//! das Tool dem Agenten, er solle den User auf den quiver-Knopf schicken
+//! (Aufgabe 03); Fehler von Graph werden zu MCP-Fehlern mit Graph-Code und Text –
+//! ohne Token.
 
-use m365_anmeldung::Anmeldung;
+use m365_anmeldung::{AnmeldeFehler, Anmeldung};
 use m365_graph::{
     Adresse, Datei, Empfaenger, GraphClient, GraphFehler, Nachricht, Profil, Sammlung, Termin,
 };
@@ -25,6 +27,11 @@ use crate::zeit::iso_zeit;
 /// Der eine Satz aus SPEC.md §2, wenn die Anmeldung im Browser läuft.
 pub const ANMELDUNG_HINWEIS: &str =
     "Anmeldung im Browser geöffnet – bitte anmelden und den Aufruf danach wiederholen.";
+
+/// Der Satz, wenn kein gültiges Refresh-Token da ist und kein Browser aufgeht
+/// (Aufgabe 03). **Kein** MCP-Fehler, damit der Agent es dem User sagen kann.
+pub const NICHT_ANGEMELDET_HINWEIS: &str =
+    "Nicht angemeldet – bitte im quiver-Fenster unter Tools → Microsoft 365 auf „Anmelden“ klicken.";
 
 /// Kopfzeile für `mail_lesen`: Text statt HTML (SPEC.md §4).
 const PREFER_TEXT: &str = "outlook.body-content-type=\"text\"";
@@ -382,9 +389,12 @@ impl<A: Anmeldung + 'static> Quiver<A> {
     }
 
     /// Abmelden: das Refresh-Token löschen.
+    ///
+    /// Verändert nichts bei Graph, aber sehr wohl den Zustand dieses Rechners:
+    /// deshalb nicht „nur lesend“ (Aufgabe 03).
     #[tool(
         description = "Abmelden: löscht das gespeicherte Refresh-Token dieses Users.",
-        annotations(read_only_hint = true)
+        annotations(read_only_hint = false, destructive_hint = false)
     )]
     pub async fn abmelden(&self) -> Result<String, ErrorData> {
         self.graph
@@ -402,7 +412,8 @@ impl<A: Anmeldung + 'static> ServerHandler for Quiver<A> {}
 // Reine Hilfen: Antwortform und Grenzen
 // ---------------------------------------------------------------------------
 
-/// `AnmeldungLaeuft` wird zum Hinweistext, jeder andere Fehler zum MCP-Fehler.
+/// `AnmeldungLaeuft` wird zum Hinweistext, ebenso eine fehlende Anmeldung;
+/// jeder andere Fehler wird zum MCP-Fehler.
 fn aus_ergebnis<T>(
     ergebnis: Result<T, GraphFehler>,
     weiter: impl FnOnce(T) -> Result<String, ErrorData>,
@@ -410,6 +421,9 @@ fn aus_ergebnis<T>(
     match ergebnis {
         Ok(wert) => weiter(wert),
         Err(GraphFehler::AnmeldungLaeuft) => Ok(ANMELDUNG_HINWEIS.to_string()),
+        Err(GraphFehler::Anmeldung(AnmeldeFehler::NichtAngemeldet)) => {
+            Ok(NICHT_ANGEMELDET_HINWEIS.to_string())
+        }
         Err(fehler) => Err(mcp_fehler(fehler)),
     }
 }
@@ -608,6 +622,16 @@ mod tests {
         assert_eq!(wert["betreff"], "Jour fixe");
         assert_eq!(wert["ort"], "Raum 1");
         assert_eq!(wert["teilnehmer"], json!([]));
+    }
+
+    #[test]
+    fn fehlende_anmeldung_ist_ein_hinweis_und_kein_fehler() {
+        let ergebnis: Result<(), GraphFehler> =
+            Err(GraphFehler::Anmeldung(AnmeldeFehler::NichtAngemeldet));
+        let text = aus_ergebnis(ergebnis, |_| Ok(String::new())).expect("kein Fehler");
+        assert_eq!(text, NICHT_ANGEMELDET_HINWEIS);
+        assert!(text.contains("quiver-Fenster"), "{text}");
+        assert!(text.contains("Anmelden"), "{text}");
     }
 
     #[test]

@@ -65,7 +65,8 @@ async fn list_tools_hat_alle_acht_und_profil_liefert_den_namen() {
     erwartet.sort_unstable();
     assert_eq!(namen, erwartet, "genau die acht Tools aus SPEC.md §4");
 
-    // Annotationen: verändernd nur `mail_senden` und `termin_anlegen`.
+    // Annotationen: verändernd nur `mail_senden` und `termin_anlegen`;
+    // `abmelden` ist weder lesend noch zerstörend (Aufgabe 03).
     for tool in &tools {
         let annotations = tool.annotations.as_ref().expect("Annotationen gesetzt");
         let veraendernd = matches!(tool.name.as_ref(), "mail_senden" | "termin_anlegen");
@@ -75,6 +76,17 @@ async fn list_tools_hat_alle_acht_und_profil_liefert_den_namen() {
                 Some(true),
                 "{} ist verändernd",
                 tool.name
+            );
+        } else if tool.name == "abmelden" {
+            assert_eq!(
+                annotations.read_only_hint,
+                Some(false),
+                "abmelden löscht das Refresh-Token"
+            );
+            assert_eq!(
+                annotations.destructive_hint,
+                Some(false),
+                "abmelden zerstört keine Daten bei Graph"
             );
         } else {
             assert_eq!(
@@ -146,11 +158,11 @@ fn version_steht_auf_stdout() {
 #[test]
 fn unbekanntes_argument_wird_abgelehnt() {
     let ausgabe = std::process::Command::new(env!("CARGO_BIN_EXE_quiver-m365"))
-        .arg("anmelden")
+        .arg("quatsch")
         .env("RUST_LOG", "warn")
         .output()
         .expect("Programm startet");
     assert!(!ausgabe.status.success());
     let fehler = String::from_utf8_lossy(&ausgabe.stderr);
-    assert!(fehler.contains("anmelden"), "{fehler}");
+    assert!(fehler.contains("quatsch"), "{fehler}");
 }

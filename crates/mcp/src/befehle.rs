@@ -2,9 +2,10 @@
 // Copyright (C) 2026 Patrick Weppelmann
 
 //! Die Kommandozeile von `quiver-m365`: MCP über stdio (Standard),
-//! `freigeben` für die Admin-Zustimmung, `--version`.
+//! `anmelden` / `status` / `abmelden` für das quiver-Fenster, `freigeben` für
+//! die Admin-Zustimmung, `--version`.
 //!
-//! Bewusst ohne Argument-Crate: zwei Befehle brauchen keine Abhängigkeit. Die
+//! Bewusst ohne Argument-Crate: vier Befehle brauchen keine Abhängigkeit. Die
 //! reine Auswertung steht hier, damit sie ohne Prozessstart prüfbar ist.
 
 /// Was das Programm tun soll.
@@ -12,6 +13,12 @@
 pub enum Befehl {
     /// MCP über stdio (Standard, keine Argumente).
     Dienen,
+    /// Anmelden über den Browser-Ablauf und das Konto ausgeben (Aufgabe 03).
+    Anmelden,
+    /// Ohne Browser prüfen, ob das Refresh-Token noch trägt (Aufgabe 03).
+    Status,
+    /// Refresh-Token löschen (Aufgabe 03).
+    Abmelden,
     /// Admin-Freigabe im Browser (`--tenant` überschreibt `M365_TENANT`).
     Freigeben { tenant: Option<String> },
     /// `--version`
@@ -27,13 +34,22 @@ quiver-m365 – Microsoft 365 für Agenten (MCP über stdio)
 
 Aufruf:
   quiver-m365                      MCP-Server über stdio (dieser Aufruf ist der Normalfall)
+  quiver-m365 anmelden             Anmeldung im Browser, danach das Konto ausgeben
+                                   (Exit 0 = angemeldet, 2 = Fehler)
+  quiver-m365 status               ohne Browser prüfen, ob die Anmeldung noch gilt
+                                   (Exit 0 = angemeldet, 1 = nicht angemeldet, 2 = Fehler)
+  quiver-m365 abmelden             Refresh-Token löschen
   quiver-m365 freigeben [--tenant <id|domain>]
                                    Admin-Freigabe im Browser, einmal pro Firma
   quiver-m365 --version            Version ausgeben
   quiver-m365 --help               diese Hilfe
 
+Die Anmeldung löst der User im quiver-Fenster aus (Tools → Microsoft 365 → Anmelden).
+Im MCP-Betrieb öffnet quiver-m365 nie einen Browser; nur mit M365_BROWSER=erlaubt.
+
 Umgebung: M365_CLIENT_ID, M365_TENANT, M365_SCOPES, M365_AUTHORITY,
-          M365_GRAPH_URL, M365_ZEITZONE, M365_ACCESS_TOKEN, M365_TRESOR
+          M365_GRAPH_URL, M365_ZEITZONE, M365_ACCESS_TOKEN, M365_TRESOR,
+          M365_BROWSER
 ";
 
 /// Wertet die Argumente aus (ohne den Programmnamen).
@@ -45,6 +61,9 @@ pub fn befehl(args: &[String]) -> Befehl {
     match erstes.as_str() {
         "--version" | "-V" | "version" => Befehl::Version,
         "--help" | "-h" | "help" => Befehl::Hilfe,
+        "anmelden" => Befehl::Anmelden,
+        "status" => Befehl::Status,
+        "abmelden" => Befehl::Abmelden,
         "freigeben" => Befehl::Freigeben {
             tenant: tenant_aus(&args[1..]),
         },
@@ -95,7 +114,17 @@ mod tests {
         assert_eq!(befehl(&args(&["--version"])), Befehl::Version);
         assert_eq!(befehl(&args(&["-V"])), Befehl::Version);
         assert_eq!(befehl(&args(&["--help"])), Befehl::Hilfe);
-        assert!(HILFE.contains("freigeben"));
+        for wort in ["freigeben", "anmelden", "status", "abmelden"] {
+            assert!(HILFE.contains(wort), "{wort} fehlt in der Hilfe");
+        }
+    }
+
+    /// Die drei Unterbefehle, mit denen das quiver-Fenster die Anmeldung auslöst.
+    #[test]
+    fn anmelden_status_abmelden() {
+        assert_eq!(befehl(&args(&["anmelden"])), Befehl::Anmelden);
+        assert_eq!(befehl(&args(&["status"])), Befehl::Status);
+        assert_eq!(befehl(&args(&["abmelden"])), Befehl::Abmelden);
     }
 
     #[test]
@@ -126,8 +155,8 @@ mod tests {
     #[test]
     fn unbekanntes_argument_wird_gemeldet() {
         assert_eq!(
-            befehl(&args(&["anmelden"])),
-            Befehl::Unbekannt("anmelden".to_string())
+            befehl(&args(&["quatsch"])),
+            Befehl::Unbekannt("quatsch".to_string())
         );
     }
 }

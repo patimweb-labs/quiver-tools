@@ -4,15 +4,20 @@
 //! quiver-m365: Microsoft 365 als MCP-Server über stdio (SPEC.md).
 //!
 //! Die Bibliothek ist das Programm ohne `main`: `main.rs` verdrahtet nur
-//! Umgebung, Tresor, Browser und Transport. So sind die Tools testbar.
+//! Umgebung, Tresor, Browser und Transport. So sind die Tools und die
+//! Unterbefehle testbar.
 
 pub mod befehle;
+pub mod browserwahl;
 pub mod freigeben;
 pub mod kodierung;
 pub mod server;
 pub mod tresorwahl;
 pub mod umgebung;
+pub mod unterbefehle;
 pub mod zeit;
 
-pub use server::{Quiver, ANMELDUNG_HINWEIS};
+pub use browserwahl::BrowserWahl;
+pub use server::{Quiver, ANMELDUNG_HINWEIS, NICHT_ANGEMELDET_HINWEIS};
 pub use tresorwahl::TresorWahl;
+pub use unterbefehle::Ausgang;

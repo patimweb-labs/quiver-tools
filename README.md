@@ -6,8 +6,10 @@
 Microsoft Graph. Der User meldet sich **im Browser** an seinem Konto an (inkl. MFA); alle Aufrufe
 laufen mit seinen eigenen Rechten. Reines Rust, ein Programm, MCP über stdio.
 
-Gebaut als Tool für die [mcp-quiver](https://github.com/patimweb-labs/mcp-quiver)-Bibliothek,
-läuft aber auch allein mit jedem MCP-Client.
+Die Anmeldung löst der User im [quiver](https://github.com/patimweb-labs/mcp-quiver)-Fenster aus
+(Tools → Microsoft 365 → **Anmelden**), nie ein Agent über einen Tool-Aufruf: `quiver-m365` öffnet
+im MCP-Betrieb **keinen** Browser. Wer das Programm ohne quiver benutzt, ruft `quiver-m365 anmelden`
+selbst auf – es läuft mit jedem MCP-Client.
 
 ## Tools
 
@@ -22,9 +24,28 @@ läuft aber auch allein mit jedem MCP-Client.
 | `dateien_suchen` | Dateien in OneDrive suchen | `GET /me/drive/root/search(q='…')` |
 | `abmelden` | Refresh-Token löschen | – |
 
-Antworten sind knappes JSON als Text. Läuft die Anmeldung noch im Browser, antwortet das Tool
-nicht mit einem Fehler, sondern mit: „Anmeldung im Browser geöffnet – bitte anmelden und den
-Aufruf danach wiederholen.“
+Antworten sind knappes JSON als Text. Fehlt die Anmeldung, antwortet jedes Tool (außer `abmelden`)
+nicht mit einem Fehler, sondern mit: „Nicht angemeldet – bitte im quiver-Fenster unter Tools →
+Microsoft 365 auf „Anmelden“ klicken.“ Der Agent kann das dem User so weitergeben.
+
+## Anmeldung
+
+Drei Unterbefehle erledigen alles, was zum Anmelden gehört. mcp-quiver ruft sie mit derselben
+Umgebung wie den MCP-Prozess auf (siehe [Eintrag für mcp-quiver](#eintrag-für-mcp-quiver)):
+
+| Aufruf | Was passiert | Exit |
+|---|---|---|
+| `quiver-m365 anmelden` | Browser-Ablauf (Authorization Code + PKCE, wartet **5 min** auf die Rückleitung), danach `GET /me`; stdout: das Konto (`userPrincipalName`) | 0 = angemeldet, 2 = Fehler (stderr) |
+| `quiver-m365 status` | **ohne** Browser: Refresh-Token erneuern und `GET /me`; stdout: das Konto | 0 = angemeldet, 1 = kein (gültiges) Refresh-Token, 2 = Netz-/sonstiger Fehler |
+| `quiver-m365 abmelden` | Refresh-Token aus dem Schlüsselbund löschen | 0 |
+
+Ein von außen gereichtes `M365_ACCESS_TOKEN` gilt nur im MCP-Betrieb; die Unterbefehle verwalten
+das eigene Refresh-Token im Tresor.
+
+Im MCP-Betrieb (Aufruf ohne Unterbefehl) wird nie ein Browser geöffnet: fehlt ein gültiges
+Refresh-Token, antworten die Tools mit dem Hinweis oben. Wer `quiver-m365` ohne quiver benutzt und
+das alte Verhalten will (Browser öffnet sich aus einem Tool-Aufruf heraus), setzt
+`M365_BROWSER=erlaubt`.
 
 ## Installation
 
@@ -59,6 +80,7 @@ Alles über Umgebung, alles optional:
 | `M365_GRAPH_URL` | `https://graph.microsoft.com/v1.0` | Graph (Tests: Attrappe) |
 | `M365_ZEITZONE` | `Europe/Berlin` | Zeitzone für Termine |
 | `M365_ACCESS_TOKEN` | – | fertiges Token von außen; dann keine eigene Anmeldung |
+| `M365_BROWSER` | `aus` | `erlaubt` = Browser-Ablauf auch aus einem Tool-Aufruf heraus (Standard: nie) |
 | `M365_TRESOR` | Schlüsselbund | `speicher` = Token nur im Arbeitsspeicher (Tests, Entwicklung) |
 | `RUST_LOG` | `info` | Logs gehen nach **stderr**, stdout gehört MCP |
 
@@ -74,9 +96,19 @@ In der Admin-Oberfläche unter **Bibliothek → Neu** (oder per `PUT /api/v1/adm
   "beschreibung": "Mail, Kalender und Dateien über Microsoft Graph – Anmeldung im Browser.",
   "herkunft": "eigen",
   "laufzeit": { "art": "stdio", "befehl": "quiver-m365" },
+  "anmeldung": {
+    "anmelden": ["anmelden"],
+    "status": ["status"],
+    "abmelden": ["abmelden"]
+  },
   "felder": []
 }
 ```
+
+Damit erscheint im quiver-Fenster unter **Tools → Microsoft 365** der Knopf „Anmelden“: quiver
+startet `quiver-m365 anmelden` mit derselben Umgebung wie den MCP-Prozess, der Browser geht auf, der
+User bestätigt – fertig. „Status“ ruft `quiver-m365 status` auf (ohne Browser), „Abmelden“ löscht das
+Refresh-Token. Ein Agent löst die Anmeldung nie aus.
 
 Für einen bestimmten Tenant ein Feld `tenant` (Quelle `server`) anlegen und in der Laufzeit
 `"umgebung": { "M365_TENANT": "${tenant}" }` setzen. Die Agenten sehen die Tools dann als
@@ -84,9 +116,9 @@ Für einen bestimmten Tenant ein Feld `tenant` (Quelle `server`) anlegen und in 
 
 ## Firmenweite Freigabe (Admin, einmal pro Firma)
 
-Beim ersten Tool-Aufruf öffnet sich die Anmeldung im Browser; Microsoft zeigt
-„quiver-m365 möchte: …“ → *Akzeptieren*. Erlaubt der Tenant keine Zustimmung durch User
-(häufig bei `Mail.Send`), gibt ein Admin **einmal** frei:
+Beim ersten Anmelden (Knopf im quiver-Fenster oder `quiver-m365 anmelden`) zeigt Microsoft die
+Zustimmungsseite „quiver-m365 möchte: …“ → *Akzeptieren*. Erlaubt der Tenant keine Zustimmung durch
+User (häufig bei `Mail.Send`), gibt ein Admin **einmal** frei:
 
 ```bash
 quiver-m365 freigeben --tenant firma.de
@@ -98,8 +130,10 @@ eine Rückfrage.
 
 ## Wie es arbeitet
 
-- **Anmeldung:** Authorization Code + PKCE im Browser, Rückleitung über einen Loopback-Lauscher auf
-  `127.0.0.1` (kein `localhost`, das im Browser zuerst `::1` sein kann).
+- **Anmeldung:** Authorization Code + PKCE im Browser, ausgelöst vom quiver-Fenster
+  (`quiver-m365 anmelden`), Rückleitung über einen Loopback-Lauscher auf `127.0.0.1` (kein
+  `localhost`, das im Browser zuerst `::1` sein kann). Im MCP-Betrieb öffnet `quiver-m365` nie
+  selbst einen Browser – nur mit `M365_BROWSER=erlaubt`.
 - **Speicher:** Refresh-Token im Schlüsselbund (Dienst `quiver-m365`), Access-Token nur im
   Arbeitsspeicher. Nie in Dateien, nie in Logs, nie in Tool-Antworten.
 - **Erneuern:** abgelaufenes Token per Refresh-Token, 401 von Graph → einmal erneuern und

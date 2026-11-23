@@ -6,8 +6,8 @@
 //! Hier wird nur verdrahtet: Konfig aus der Umgebung, Tresor (Schlüsselbund oder
 //! `M365_TRESOR=speicher`), Browser, Graph-Client, rmcp über stdio.
 //!
-//! **stdout gehört MCP.** Logs gehen nach stderr, `--version` und `freigeben`
-//! schreiben auf stdout.
+//! **stdout gehört MCP.** Logs gehen nach stderr, `--version`, `anmelden`,
+//! `status`, `abmelden` und `freigeben` schreiben auf stdout.
 
 use std::process::ExitCode;
 
@@ -15,7 +15,8 @@ use m365_anmeldung::{EntraAnmeldung, Konfig, OeffneBrowser};
 use m365_graph::GraphClient;
 use quiver_m365::befehle::{befehl, Befehl, HILFE};
 use quiver_m365::freigeben::freigeben;
-use quiver_m365::{umgebung, Quiver, TresorWahl};
+use quiver_m365::unterbefehle::{abmelden, anmelden, status, Ausgang};
+use quiver_m365::{umgebung, BrowserWahl, Quiver, TresorWahl};
 use rmcp::ServiceExt;
 
 #[tokio::main]
@@ -37,6 +38,9 @@ async fn main() -> ExitCode {
             ExitCode::FAILURE
         }
         Befehl::Freigeben { tenant } => freigeben_ausfuehren(tenant).await,
+        Befehl::Anmelden => anmelden_ausfuehren().await,
+        Befehl::Status => status_ausfuehren().await,
+        Befehl::Abmelden => abmelden_ausfuehren(),
         Befehl::Dienen => dienen().await,
     }
 }
@@ -59,16 +63,26 @@ async fn dienen() -> ExitCode {
         Err(fehler) => return fehler_ausgeben(fehler),
     };
     let tresor = TresorWahl::aus_umgebung();
+    // Im MCP-Betrieb öffnet `quiver-m365` nie selbst einen Browser (Aufgabe 03):
+    // die Anmeldung löst der User im quiver-Fenster aus (Unterbefehl `anmelden`).
+    let browser = BrowserWahl::aus_umgebung();
+    let ohne_browser = !browser.erlaubt();
     tracing::info!(
-        "quiver-m365 startet (Tenant {}, Tresor {}, Graph {})",
+        "quiver-m365 startet (Tenant {}, Tresor {}, Browser {}, Graph {})",
         konfig.tenant,
         tresor.name(),
+        browser.name(),
         umgebung::graph_url()
     );
 
-    let anmeldung = match EntraAnmeldung::neu(konfig, tresor, OeffneBrowser::neu()) {
+    let anmeldung = match EntraAnmeldung::neu(konfig, tresor, browser) {
         Ok(anmeldung) => anmeldung,
         Err(fehler) => return fehler_ausgeben(fehler),
+    };
+    let anmeldung = if ohne_browser {
+        anmeldung.ohne_browser()
+    } else {
+        anmeldung
     };
     let graph = match GraphClient::neu(umgebung::graph_url(), anmeldung) {
         Ok(graph) => graph,
@@ -106,6 +120,52 @@ async fn freigeben_ausfuehren(tenant: Option<String>) -> ExitCode {
         }
         Err(fehler) => fehler_ausgeben(fehler),
     }
+}
+
+/// `quiver-m365 anmelden` (Aufgabe 03): Browser-Ablauf, danach das Konto.
+async fn anmelden_ausfuehren() -> ExitCode {
+    let konfig = match Konfig::aus_umgebung() {
+        Ok(konfig) => konfig,
+        Err(fehler) => return fehler_ausgeben(fehler),
+    };
+    ausgang_ausgeben(
+        anmelden(
+            konfig,
+            &umgebung::graph_url(),
+            TresorWahl::aus_umgebung(),
+            OeffneBrowser::neu(),
+        )
+        .await,
+    )
+}
+
+/// `quiver-m365 status`: ohne Browser prüfen, ob die Anmeldung noch gilt.
+async fn status_ausfuehren() -> ExitCode {
+    let konfig = match Konfig::aus_umgebung() {
+        Ok(konfig) => konfig,
+        Err(fehler) => return fehler_ausgeben(fehler),
+    };
+    ausgang_ausgeben(status(konfig, &umgebung::graph_url(), TresorWahl::aus_umgebung()).await)
+}
+
+/// `quiver-m365 abmelden`: Refresh-Token löschen.
+fn abmelden_ausfuehren() -> ExitCode {
+    let konfig = match Konfig::aus_umgebung() {
+        Ok(konfig) => konfig,
+        Err(fehler) => return fehler_ausgeben(fehler),
+    };
+    ausgang_ausgeben(abmelden(konfig, TresorWahl::aus_umgebung()))
+}
+
+/// Gibt aus, was ein Unterbefehl liefert, und macht daraus den Exit-Code.
+fn ausgang_ausgeben(ausgang: Ausgang) -> ExitCode {
+    if let Some(text) = ausgang.stdout {
+        println!("{text}");
+    }
+    if let Some(text) = ausgang.stderr {
+        eprintln!("quiver-m365: {text}");
+    }
+    ExitCode::from(ausgang.code)
 }
 
 fn fehler_ausgeben(fehler: anyhow::Error) -> ExitCode {

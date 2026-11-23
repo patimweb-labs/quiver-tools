@@ -6,6 +6,7 @@
 //! Regeln (SPEC.md §2): Access-Token nur im Speicher, 60 s vor Ablauf als abgelaufen,
 //! Refresh-Token im Tresor (mit Rotation), höchstens **ein** Anmeldevorgang gleichzeitig.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use oauth2::basic::BasicErrorResponseType;
@@ -43,6 +44,8 @@ struct Kern<T: Tresor, B: Browser> {
     zwischen: Mutex<Option<Tokenpaar>>,
     /// Der eine laufende Anmeldevorgang.
     vorgang: Mutex<Option<Vorgang>>,
+    /// `true` = im MCP-Betrieb: nie einen Browser öffnen (Aufgabe 03).
+    browser_abgeschaltet: AtomicBool,
 }
 
 /// Ein laufender oder gerade fertiger Browser-Vorgang. Beliebig viele Aufrufe
@@ -88,8 +91,21 @@ impl<T: Tresor + 'static, B: Browser + 'static> EntraAnmeldung<T, B> {
                 festes_token,
                 zwischen: Mutex::new(None),
                 vorgang: Mutex::new(None),
+                browser_abgeschaltet: AtomicBool::new(false),
             }),
         })
+    }
+
+    /// Schaltet den Browser-Ablauf ab (MCP-Betrieb, Aufgabe 03).
+    ///
+    /// Fehlt ein gültiges Access- und Refresh-Token, antwortet
+    /// [`Anmeldung::access_token`] dann sofort mit
+    /// [`AnmeldeFehler::NichtAngemeldet`] – es wird weder ein Lauscher geöffnet
+    /// noch ein Browser gestartet. Die Einstellung gilt für alle Klone, weil sie
+    /// den gemeinsamen Kern teilen.
+    pub fn ohne_browser(self) -> Self {
+        self.kern.browser_abgeschaltet.store(true, Ordering::SeqCst);
+        self
     }
 }
 
@@ -293,7 +309,14 @@ impl<T: Tresor + 'static, B: Browser + 'static> Anmeldung for EntraAnmeldung<T, 
             }
         }
 
-        // 4. Browser.
+        // 4. Browser – im MCP-Betrieb nie (Aufgabe 03): dort meldet sich der
+        //    User im quiver-Fenster an, kein Tool-Aufruf öffnet einen Browser.
+        if self.kern.browser_abgeschaltet.load(Ordering::SeqCst) {
+            tracing::info!("Kein gültiges Token und kein Browser in diesem Betrieb");
+            return Err(AnmeldeFehler::NichtAngemeldet);
+        }
+
+        // 5. Browser.
         self.browser_oder_warten().await
     }
 

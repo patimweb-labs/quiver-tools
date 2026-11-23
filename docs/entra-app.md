@@ -22,8 +22,9 @@ alle User des Tenants). Andere Tenants geben im Browser frei (siehe unten).
 
 ## Freigabe – im Browser
 
-- **User:** Beim ersten Tool-Aufruf öffnet sich die Anmeldung; danach zeigt Microsoft
-  „quiver-m365 möchte: …“ → *Akzeptieren*. Fertig.
+- **User:** Beim ersten Anmelden im quiver-Fenster (Tools → Microsoft 365 → „Anmelden“, ruft
+  `quiver-m365 anmelden` auf) zeigt Microsoft „quiver-m365 möchte: …“ → *Akzeptieren*. Fertig.
+  Ein Tool-Aufruf öffnet **keinen** Browser.
 - **Firma (Admin):** Erlaubt der Tenant keine User-Zustimmung, gibt ein Admin **einmal** frei:
   `quiver-m365 freigeben --tenant firma.de` (öffnet die Admin-Zustimmungsseite im Browser).
 

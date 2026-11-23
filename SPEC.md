@@ -37,10 +37,17 @@ wird von vielen Tenants blockiert.
   und wartet auf die Rückleitung (`admin_consent=True` bzw. `error`). Danach sieht kein User der Firma mehr eine Rückfrage.
 - **Eigene Registrierung** bleibt möglich: `M365_CLIENT_ID` überschreibt den Standard.
 
-Ablauf der Anmeldung:
+**Festlegung (2026-11-23, Nutzer):** Die Anmeldung löst **der User im quiver-Fenster** aus
+(Knopf „Anmelden“ an der Tool-Karte), **nie ein Agent**. mcp-quiver ruft dafür die Unterbefehle
+`quiver-m365 anmelden | status | abmelden` (Exit 0 = angemeldet, 1 = nicht angemeldet, 2 = Fehler;
+erste Zeile stdout = Konto). Im MCP-Betrieb öffnet `quiver-m365` nie einen Browser; ohne Token
+antwortet jedes Tool mit „Nicht angemeldet – bitte im quiver-Fenster … „Anmelden“ klicken.“
+Ohne quiver lässt sich der alte Weg mit `M365_BROWSER=erlaubt` wählen.
+
+Ablauf der Anmeldung (`quiver-m365 anmelden`):
 
 ```
-1. Tool-Aufruf, kein gültiges Token
+1. Klick auf „Anmelden“ im quiver-Fenster → quiver-m365 anmelden
 2. quiver-m365 lauscht auf 127.0.0.1:<freier Port>, erzeugt state + PKCE-Verifier
 3. öffnet den Browser: https://login.microsoftonline.com/<tenant>/oauth2/v2.0/authorize?...
 4. User meldet sich an → Rückleitung http://127.0.0.1:<port>/?code=…&state=…
@@ -73,6 +80,7 @@ Ablauf der Anmeldung:
 | `M365_GRAPH_URL` | nein | Standard `https://graph.microsoft.com/v1.0` (Tests: Attrappe) |
 | `M365_ACCESS_TOKEN` | nein | fertiges Token von außen (siehe §2, später quiver) |
 | `M365_TRESOR` | nein | `speicher` = Token nur im Speicher (Tests, Entwicklung) |
+| `M365_BROWSER` | nein | `erlaubt` = Tool darf selbst den Browser öffnen (nur ohne quiver) |
 
 In mcp-quiver: Eintrag mit Laufzeit `stdio` → `quiver-m365`, ohne Pflichtfelder. Optional Feld
 `tenant` (Quelle `server`, Standard `organizations`) → `M365_TENANT=${tenant}`.

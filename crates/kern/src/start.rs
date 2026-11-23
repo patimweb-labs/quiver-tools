@@ -16,6 +16,7 @@
 use std::process::ExitCode;
 
 use crate::eintrag;
+use crate::profil::Profil;
 use crate::umgebung::Zugang;
 use crate::{hinweis_zugang, Werkzeug};
 use rmcp::ServiceExt;
@@ -104,20 +105,44 @@ where
             ExitCode::SUCCESS
         }
         Aufruf::Hilfe => {
-            println!("{}", hilfe(werkzeug.name(), werkzeug.titel()));
+            println!(
+                "{}",
+                hilfe(
+                    werkzeug.name(),
+                    werkzeug.titel(),
+                    werkzeug.mehrfach().is_some()
+                )
+            );
             ExitCode::SUCCESS
         }
         Aufruf::Unbekannt(argument) => {
             eprintln!(
                 "Unbekanntes Argument „{argument}“.\n\n{}",
-                hilfe(werkzeug.name(), werkzeug.titel())
+                hilfe(
+                    werkzeug.name(),
+                    werkzeug.titel(),
+                    werkzeug.mehrfach().is_some()
+                )
             );
             ExitCode::from(2)
         }
     }
 }
 
-fn hilfe(name: &str, titel: &str) -> String {
+fn hilfe(name: &str, titel: &str, mehrfach: bool) -> String {
+    let angaben = if mehrfach {
+        format!(
+            "Die Verbindungen legt der User im quiver-Fenster unter Tools → {titel} an;\n\
+             quiver übergibt sie als JSON in QUIVER_ZUGAENGE. Geheimnisse liegen im\n\
+             Schlüsselbund und erreichen nie einen Agenten."
+        )
+    } else {
+        format!(
+            "Die Angaben trägt der User im quiver-Fenster unter Tools → {titel} ein;\n\
+             quiver setzt sie als Umgebung ({name} in Großbuchstaben, Unterstrich, Feldname).\n\
+             Geheimnisse liegen im Schlüsselbund und erreichen nie einen Agenten."
+        )
+    };
     format!(
         "{titel} – MCP-Tool von quiver.\n\
          \n\
@@ -127,9 +152,7 @@ fn hilfe(name: &str, titel: &str) -> String {
          \x20 quiver-{name} testen                Zugang aus der Umgebung prüfen\n\
          \x20 quiver-{name} --version             Version ausgeben\n\
          \n\
-         Die Angaben trägt der User im quiver-Fenster unter Tools → {titel} ein;\n\
-         quiver setzt sie als Umgebung ({name} in Großbuchstaben, Unterstrich, Feldname).\n\
-         Geheimnisse liegen im Schlüsselbund und erreichen nie einen Agenten."
+         {angaben}"
     )
 }
 
@@ -170,6 +193,21 @@ where
 /// der Zugang, nennt die Ausgabe die fehlenden Umgebungsvariablen – aber nie
 /// einen Wert.
 async fn testen<W: Werkzeug>(werkzeug: W) -> ExitCode {
+    // Mehrere Zugänge: die Liste liest das Werkzeug selbst (QUIVER_ZUGAENGE);
+    // ein einzelnes Profil gibt es dafür nicht.
+    if werkzeug.mehrfach().is_some() {
+        return match werkzeug.testen(&Profil::leer()).await {
+            Ok(meldung) => {
+                println!("{meldung}");
+                ExitCode::SUCCESS
+            }
+            Err(fehler) => {
+                eprintln!("{}: {fehler}", werkzeug.titel());
+                ExitCode::FAILURE
+            }
+        };
+    }
+
     let zugang = Zugang::neu(&werkzeug);
     let profil = match zugang.profil() {
         Ok(profil) => profil,
@@ -264,7 +302,7 @@ mod tests {
 
     #[test]
     fn hilfe_nennt_alle_wege_und_kein_geheimnis() {
-        let text = hilfe("outline", "Outline-Wiki");
+        let text = hilfe("outline", "Outline-Wiki", false);
         assert!(text.contains("quiver-outline eintrag"));
         assert!(text.contains("quiver-outline testen"));
         assert!(text.contains("MCP über stdio"));

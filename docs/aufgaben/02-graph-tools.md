@@ -46,6 +46,11 @@ Genau die Tabelle aus SPEC §4. Parameter mit `schemars`-Beschreibungen auf Deut
   zeigt im Browser eine kurze Seite und gibt auf der Konsole „Freigegeben für Tenant …“ bzw. den Fehler aus.
   Test gegen die Attrappe (Endpunkt `adminconsent` dort ergänzen).
 
+- **Rückleitung auf `http://127.0.0.1:<port>`** statt `http://localhost:<port>` (in `fluss.rs` und bei
+  `freigeben`): Der Lauscher bindet an 127.0.0.1; `localhost` kann im Browser zuerst als `::1` aufgelöst
+  werden. Beide Adressen sind in der App-Registrierung eingetragen. Test der Attrappe anpassen.
+- `M365_TRESOR=speicher` im Programm verdrahten (aus Aufgabe 01 offen).
+
 ## Abnahme
 
 - Integrationstests mit Graph-Attrappe (axum) + Anmelde-Attrappe aus Aufgabe 01:

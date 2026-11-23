@@ -80,3 +80,18 @@ pub trait Anmeldung: Send + Sync {
     /// Refresh-Token löschen.
     fn abmelden(&self) -> anyhow::Result<()>;
 }
+
+// ---------------------------------------------------------------------------
+// Umsetzung (Aufgabe 01). Die Schnittstelle oben bleibt unverändert; hier
+// werden nur die Module bekannt gemacht, die sie umsetzen.
+// ---------------------------------------------------------------------------
+
+mod anmeldung;
+mod browser;
+mod fluss;
+mod konfig;
+mod tresor;
+
+pub use anmeldung::EntraAnmeldung;
+pub use browser::OeffneBrowser;
+pub use tresor::{Schluesselbund, SpeicherTresor};

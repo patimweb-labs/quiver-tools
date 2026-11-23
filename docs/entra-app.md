@@ -8,7 +8,7 @@
 |---|---|
 | Client-ID | `9ae8e0db-e05f-4db8-adde-83d70d416eeb` |
 | Kontotypen | Accounts in any organizational directory (Multi-Tenant) |
-| Plattform | Public client/native, Redirect `http://localhost` (jeder Port) |
+| Plattform | Public client/native, Redirects `http://127.0.0.1` und `http://localhost` (jeder Port) |
 | Öffentliche Client-Flows | an |
 | Rechte (delegiert, Graph) | `User.Read`, `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `Files.Read.All`, `offline_access` |
 | Secret | keins |

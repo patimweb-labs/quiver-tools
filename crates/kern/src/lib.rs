@@ -14,6 +14,7 @@ pub mod mcp;
 pub mod profil;
 pub mod start;
 pub mod umgebung;
+pub mod zugaenge;
 
 pub use eintrag::{eintrag, Eintrag, Herkunft, Laufzeit, Quelle};
 pub use mcp::{antwort, kuerzen, zugang, OhneProfil};
@@ -61,6 +62,16 @@ pub trait Werkzeug: Send + Sync + 'static {
     fn beschreibung(&self) -> &'static str;
     /// Die Felder des Zugangs.
     fn felder(&self) -> Vec<Feld>;
+    /// Gibt es mehrere gleichartige Zugänge statt eines einzelnen?
+    ///
+    /// `Some((Titel, Einzahl))` – etwa `("Verbindungen", "Verbindung")` – heißt:
+    /// der Bibliothekseintrag beschreibt die Felder unter `mehrfach`, hat keine
+    /// eigenen Felder und keine `umgebung`; der User legt die Einträge selbst an
+    /// und quiver übergibt sie in [`zugaenge::UMGEBUNG`]. Standard ist `None`
+    /// (genau ein Zugang, SPEC §2).
+    fn mehrfach(&self) -> Option<(&'static str, &'static str)> {
+        None
+    }
     /// Verbindung prüfen; `Ok` mit einer kurzen Meldung („Angemeldet als …“).
     /// Fehlertexte dürfen keine Geheimnisse enthalten.
     fn testen(

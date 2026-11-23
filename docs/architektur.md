@@ -1,6 +1,7 @@
 # Architektur
 
 > Stand: 2026-11-23, nach Aufgabe 06. Gilt für den Kern (`crates/kern`) und alle
+> Stand: 2026-11-23, nach Aufgabe 05. Gilt für den Kern (`crates/kern`) und alle
 > Tools, die darauf aufsetzen. Festlegungen und Preise: [../SPEC.md](../SPEC.md).
 
 ## Richtung
@@ -28,6 +29,7 @@ eingebunden.
 | `eintrag` | `quiver_domain::Eintrag` als JSON: id, version, titel, beschreibung, laufzeit, felder | keiner |
 | `mcp` | `zugang`, `profile_tool`, `profile_antwort`, `server_info`, `kuerzen` | keiner |
 | `start` | `starten`, `aufruf_aus_args`, `Aufruf` (MCP, eintrag, testen, version, hilfe) | Prozess |
+| `zugaenge` | `Zugang { name, werte }`, `zugaenge()`, `mit_umgebung()` aus `QUIVER_ZUGAENGE` | Umgebungsvariable |
 
 Die Schnittstelle (`lib.rs`) legt der Architekt fest; die Umsetzung ergänzt sie nur.
 
@@ -56,6 +58,12 @@ Regeln, die im Code als Kommentar stehen und hier gelten:
   `<tool>_profile` zeigt nur `Profil::werte`. Fehlertexte nennen höchstens Feldnamen.
 - **Ein Zugang.** Es gibt kein `profil`-Feld in der Umgebung und keinen `profil`-Parameter
   an den Werkzeugen. Mehrere Zugänge wären mehrere Bibliothekseinträge.
+- **Ausnahme `mehrfach`.** Ein Werkzeug wie `quiver-ssh` pflegt statt eines Zugangs eine
+  Liste benannter Verbindungen. Dann liefert `Werkzeug::mehrfach()` `Some((Titel,
+  Einzahl))`, der Eintrag trägt die Felder unter `mehrfach` (und hat selbst keine
+  `felder` und keine `umgebung`), und quiver übergibt alle Zugänge als JSON in
+  `QUIVER_ZUGAENGE`. `zugaenge::zugaenge()` liest sie; kaputtes JSON ist ein Fehler
+  **ohne Inhalt** (die Variable kann Geheimnisse enthalten).
 
 ## Der Bibliothekseintrag
 
@@ -70,6 +78,14 @@ felder   = [ { name, beschreibung: titel – hilfe, quelle: client|geheim, pflic
 
 Kein `einrichtung`-Feld: es gibt keine Seite, die quiver öffnen könnte. `aktiv` und
 `argumente` fehlen absichtlich; beides hat in `quiver_domain` einen Standardwert.
+
+Hat das Werkzeug `mehrfach` gesetzt, steht statt der Felder eine Liste im Eintrag:
+
+```
+felder  = []
+laufzeit.umgebung = {}
+mehrfach = { titel: "Verbindungen", einzahl: "Verbindung", felder: [ … ] }
+```
 
 ## MCP
 
@@ -229,6 +245,32 @@ MCP tools/call                 quiver-zep anmelden
       (Speicher → Refresh → Routine)
     → rmcp-Client (Bearer) → ZEP-MCP
   → CallToolResult (1:1)
+## Ein Tool: `crates/ssh`
+
+Die Vorlage `pi-ssh` (TypeScript) liefert die Semantik. Aufgabe 05 ändert zwei Dinge
+gegenüber den anderen Tools: **mehrere Verbindungen** (`mehrfach`) und die **Pflicht zur
+Schlüssel-Anmeldung** nach der ersten Passwort-Anmeldung.
+
+| Modul | Aufgabe | Zustand |
+|---|---|---|
+| `werkzeug` | `Ssh` (fünf Felder, `mehrfach`, `testen`), Namen der Feldkonstanten | keiner |
+| `verbindung` | `QUIVER_ZUGAENGE` → geprüfte `Verbindung`en, Auswahl (`waehlen`) | Umgebungsvariable |
+| `pfade` | `<daten>/quiver-tools/ssh/{schluessel,known_hosts}`, Rechte 0600/0700 | Dateien |
+| `schluessel` | ed25519 erzeugen, laden, `uebernehmen`, `gleiches_material` | Dateien |
+| `hostschluessel` | TOFU gegen eigene und `~/.ssh/known_hosts` (auch gehasht) | Dateien |
+| `anmeldung` | der Ablauf: Schlüssel, erste Einrichtung, Aufräumen, Hinweise | Dateien + Netz |
+| `client` | der **einzige** Ort mit Netzverkehr (`russh`, `russh-sftp`) | Sitzung |
+| `format` | reine Funktionen: Daten → Text | keiner |
+| `server` | die sechs MCP-Werkzeuge | Verbindungen aus der Umgebung |
+
+Ablauf jeder Verbindung (`anmeldung::bereit`):
+
+```
+Verbindung gewählt
+  ├── Schlüssel vorhanden?      → nur Schlüssel; scheitert das → Fehler (kein Rückfall)
+  ├── sonst Passwort vorhanden? → Passwort → Schlüssel erzeugen → authorized_keys →
+  │                               Prüf-Verbindung nur mit Schlüssel → erst dann übernehmen
+  └── sonst                     → Hinweis: Anmelde-Passwort im quiver-Fenster eintragen
 ```
 
 Regeln, die dort gelten:
@@ -249,6 +291,19 @@ Regeln, die dort gelten:
 
 Warum Vermittler statt Nachbau, warum eine eigene Routine und wie der Sperrschutz
 funktioniert: [adr/0004-zep-offizieller-mcp.md](adr/0004-zep-offizieller-mcp.md).
+- **Zwei Passwörter, zwei Rollen.** `anmelde_passwort` dient nur der ersten Anmeldung,
+  `sudo_passwort` nur `sudo -S`. `Debug` zeigt von `Verbindung` nur, *ob* eines gesetzt ist.
+- **Erst prüfen, dann übernehmen.** Der neue Schlüssel liegt bis zur erfolgreichen
+  Prüf-Verbindung als `.neu` neben dem Ziel; scheitert etwas, werden beide Dateien
+  entfernt und der alte Schlüssel bleibt unberührt.
+- **Host-Schlüssel sind eine Grenze.** Geändert heißt Abbruch mit beiden
+  Fingerabdrücken, Datei und Zeile; geschrieben wird nur in die eigene `known_hosts`,
+  `~/.ssh/known_hosts` wird nie verändert.
+- **sudo ohne Leck.** `sudo -S -p '' -- sh -c '<befehl>'`, Passwort über stdin, nie in
+  der Befehlszeile, der Ausgabe, einem Fehlertext oder einem Log.
+- **Ein Aufruf, eine Sitzung.** Jedes Werkzeug öffnet die Verbindung, arbeitet und
+  beendet sie wieder; es gibt keinen Verbindungspool und keinen Tunnel (siehe
+  [offen.md](offen.md)).
 
 ## Tests
 
@@ -273,3 +328,7 @@ funktioniert: [adr/0004-zep-offizieller-mcp.md](adr/0004-zep-offizieller-mcp.md)
 - `crates/email/tests/imap_echt.rs` ist `#[ignore]` und spricht nur auf Anforderung mit
   einem echten IMAP-Server (`EMAIL_TEST_*`, z. B. GreenMail im Docker). Ohne diese
   Umgebung geht kein Test ins Netz.
+- Für SSH läuft ein echter `russh`-Server im Testprozess (`tests/attrappe`): Passwort-
+  und Schlüssel-Anmeldung, `authorized_keys` im Speicher, ein simuliertes
+  `sudo -S -p ''` und SFTP über einen temp-Ordner. `HOME` und `QUIVER_SSH_DATEN` zeigen
+  auf temp-Ordner; die echte `~/.ssh` wird nie gelesen oder geschrieben.

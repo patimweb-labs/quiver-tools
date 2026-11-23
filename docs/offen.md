@@ -18,3 +18,12 @@
 - [ ] ZEP: Sperrzustand liegt je Zustandsordner (`ZEP_ZUSTAND`, sonst `$XDG_STATE_HOME/quiver-zep`). Zwei quiver-Profile auf einem Gerät teilen ihn – gewollt (ein Konto), aber nicht geprüft.
 - [ ] ZEP: Die Rückleitung wird als `http://127.0.0.1` registriert (Port egal, RFC 8252 §7.3). Akzeptiert ein Server das nicht, braucht der Notfall eine Registrierung je Port (ADR 0004).
 - [ ] ZEP: `tracing`-Ereignisse des Werkzeugs sind stumm, weil der Kern keinen Subscriber setzt – die Meldungen von `anmelden`/`routine-pruefen` gehen stattdessen auf stdout.
+- [ ] Mehrere Zugänge je Tool: Outline, E-Mail und ABAP haben weiterhin genau einen Zugang `standard`. Nur SSH nutzt `mehrfach` (`QUIVER_ZUGAENGE`). Ein zweites Wiki braucht einen zweiten Bibliothekseintrag.
+- [ ] „Testen“-Knopf in quiver: `Werkzeug::testen` und `quiver-<tool> testen` sind da, quiver ruft sie noch nicht auf.
+- [ ] `README.de.md` fehlt.
+- [ ] SSH: Tunnel (`ssh_tunnel`) fehlen – die Vorlage `pi-ssh` hat lokale und entfernte Portweiterleitungen, Aufgabe 05 nicht.
+- [ ] SSH: `ssh_doctor` (Diagnose: Host erreichbar, Schlüssel akzeptiert, SFTP verfügbar) fehlt.
+- [ ] SSH: Wird ein Schlüssel ersetzt, bleibt der alte Eintrag in der entfernten `authorized_keys` stehen; ein Aufräumschritt (Kommentar `quiver-ssh <name>` entfernen) fehlt.
+- [ ] SSH: Der Schlüssel hat keine Passphrase; er liegt mit 0600 im Datenordner. Eine Passphrase bräuchte einen Schlüsselbund-Zugriff im Tool.
+- [ ] SSH: Nur ed25519 – kein RSA, keine Zertifikate, kein Agent, keine Sprung-Hosts (`ProxyJump`).
+- [ ] SSH: `ssh_list` zeigt keine Änderungszeiten (die SFTP-Attrappe und das Format lassen sie aus); die Vorlage zeigt das Datum.

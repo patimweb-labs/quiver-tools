@@ -76,6 +76,21 @@ pub struct Eintrag {
     pub herkunft: Herkunft,
     pub laufzeit: Laufzeit,
     pub felder: Vec<Feld>,
+    /// Mehrere gleichartige Zugänge (`Werkzeug::mehrfach`), im Format von
+    /// `quiver_domain::Mehrfach`. Dann ist `felder` leer und `laufzeit` hat
+    /// keine `umgebung`: die Werte kommen als JSON in `QUIVER_ZUGAENGE`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mehrfach: Option<Mehrfach>,
+}
+
+/// Eine Liste benannter Zugänge, die der User selbst pflegt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Mehrfach {
+    /// Überschrift der Liste, z. B. „Verbindungen“.
+    pub titel: String,
+    /// Bezeichnung eines Elements, z. B. „Verbindung“.
+    pub einzahl: String,
+    pub felder: Vec<Feld>,
 }
 
 /// Der Eintrag eines Werkzeugs.
@@ -84,26 +99,29 @@ pub struct Eintrag {
 /// Programms, sonst `quiver-<name>` (quiver sucht es dann im Pfad).
 pub fn eintrag<W: Werkzeug>(werkzeug: &W, befehl: Option<String>) -> Eintrag {
     let name = werkzeug.name();
-    let mut umgebung = BTreeMap::new();
-    let mut felder = Vec::new();
-    for feld in werkzeug.felder() {
-        umgebung.insert(schluessel(name, feld.name), format!("${{{}}}", feld.name));
-        felder.push(Feld {
-            name: feld.name.to_string(),
-            beschreibung: beschreibung(feld.titel, feld.hilfe),
-            quelle: if feld.art == FeldArt::Passwort {
-                Quelle::Geheim
-            } else {
-                Quelle::Client
-            },
-            pflicht: feld.pflicht,
-            standard: feld.standard.map(str::to_string),
-            link: feld.link.map(|(text, url)| FeldLink {
-                text: text.to_string(),
-                url: url.to_string(),
+
+    // Entweder ein Zugang mit Feldern in der Umgebung – oder eine Liste von
+    // Zugängen, deren Felder unter `mehrfach` stehen (SPEC §2, Aufgabe 05).
+    let (felder, umgebung, mehrfach) = match werkzeug.mehrfach() {
+        Some((titel, einzahl)) => (
+            Vec::new(),
+            BTreeMap::new(),
+            Some(Mehrfach {
+                titel: titel.to_string(),
+                einzahl: einzahl.to_string(),
+                felder: werkzeug.felder().into_iter().map(als_feld).collect(),
             }),
-        });
-    }
+        ),
+        None => {
+            let mut umgebung = BTreeMap::new();
+            let mut felder = Vec::new();
+            for feld in werkzeug.felder() {
+                umgebung.insert(schluessel(name, feld.name), format!("${{{}}}", feld.name));
+                felder.push(als_feld(feld));
+            }
+            (felder, umgebung, None)
+        }
+    };
 
     Eintrag {
         id: name.to_string(),
@@ -116,6 +134,26 @@ pub fn eintrag<W: Werkzeug>(werkzeug: &W, befehl: Option<String>) -> Eintrag {
             umgebung,
         },
         felder,
+        mehrfach,
+    }
+}
+
+/// Ein Feld des Werkzeugs als Feld des Bibliothekseintrags.
+fn als_feld(feld: crate::Feld) -> Feld {
+    Feld {
+        name: feld.name.to_string(),
+        beschreibung: beschreibung(feld.titel, feld.hilfe),
+        quelle: if feld.art == FeldArt::Passwort {
+            Quelle::Geheim
+        } else {
+            Quelle::Client
+        },
+        pflicht: feld.pflicht,
+        standard: feld.standard.map(str::to_string),
+        link: feld.link.map(|(text, url)| FeldLink {
+            text: text.to_string(),
+            url: url.to_string(),
+        }),
     }
 }
 
@@ -262,6 +300,64 @@ mod tests {
             pub felder: Vec<Feld>,
             #[serde(default = "wahr")]
             pub aktiv: bool,
+            #[serde(default)]
+            pub mehrfach: Option<Mehrfach>,
+        }
+
+        #[derive(Debug, Deserialize)]
+        pub struct Mehrfach {
+            pub titel: String,
+            pub einzahl: String,
+            #[serde(default)]
+            pub felder: Vec<Feld>,
+        }
+    }
+
+    /// Ein Werkzeug mit mehreren Zugängen (wie `quiver-ssh`).
+    struct MehrfachAttrappe;
+
+    impl Werkzeug for MehrfachAttrappe {
+        fn name(&self) -> &'static str {
+            "mehrfach"
+        }
+
+        fn titel(&self) -> &'static str {
+            "Mehrfach-Tool"
+        }
+
+        fn beschreibung(&self) -> &'static str {
+            "Attrappe mit einer Liste von Zugängen."
+        }
+
+        fn felder(&self) -> Vec<KernFeld> {
+            vec![
+                KernFeld {
+                    name: "host",
+                    titel: "Hostname",
+                    art: FeldArt::Text,
+                    pflicht: true,
+                    standard: None,
+                    hilfe: "Hostname oder IP",
+                    link: None,
+                },
+                KernFeld {
+                    name: "passwort",
+                    titel: "Passwort",
+                    art: FeldArt::Passwort,
+                    pflicht: false,
+                    standard: None,
+                    hilfe: "Nur für die erste Anmeldung.",
+                    link: None,
+                },
+            ]
+        }
+
+        fn mehrfach(&self) -> Option<(&'static str, &'static str)> {
+            Some(("Verbindungen", "Verbindung"))
+        }
+
+        async fn testen(&self, _profil: &Profil) -> anyhow::Result<String> {
+            Ok("erreichbar".to_string())
         }
     }
 
@@ -320,6 +416,43 @@ mod tests {
 
         // Kein `einrichtung`-Feld: quiver zeigt keinen „Einrichten“-Knopf.
         assert!(json.get("einrichtung").is_none(), "{json}");
+        // Ein Zugang: keine Liste.
+        assert!(json.get("mehrfach").is_none(), "{json}");
+    }
+
+    #[test]
+    fn mehrere_zugaenge_stehen_unter_mehrfach() {
+        let eintrag = eintrag(&MehrfachAttrappe, Some("/pfad/quiver-mehrfach".to_string()));
+        let json = serde_json::to_value(&eintrag).unwrap();
+        let gelesen: quiver_domain::Eintrag = serde_json::from_value(json.clone()).unwrap();
+
+        // Der Eintrag selbst hat keine Felder und keine Umgebung.
+        assert!(gelesen.felder.is_empty(), "{json}");
+        match &gelesen.laufzeit {
+            quiver_domain::Laufzeit::Stdio { umgebung, .. } => {
+                assert!(umgebung.is_empty(), "{json}")
+            }
+            sonst => panic!("keine stdio-Laufzeit: {sonst:?}"),
+        }
+
+        let mehrfach = gelesen.mehrfach.expect("mehrfach fehlt");
+        assert_eq!(mehrfach.titel, "Verbindungen");
+        assert_eq!(mehrfach.einzahl, "Verbindung");
+        assert_eq!(mehrfach.felder.len(), 2);
+        assert_eq!(mehrfach.felder[0].name, "host");
+        assert_eq!(
+            mehrfach.felder[0].beschreibung,
+            "Hostname – Hostname oder IP"
+        );
+        assert!(matches!(
+            mehrfach.felder[0].quelle,
+            quiver_domain::Quelle::Client
+        ));
+        assert!(matches!(
+            mehrfach.felder[1].quelle,
+            quiver_domain::Quelle::Geheim
+        ));
+        assert!(!mehrfach.felder[1].pflicht);
     }
 
     #[test]

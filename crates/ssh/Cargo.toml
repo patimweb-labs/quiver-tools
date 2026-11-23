@@ -1,0 +1,52 @@
+[package]
+name = "quiver-ssh"
+description = "SSH/SFTP als MCP-Tool: Befehle, Dateien und Schlüssel-Anmeldung je Verbindung."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "quiver-ssh"
+path = "src/main.rs"
+
+[dependencies]
+quiver-tools-kern = { path = "../kern" }
+anyhow = "1"
+# `dirs` liefert `<daten>` (data_dir), wenn QUIVER_SSH_DATEN nicht gesetzt ist.
+dirs = "6"
+# Ein CSPRNG für die Schlüsselerzeugung; `ssh-key` bringt keinen mit.
+rand = "0.10"
+rmcp = { version = "3.11", features = ["server", "transport-io", "macros", "schemars"] }
+# Reines Rust: SSH-Protokoll (Client im Betrieb, Server nur in Tests).
+russh = "0.65"
+russh-sftp = "4"
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# Dieselbe Version, die russh benutzt – sonst gäbe es zwei inkompatible Typen.
+ssh-key = "=0.7.0-rc.12"
+thiserror = "2"
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "macros",
+  "time",
+  "net",
+  "io-util",
+  "sync",
+] }
+tracing = "0.1"
+
+[dev-dependencies]
+# Der Test-SSH-Server läuft mit demselben russh (Server-Teil ist immer dabei).
+tempfile = "3"
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "macros",
+  "time",
+  "net",
+  "io-util",
+  "sync",
+  "process",
+] }

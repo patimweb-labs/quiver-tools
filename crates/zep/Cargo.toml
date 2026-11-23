@@ -30,6 +30,9 @@ rmcp = { version = "3.11", features = [
   "server",
   "transport-io",
   "transport-streamable-http-client-reqwest",
+  # Ohne dieses Feature baut rmcp sein reqwest 0.13 ohne TLS: https zum
+  # ZEP-MCP scheitert dann mit „error sending request“.
+  "reqwest",
 ] }
 schemars = "1"
 serde = { version = "1", features = ["derive"] }

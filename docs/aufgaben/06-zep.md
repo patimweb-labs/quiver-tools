@@ -18,11 +18,14 @@ Alles aus den Metadaten lesen, **nichts** fest verdrahten außer der Basis-URL.
 | Feld | Art | Hilfe |
 |---|---|---|
 | `url` | Url, Pflicht | MCP-Adresse, z. B. `https://www.zep-online.de/zepneoimpulse/next/mcp` |
-| `benutzer` | Text | ZEP-Benutzername – nur für die automatische Neu-Anmeldung |
-| `passwort` | Passwort | ZEP-Passwort – nur für die automatische Neu-Anmeldung |
+| `benutzer` | Text, **Pflicht** | ZEP-Benutzername |
+| `passwort` | Passwort, **Pflicht** | ZEP-Passwort |
 
-Zusätzlich `anmeldung` im Eintrag (`quiver-zep anmelden|status|abmelden`, wie quiver-m365), damit der User
-im quiver-Fenster den Knopf „Anmelden“ hat (Browser, PKCE, Loopback `127.0.0.1`) – als Rückfall.
+**Festlegung des Nutzers: Die Anmeldung läuft per Benutzer und Passwort** – für die **erste** Anmeldung genauso
+wie für jede spätere. Der User trägt Benutzer und Passwort im quiver-Fenster ein, danach braucht es keinen Browser.
+Zusätzlich `anmeldung` im Eintrag (`quiver-zep anmelden|status|abmelden`): `anmelden` führt **die Routine**
+(Benutzer/Passwort) aus; nur wenn sie an einer unbekannten Seite scheitert (z. B. MFA), öffnet `anmelden --browser`
+den Browser (PKCE, Loopback `127.0.0.1`) als Notfall.
 
 ## Anmeldung und Aufrechterhaltung
 
@@ -33,8 +36,8 @@ im quiver-Fenster den Knopf „Anmelden“ hat (Browser, PKCE, Loopback `127.0.0
    Rotierte Refresh-Tokens sofort speichern.
 3. **Hintergrund-Erneuerung:** Solange der Prozess läuft, das Access-Token **vor** Ablauf (z. B. bei 80 % der
    Laufzeit) erneuern, auch ohne Tool-Aufrufe. Ziel: das Refresh-Token verfällt nie aus Untätigkeit.
-4. **Routine (automatische Neu-Anmeldung)**, wenn das Refresh-Token abgelehnt wird (`invalid_grant`) **und**
-   `benutzer`/`passwort` gesetzt sind: Authorize-Ablauf per HTTP mit Cookie-Speicher ohne Browser –
+4. **Routine (Anmeldung mit Benutzer/Passwort)** – beim **ersten Start ohne Refresh-Token** und immer, wenn das
+   Refresh-Token abgelehnt wird (`invalid_grant`): Authorize-Ablauf per HTTP mit Cookie-Speicher ohne Browser –
    Login-Formular laden, Felder aus dem HTML lesen (Formular-`action`, versteckte Felder, CSRF), Benutzer/Passwort
    senden, Zustimmungsseite („OK“) bestätigen, Weiterleitung auf `127.0.0.1` abfangen (nicht folgen), Code + PKCE
    tauschen. **Den Aufbau der Seiten kennen wir noch nicht:** baue einen kleinen, gut getesteten HTML-Formular-
@@ -58,7 +61,7 @@ Schemas, Annotationen unverändert). 401 → erneuern, einmal wiederholen. Tool-
 
 axum-Attrappe für Metadaten, DCR, authorize (Login-Formular mit CSRF-Feld + Zustimmungsseite, Cookies),
 token (code/refresh, Rotation, `invalid_grant`), und einen Mini-MCP-Server mit zwei Tools hinter Bearer.
-Fälle: Erstanmeldung über Knopf-Ablauf; Hintergrund-Erneuerung (kurze Laufzeiten); `invalid_grant` → Routine →
+Fälle: **Erstanmeldung über die Routine ohne Browser** (Browser-Attrappe darf nicht aufgerufen werden); Notfall über `anmelden --browser`; Hintergrund-Erneuerung (kurze Laufzeiten); `invalid_grant` → Routine →
 neues Token, Tools gehen weiter; falsches Passwort → genau ein Versuch, danach gesperrt (kein zweiter Login-POST);
 Seite mit unbekanntem Aufbau → Abbruch mit Feldnamen ohne Werte; Durchreichen inkl. `list_changed`.
 

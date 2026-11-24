@@ -34,4 +34,4 @@
 - [ ] ABAP: kein Debugger, kein Refactoring, kein abapGit, kein RAP-Generator – bewusst (ADR 0005).
 - [ ] ABAP: CSRF-Token und Cookies leben nur im Prozess; jeder Start meldet sich neu an. Ein Token-Cache über Prozesse wäre eine Datei mit Geheimnis – nicht gewollt.
 
-- [ ] Tresor-Datei (ADR mcp-quiver 0001): Umzug aus dem macOS-Schlüsselbund entfernen, sobald alle Geräte umgezogen sind; optional Hauptpasswort (Argon2) beim Start.
+- [ ] Tresor-Datei (ADR mcp-quiver 0001): optional Hauptpasswort (Argon2) beim Start.

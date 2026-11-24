@@ -50,9 +50,6 @@ tokio = { version = "1", features = [
 tracing = "0.1"
 url = "2"
 
-# Nur für den einmaligen Umzug aus dem alten Schlüsselbund (macOS).
-[target.'cfg(target_os = "macos")'.dependencies]
-keyring = "4"
 
 [dev-dependencies]
 axum = "0.8"

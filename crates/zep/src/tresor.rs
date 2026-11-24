@@ -15,9 +15,6 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::sync::Mutex;
 
-/// Name des Dienstes im alten Schlüsselbund (nur noch für den Umzug).
-pub const DIENST: &str = "quiver-zep";
-
 /// Der Schlüssel des Refresh-Tokens: die MCP-Adresse, wie der User sie einträgt.
 pub fn schluessel_refresh(url: &str) -> String {
     url.to_string()
@@ -52,15 +49,8 @@ pub use crate::dateitresor::DateiTresor;
 
 impl DateiTresor {
     /// Der Tresor im Zustandsordner (`ZEP_ZUSTAND`, sonst `~/.local/state/quiver-zep`) unter `tresor`.
-    ///
-    /// Unter macOS wird ein Wert, der noch nicht in der Datei steht, einmal
-    /// im alten Schlüsselbund (Dienst [`DIENST`]) gesucht und übernommen.
     pub fn standard() -> Self {
-        let tresor = DateiTresor::im_ordner(crate::werkzeug::zustandsordner().join("tresor"));
-        match altbestand() {
-            Some(altbestand) => tresor.mit_altbestand(altbestand),
-            None => tresor,
-        }
+        DateiTresor::im_ordner(crate::werkzeug::zustandsordner().join("tresor"))
     }
 }
 
@@ -74,22 +64,6 @@ impl Tresor for DateiTresor {
     fn loeschen(&self, schluessel: &str) -> anyhow::Result<()> {
         DateiTresor::loeschen(self, schluessel)
     }
-}
-
-/// Der alte Schlüsselbund als Altbestand – nur unter macOS.
-#[cfg(target_os = "macos")]
-fn altbestand() -> Option<crate::dateitresor::Altbestand> {
-    Some(Box::new(|schluessel: &str| {
-        keyring::Entry::new(DIENST, schluessel)
-            .ok()?
-            .get_password()
-            .ok()
-    }))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn altbestand() -> Option<crate::dateitresor::Altbestand> {
-    None
 }
 
 /// Werte nur im Arbeitsspeicher: für Tests und für einen Lauf ohne

@@ -34,14 +34,9 @@ use chacha20poly1305::aead::{Aead, KeyInit};
 use chacha20poly1305::{Key, XChaCha20Poly1305, XNonce};
 use rand::RngCore;
 
-/// Woher ein Wert kommt, der noch nicht in der Datei steht (einmaliger Umzug
-/// aus dem alten Schlüsselbund). `None` heißt: dort liegt nichts.
-pub type Altbestand = Box<dyn Fn(&str) -> Option<String> + Send + Sync>;
-
 /// Ein Tresor in einem Ordner.
 pub struct DateiTresor {
     ordner: PathBuf,
-    altbestand: Option<Altbestand>,
 }
 
 impl std::fmt::Debug for DateiTresor {
@@ -65,14 +60,7 @@ impl DateiTresor {
     pub fn im_ordner(ordner: impl Into<PathBuf>) -> Self {
         Self {
             ordner: ordner.into(),
-            altbestand: None,
         }
-    }
-
-    /// Fehlt ein Wert, einmal im Altbestand nachsehen und ihn übernehmen.
-    pub fn mit_altbestand(mut self, altbestand: Altbestand) -> Self {
-        self.altbestand = Some(altbestand);
-        self
     }
 
     /// Der Ordner des Tresors.
@@ -81,21 +69,8 @@ impl DateiTresor {
     }
 
     pub fn lesen(&self, schluessel: &str) -> anyhow::Result<Option<String>> {
-        let werte = {
-            let _sperre = self.sperren()?;
-            self.laden()?
-        };
-        if let Some(wert) = werte.get(schluessel) {
-            return Ok(Some(wert.clone()));
-        }
-        // Einmaliger Umzug: was im alten Schlüsselbund liegt, kommt in die Datei.
-        if let Some(altbestand) = &self.altbestand {
-            if let Some(wert) = altbestand(schluessel) {
-                self.schreiben(schluessel, &wert)?;
-                return Ok(Some(wert));
-            }
-        }
-        Ok(None)
+        let _sperre = self.sperren()?;
+        Ok(self.laden()?.get(schluessel).cloned())
     }
 
     pub fn schreiben(&self, schluessel: &str, wert: &str) -> anyhow::Result<()> {
@@ -292,36 +267,6 @@ mod tests {
         let fehler = tresor.lesen("a").unwrap_err().to_string();
         assert!(fehler.contains("entschlüsseln"), "{fehler}");
         assert!(!fehler.contains("streng-geheim"));
-    }
-
-    #[test]
-    fn der_altbestand_wird_einmal_uebernommen() {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        use std::sync::Arc;
-        let ordner = tempfile::tempdir().unwrap();
-        let aufrufe = Arc::new(AtomicUsize::new(0));
-        let zaehler = Arc::clone(&aufrufe);
-        let tresor =
-            DateiTresor::im_ordner(ordner.path()).mit_altbestand(Box::new(move |schluessel| {
-                zaehler.fetch_add(1, Ordering::SeqCst);
-                (schluessel == "alt").then(|| "aus-dem-schluesselbund".to_string())
-            }));
-        assert_eq!(
-            tresor.lesen("alt").unwrap().as_deref(),
-            Some("aus-dem-schluesselbund")
-        );
-        assert_eq!(
-            tresor.lesen("alt").unwrap().as_deref(),
-            Some("aus-dem-schluesselbund")
-        );
-        assert_eq!(aufrufe.load(Ordering::SeqCst), 1, "nur einmal nachgesehen");
-        // Ohne Altbestand liegt es jetzt in der Datei.
-        let ohne = DateiTresor::im_ordner(ordner.path());
-        assert_eq!(
-            ohne.lesen("alt").unwrap().as_deref(),
-            Some("aus-dem-schluesselbund")
-        );
-        assert_eq!(tresor.lesen("fehlt").unwrap(), None);
     }
 
     #[test]

@@ -4,6 +4,7 @@ members = [
   "crates/kern",
   "crates/diagramm",
   "crates/excalidraw",
+  "crates/drawio",
   "crates/outline",
   "crates/email",
   "crates/zep",

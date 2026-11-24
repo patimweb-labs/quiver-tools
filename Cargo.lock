@@ -2670,6 +2670,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "quiver-drawio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "flate2",
+ "open",
+ "quiver-diagramm",
+ "quiver-tools-kern",
+ "rmcp",
+ "schemars",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "quiver-email"
 version = "0.1.0"
 dependencies = [

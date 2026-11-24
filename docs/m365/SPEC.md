@@ -92,7 +92,8 @@ Delegierte Berechtigungen (Mail, Kalender, Dateien):
 
 **Teams (Aufgabe 05, 2026-11-24)** ergänzt delegiert:
 `Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send
-Chat.ReadWrite User.ReadBasic.All`.
+Chat.ReadWrite User.ReadBasic.All`; **Aufgabe 07 (2026-11-24)** ergänzt `TeamMember.Read.All`
+(ohne dieses Recht antwortet Graph auf `GET /teams/{id}/members` mit 403).
 *Begründung:* Alle Teams-Tools handeln **als der User**; es gibt bewusst keine App-Berechtigung
 (`*.All` mit Application-Rechten), weil sie jedes Postfach und jeden Chat lesen dürfte.
 *Preis:* `ChannelMessage.Read.All` und `ChannelMessage.Send` verlangen in vielen Tenants eine

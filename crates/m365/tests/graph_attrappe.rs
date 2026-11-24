@@ -23,6 +23,16 @@ use serde_json::{json, Value};
 /// So lange darf eine Anfrage in der Attrappe höchstens dauern.
 pub const GEDULD: Duration = Duration::from_secs(10);
 
+/// Der Mandant, den ein echtes Entra-Token im `tid`-Anspruch trägt.
+/// `teams_als_gelesen` schreibt ihn in den Rumpf (Aufgabe 07).
+pub const MANDANT: &str = "test-mandant";
+
+/// Ein Access-Token, wie Entra ihn liefert: JWT mit `tid`-Anspruch
+/// (Kopf `{"alg":"none","typ":"JWT"}`, Nutzlast `{"tid":"test-mandant"}`).
+pub fn access_token() -> String {
+    "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJ0aWQiOiJ0ZXN0LW1hbmRhbnQifQ.".to_string()
+}
+
 /// Wörter im langen Mailtext der Attrappe – mehr als die 4000 Zeichen, die
 /// `mail_lesen` standardmäßig zurückgibt (Aufgabe 04).
 pub const LANGE_MAIL_WOERTER: u32 = 1200;
@@ -278,6 +288,13 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
     }
 
     let ohne_basis = pfad.strip_prefix("/v1.0").unwrap_or(&pfad);
+
+    // Was Graph nicht erlaubt, erlaubt die Attrappe auch nicht (Aufgabe 07):
+    // so fallen dieselben Fehler schon im Test auf.
+    if let Some(antwort) = graph_regeln(&methode, ohne_basis, &abfrage, &body) {
+        return antwort;
+    }
+
     let antwort = match (methode.as_str(), ohne_basis) {
         // Graph antwortet auf `sendMail` mit 202 ohne Körper.
         ("POST", "/me/sendMail") => return StatusCode::ACCEPTED.into_response(),
@@ -537,7 +554,7 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
             aufgabe["@odata.etag"] = json!("W/\"2\"");
             aufgabe
         }
-        ("GET", "/me/todo/lists") => json!({"value": todo_listen()}),
+        ("GET", "/me/todo/lists") => todo_listen_seite(&abfrage, &host),
         ("GET", pfad) if pfad.starts_with("/me/todo/lists/") && pfad.ends_with("/tasks") => {
             json!({"value": todo_aufgaben()})
         }
@@ -629,6 +646,143 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
     };
 
     (StatusCode::OK, axum::Json(antwort)).into_response()
+}
+
+// ---------------------------------------------------------------------------
+// Regeln von Graph, die der Live-Test gezeigt hat (Aufgabe 07)
+// ---------------------------------------------------------------------------
+
+/// Ein Fehler, wie Graph ihn schickt: `{"error":{"code","message"}}`.
+fn graph_antwort(status: u16, code: &str, text: impl Into<String>) -> Response {
+    (
+        StatusCode::from_u16(status).expect("gültiger Status"),
+        axum::Json(json!({"error": {"code": code, "message": text.into()}})),
+    )
+        .into_response()
+}
+
+/// Was Graph auf den Endpunkten aus Aufgabe 07 nicht erlaubt, erlaubt die
+/// Attrappe auch nicht – mit demselben Status und demselben Code.
+fn graph_regeln(
+    methode: &str,
+    pfad: &str,
+    abfrage: &[(String, String)],
+    body: &Option<Value>,
+) -> Option<Response> {
+    let hat = |name: &str| abfrage.iter().any(|(feld, _)| feld == name);
+
+    // `$top` ist auf joinedTeams und channels nicht erlaubt.
+    if methode == "GET" && (pfad == "/me/joinedTeams" || ist_kanal_liste(pfad)) && hat("$top") {
+        return Some(graph_antwort(
+            400,
+            "BadRequest",
+            "Query option 'Top' is not allowed.",
+        ));
+    }
+
+    // OneNote kennt kein `webUrl` bei Notizbüchern und Abschnitten.
+    if methode == "GET" && ist_onenote_sammlung(pfad) && select_enthaelt(abfrage, "webUrl") {
+        return Some(graph_antwort(
+            400,
+            "BadRequest",
+            "Could not find a property named 'webUrl' on type 'microsoft.graph.onenoteNotebook'.",
+        ));
+    }
+
+    // `markChatReadForUser` braucht den Mandanten des Users im Rumpf.
+    if methode == "POST"
+        && (pfad.ends_with("/markChatReadForUser") || pfad.ends_with("/markChatUnreadForUser"))
+        && !body
+            .as_ref()
+            .and_then(|body| body.get("user"))
+            .and_then(|user| user.get("tenantId"))
+            .and_then(Value::as_str)
+            .is_some_and(|mandant| !mandant.trim().is_empty())
+    {
+        return Some(graph_antwort(
+            400,
+            "BadRequest",
+            "TenantId for the user must be specified.",
+        ));
+    }
+
+    // Jedes Chat-Mitglied braucht `user@odata.bind` – und zwar als Bindung an
+    // die Ressource, nicht als `/me`.
+    if methode == "POST" && pfad == "/chats" {
+        let mitglieder = body
+            .as_ref()
+            .and_then(|body| body.get("members"))
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        for mitglied in &mitglieder {
+            match mitglied.get("user@odata.bind").and_then(Value::as_str) {
+                Some(bindung) if bindung.trim().ends_with("/me") => {
+                    return Some(graph_antwort(
+                        400,
+                        "BadRequest",
+                        "'user@odata.bind' must reference the user by id, not by '/me'.",
+                    ))
+                }
+                Some(bindung) if !bindung.trim().is_empty() => {}
+                _ => {
+                    return Some(graph_antwort(
+                        400,
+                        "BadRequest",
+                        "'user@odata.bind' field is missing for a member.",
+                    ))
+                }
+            }
+        }
+    }
+
+    // To Do: `$top` und `$select` sind auf `/me/todo/lists` nicht erlaubt, auf
+    // den Aufgaben nur `$select` nicht.
+    if methode == "GET" {
+        if pfad == "/me/todo/lists" && (hat("$top") || hat("$select")) {
+            return Some(graph_antwort(
+                400,
+                "invalidRequest",
+                "The query is not valid (To Do lists allow neither $top nor $select).",
+            ));
+        }
+        if ist_todo_aufgaben(pfad) && hat("$select") {
+            return Some(graph_antwort(
+                400,
+                "invalidRequest",
+                "The query is not valid (To Do tasks allow no $select).",
+            ));
+        }
+    }
+
+    None
+}
+
+/// Enthält `$select` das genannte Feld?
+fn select_enthaelt(abfrage: &[(String, String)], name: &str) -> bool {
+    abfrage
+        .iter()
+        .filter(|(feld, _)| feld == "$select")
+        .flat_map(|(_, wert)| wert.split(','))
+        .any(|feld| feld.trim().eq_ignore_ascii_case(name))
+}
+
+/// `GET /teams/{id}/channels` (nicht `/channels/{id}/messages`).
+fn ist_kanal_liste(pfad: &str) -> bool {
+    pfad.starts_with("/teams/") && pfad.ends_with("/channels")
+}
+
+/// `GET /me/onenote/notebooks`, `…/sections`, `…/notebooks/{id}/sections`.
+fn ist_onenote_sammlung(pfad: &str) -> bool {
+    pfad.starts_with("/me/onenote/")
+        && (pfad.ends_with("/notebooks")
+            || pfad.ends_with("/sections")
+            || pfad == "/me/onenote/sections")
+}
+
+/// `GET /me/todo/lists/{id}/tasks`.
+fn ist_todo_aufgaben(pfad: &str) -> bool {
+    pfad.starts_with("/me/todo/lists/") && pfad.ends_with("/tasks")
 }
 
 /// Der angelegte Termin, so wie Graph ihn zurückgibt (aus dem Body gebaut).
@@ -950,6 +1104,26 @@ fn todo_listen() -> Vec<Value> {
     ]
 }
 
+/// Eine Seite To-Do-Listen: Seite 1 mit `@odata.nextLink`, Seite 2 ohne –
+/// `/me/todo/lists` verträgt weder `$top` noch `$select`, geblättert wird über
+/// den Link (Aufgabe 07).
+fn todo_listen_seite(abfrage: &[(String, String)], host: &str) -> Value {
+    let seite: u32 = abfrage
+        .iter()
+        .find(|(name, _)| name == "seite")
+        .and_then(|(_, wert)| wert.parse().ok())
+        .unwrap_or(1);
+
+    if seite == 1 {
+        json!({
+            "value": [todo_listen()[0].clone()],
+            "@odata.nextLink": format!("http://{host}/v1.0/me/todo/lists?seite=2"),
+        })
+    } else {
+        json!({"value": [todo_listen()[1].clone()]})
+    }
+}
+
 fn todo_aufgaben() -> Vec<Value> {
     vec![todo_aufgabe(TODO_AUFGABE), {
         let mut fertig = todo_aufgabe("AAMkADtodo-task-2");
@@ -1011,10 +1185,12 @@ fn personen_von_people() -> Vec<Value> {
 
 fn notizbuecher() -> Vec<Value> {
     vec![
+        // Kein `webUrl` bei OneNote-Notizbüchern – der Link steht in `links`
+        // (Aufgabe 07).
         json!({
             "id": NOTIZBUCH,
             "displayName": "Arbeit",
-            "webUrl": "https://example/onenote/arbeit",
+            "links": {"oneNoteWebUrl": {"href": "https://example/onenote/arbeit"}},
         }),
         json!({
             "id": "1-nb-privat-0000000002",
@@ -1028,7 +1204,7 @@ fn abschnitte() -> Vec<Value> {
         json!({
             "id": ABSCHNITT,
             "displayName": "Besprechungen",
-            "webUrl": "https://example/onenote/besprechungen",
+            "links": {"oneNoteWebUrl": {"href": "https://example/onenote/besprechungen"}},
         }),
         json!({
             "id": "1-sec-ideen-0000000002",

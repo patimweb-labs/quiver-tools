@@ -727,6 +727,71 @@ async fn todo_listen_aufgaben_und_nur_offen() {
 }
 
 #[tokio::test]
+async fn todo_listen_ohne_top_und_select_ueber_next_link() {
+    // `/me/todo/lists` verträgt weder `$top` noch `$select` (invalidRequest);
+    // geblättert wird über `@odata.nextLink` (Aufgabe 07).
+    let (_anmelde, graph, server, _tresor) = aufbau().await;
+
+    let wert = json(&server.todo_listen().await.expect("Listen"));
+    let ids: Vec<&str> = wert
+        .as_array()
+        .expect("Liste")
+        .iter()
+        .filter_map(|liste| liste["id"].as_str())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            graph_attrappe::TODO_LISTE,
+            graph_attrappe::TODO_LISTE_EINKAUF
+        ],
+        "beide Seiten über den nextLink"
+    );
+
+    let abfragen: Vec<graph_attrappe::Aufzeichnung> = graph
+        .aufzeichnungen()
+        .into_iter()
+        .filter(|anfrage| anfrage.pfad == "/v1.0/me/todo/lists")
+        .collect();
+    assert_eq!(abfragen.len(), 2, "zwei Seiten: {abfragen:#?}");
+    for anfrage in &abfragen {
+        assert!(anfrage.query("$top").is_none(), "kein $top: {anfrage:#?}");
+        assert!(
+            anfrage.query("$select").is_none(),
+            "kein $select: {anfrage:#?}"
+        );
+    }
+    assert_eq!(abfragen[1].query("seite"), Some("2"));
+}
+
+#[tokio::test]
+async fn todo_aufgaben_ohne_select_mit_top() {
+    let (_anmelde, graph, server, _tresor) = aufbau().await;
+
+    json(
+        &server
+            .todo_aufgaben(Parameters(TodoAufgabenAnfrage {
+                liste: graph_attrappe::TODO_LISTE.to_string(),
+                nur_offen: None,
+                anzahl: None,
+            }))
+            .await
+            .expect("Aufgaben"),
+    );
+
+    let abfrage = graph
+        .aufzeichnungen()
+        .into_iter()
+        .find(|anfrage| anfrage.pfad.ends_with("/tasks"))
+        .expect("Aufgabenliste");
+    assert!(
+        abfrage.query("$select").is_none(),
+        "kein $select auf Aufgaben: {abfrage:#?}"
+    );
+    assert_eq!(abfrage.query("$top"), Some("20"), "$top ist erlaubt");
+}
+
+#[tokio::test]
 async fn todo_aufgabe_anlegen_und_erledigen() {
     let (_anmelde, graph, server, _tresor) = aufbau().await;
 
@@ -868,6 +933,9 @@ async fn onenote_notizbuecher_abschnitte_und_seiten() {
     let wert = json(&server.onenote_notizbuecher().await.expect("Notizbücher"));
     assert_eq!(wert[0]["id"], graph_attrappe::NOTIZBUCH);
     assert_eq!(wert[0]["name"], "Arbeit");
+    // OneNote kennt kein `webUrl`; der Link steht unter `links.oneNoteWebUrl.href`
+    // (Aufgabe 07). Die Attrappe lehnt `webUrl` in `$select` mit 400 ab.
+    assert_eq!(wert[0]["link"], "https://example/onenote/arbeit");
 
     let wert = json(
         &server
@@ -882,6 +950,10 @@ async fn onenote_notizbuecher_abschnitte_und_seiten() {
         format!("Arbeit ({})", graph_attrappe::NOTIZBUCH)
     );
     assert_eq!(wert["abschnitte"][0]["name"], "Besprechungen");
+    assert_eq!(
+        wert["abschnitte"][0]["link"],
+        "https://example/onenote/besprechungen"
+    );
 
     let wert = json(
         &server
@@ -916,6 +988,23 @@ async fn onenote_notizbuecher_abschnitte_und_seiten() {
             ),
         ]
     );
+
+    // Kein `webUrl` in `$select` – sonst antwortet Graph mit 400.
+    let selects: Vec<String> = graph
+        .aufzeichnungen()
+        .into_iter()
+        .filter(|anfrage| {
+            anfrage.pfad == "/v1.0/me/onenote/notebooks" || anfrage.pfad.ends_with("/sections")
+        })
+        .filter_map(|anfrage| anfrage.query("$select").map(str::to_string))
+        .collect();
+    assert_eq!(selects.len(), 4, "vier Listenabfragen mit $select");
+    for select in &selects {
+        assert!(
+            !select.contains("webUrl"),
+            "kein webUrl in $select: {select}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -1067,4 +1156,65 @@ async fn fehlende_zustimmung_ist_ein_hinweis_ohne_browser_und_ohne_tokenverlust(
         graph.aufzeichnungen().is_empty(),
         "ohne Token geht keine Anfrage an Graph"
     );
+}
+
+#[tokio::test]
+async fn die_attrappe_haelt_die_onenote_und_todo_regeln_ein() {
+    // Ohne diese Regeln bliebe der Live-Test-Fehler im Test unsichtbar (Aufgabe 07).
+    let anmelde = Attrappe::starten().await;
+    let graph = GraphAttrappe::starten().await;
+    let anmeldung = EntraAnmeldung::mit_festem_token(
+        attrappe::konfig(&anmelde),
+        SpeicherTresor::neu(),
+        AttrappenBrowser::neu(),
+        Some(graph_attrappe::access_token()),
+    )
+    .expect("Anmeldung baut");
+    let client = GraphClient::neu(graph.adresse.clone(), anmeldung).expect("Graph-Client baut");
+
+    let status = |ergebnis: Result<Value, m365_graph::GraphFehler>| match ergebnis {
+        Err(m365_graph::GraphFehler::Graph { status, code, .. }) => (status, code),
+        anderes => panic!("400 erwartet, kam: {anderes:?}"),
+    };
+
+    let (status_code, code) = status(
+        client
+            .get(
+                "/me/onenote/notebooks",
+                &[("$select", "id,displayName,webUrl".to_string())],
+            )
+            .await,
+    );
+    assert_eq!(status_code, 400, "kein webUrl bei Notizbüchern");
+    assert!(code.contains("BadRequest"), "{code}");
+
+    let (status_code, _) = status(
+        client
+            .get(
+                "/me/onenote/sections",
+                &[("$select", "id,displayName,webUrl".to_string())],
+            )
+            .await,
+    );
+    assert_eq!(status_code, 400, "kein webUrl bei Abschnitten");
+
+    for (name, wert) in [("$top", "10"), ("$select", "id,displayName")] {
+        let (status_code, code) = status(
+            client
+                .get("/me/todo/lists", &[(name, wert.to_string())])
+                .await,
+        );
+        assert_eq!(status_code, 400, "{name} auf todo/lists");
+        assert!(code.contains("invalidRequest"), "{code}");
+    }
+
+    let (status_code, _) = status(
+        client
+            .get(
+                &format!("/me/todo/lists/{}/tasks", graph_attrappe::TODO_LISTE),
+                &[("$select", "id,title".to_string())],
+            )
+            .await,
+    );
+    assert_eq!(status_code, 400, "kein $select auf Aufgaben");
 }

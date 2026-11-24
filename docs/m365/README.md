@@ -56,7 +56,8 @@ aber auch einen Versatz tragen (`…+01:00`, `…Z`) – der Zeitpunkt bleibt da
 
 Die Teams-Tools handeln **als der User**: Sie lesen, was er lesen darf, und was sie senden, kommt von
 ihm. Delegierte Rechte: `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`,
-`ChannelMessage.Send`, `Chat.ReadWrite`, `User.ReadBasic.All` (in der App-Registrierung eingetragen,
+`ChannelMessage.Send`, `TeamMember.Read.All`, `Chat.ReadWrite`, `User.ReadBasic.All` (in der
+App-Registrierung eingetragen,
 Admin-Zustimmung für neoimpulse.de erteilt – siehe [docs/entra-app.md](docs/entra-app.md)).
 
 | Tool | Was es tut | Graph |
@@ -94,6 +95,12 @@ Admin-Zustimmung für neoimpulse.de erteilt – siehe [docs/entra-app.md](docs/e
   „Missing scope“), antwortet das Tool mit: „Für Teams fehlt die Zustimmung – im quiver-Fenster unter
   Tools → Microsoft 365 erneut auf ‚Anmelden‘ klicken.“ Es öffnet **keinen** Browser und löscht das
   Refresh-Token **nicht**.
+- **Eigenheiten von Graph** (aus dem Live-Test, `docs/aufgaben/07-fehler-aus-dem-livetest.md`):
+  `$top` ist auf `/me/joinedTeams` und `/teams/{id}/channels` **nicht** erlaubt – die Tools begrenzen
+  clientseitig. `markChatReadForUser` braucht den Mandanten des Users im Rumpf (`tid` aus dem Token).
+  Ein neuer Chat bindet das eigene Mitglied als `users('<eigene-id>')`, **nicht** als `…/me`.
+  `teams_mitglieder` braucht `TeamMember.Read.All`; fehlt es (403), sagt das Tool das im Klartext
+  statt den Rohfehler zu zeigen.
 
 ## SharePoint, OneDrive, Planner, To Do, Kontakte, Personen und OneNote
 
@@ -168,6 +175,11 @@ neoimpulse.de erteilt): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.Rea
 Bei `onenote_seite_anlegen` werden Titel und Text **HTML-escaped** eingesetzt: ein `<b>` im Text
 bleibt Text und wird nicht zu Markup.
 
+OneNote kennt bei Notizbüchern und Abschnitten **kein** `webUrl` (Graph antwortet mit 400); der Link
+steht unter `links.oneNoteWebUrl.href` und wird von dort gelesen. `/me/todo/lists` verträgt weder
+`$top` noch `$select` – begrenzt wird clientseitig, geblättert über `@odata.nextLink`; To-Do-Aufgaben
+kommen ohne `$select`, `$top` ist dort erlaubt (`docs/aufgaben/07-fehler-aus-dem-livetest.md`).
+
 ### Regeln für alle neuen Tools
 
 - **Namen statt Ids.** Site, Bibliothek, Liste, Plan, Bucket, To-Do-Liste, Abschnitt und Notizbuch
@@ -230,7 +242,7 @@ Alles über Umgebung, alles optional:
 |---|---|---|
 | `M365_CLIENT_ID` | eingebaute Client-ID | eigene App-Registrierung (siehe [docs/entra-app.md](docs/entra-app.md)) |
 | `M365_TENANT` | `organizations` | Tenant-ID oder Domain |
-| `M365_SCOPES` | `User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.Read.All Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send Chat.ReadWrite User.ReadBasic.All Sites.ReadWrite.All Files.ReadWrite.All Tasks.ReadWrite Group.Read.All Contacts.ReadWrite People.Read Notes.ReadWrite.All offline_access` | delegierte Rechte |
+| `M365_SCOPES` | `User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.Read.All Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send TeamMember.Read.All Chat.ReadWrite User.ReadBasic.All Sites.ReadWrite.All Files.ReadWrite.All Tasks.ReadWrite Group.Read.All Contacts.ReadWrite People.Read Notes.ReadWrite.All offline_access` | delegierte Rechte |
 | `M365_AUTHORITY` | `https://login.microsoftonline.com` | Anmeldedienst (Tests: Attrappe) |
 | `M365_GRAPH_URL` | `https://graph.microsoft.com/v1.0` | Graph (Tests: Attrappe) |
 | `M365_ZEITZONE` | `Europe/Berlin` | Zeitzone für Termine und alle Zeiten in Antworten |

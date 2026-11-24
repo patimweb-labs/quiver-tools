@@ -14,9 +14,10 @@
 //!   gelöschte und System-Nachrichten weg.
 
 use jiff::Timestamp;
-use m365_anmeldung::Anmeldung;
+use m365_anmeldung::{Anmeldung, Token};
 use m365_graph::{
-    Chat, Kanal, Mitglied, Profil, Sammlung, SucheAntwort, Team, TeamsNachricht, Treffer, Vorschau,
+    mandant_aus_token, Chat, GraphFehler, Kanal, Mitglied, Profil, Sammlung, SucheAntwort, Team,
+    TeamsNachricht, Treffer, Vorschau,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ErrorData;
@@ -40,6 +41,14 @@ const HOECHSTENS_ANTWORTEN: usize = 50;
 const STANDARD_TAGE: u32 = 3;
 /// So viele Zeichen einer Chat-Vorschau stehen in `teams_chats`.
 const VORSCHAU_ZEICHEN: usize = 200;
+
+/// Der Satz, wenn `teams_mitglieder` mit 403 antwortet.
+///
+/// Ein 403 heißt hier fast immer: das delegierte Recht `TeamMember.Read.All`
+/// fehlt (`Authorization_RequestDenied`). Der Rohfehler hilft niemandem, der
+/// Satz schon (Aufgabe 07).
+pub const MITGLIEDER_HINWEIS: &str =
+    "Für `teams_mitglieder` fehlt das Recht `TeamMember.Read.All` – im quiver-Fenster unter Tools → Microsoft 365 erneut auf „Anmelden“ klicken (in vielen Tenants gibt ein Admin das Recht einmal frei).";
 
 // ---------------------------------------------------------------------------
 // Parameter der Tools (Namen und Beschreibungen deutsch, wie im Rest des Repos)
@@ -569,11 +578,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         }
         let teams = self
             .graph
-            .get_seiten::<Team>(
-                "/me/joinedTeams",
-                &[("$top", "100".to_string())],
-                HOECHSTENS_LISTE,
-            )
+            .get_seiten::<Team>("/me/joinedTeams", &[], HOECHSTENS_LISTE)
             .await?;
         let kandidaten = teams
             .into_iter()
@@ -596,7 +601,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         let pfad = format!("/teams/{}/channels", team.id);
         let kanaele = self
             .graph
-            .get_seiten::<Kanal>(&pfad, &[("$top", "100".to_string())], HOECHSTENS_LISTE)
+            .get_seiten::<Kanal>(&pfad, &[], HOECHSTENS_LISTE)
             .await?;
         let kandidaten = kanaele
             .into_iter()
@@ -823,6 +828,22 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         Ok((profil.id, profil.display_name))
     }
 
+    /// Der Mandant des angemeldeten Users – aus dem `tid`-Anspruch des Tokens.
+    ///
+    /// Kein zusätzlicher Aufruf an Graph; ein Token ohne `tid` (von Hand
+    /// gesetzt) ergibt einen Hinweis statt eines 400 von Graph (Aufgabe 07).
+    async fn mandant(&self) -> Result<String, ToolFehler> {
+        match self.graph.anmeldung().access_token().await {
+            Ok(Token::Bereit(token)) => mandant_aus_token(&token).ok_or_else(|| {
+                ungueltig_tool(
+                    "Der Mandant fehlt im Access-Token (`tid`). Bitte im quiver-Fenster unter Tools → Microsoft 365 erneut auf „Anmelden“ klicken.",
+                )
+            }),
+            Ok(Token::WartetAufBrowser) => Err(GraphFehler::AnmeldungLaeuft.into()),
+            Err(fehler) => Err(GraphFehler::Anmeldung(fehler).into()),
+        }
+    }
+
     async fn antwortzahl(&self, pfad: &str) -> Result<usize, ToolFehler> {
         let antworten = self
             .graph
@@ -943,13 +964,11 @@ impl<A: Anmeldung + 'static> Quiver<A> {
     }
 
     async fn teams_liste_lauf(&self) -> Result<String, ToolFehler> {
+        // Kein `$top` auf `/me/joinedTeams` (Graph: „Query option 'Top' is not
+        // allowed“, Aufgabe 07); begrenzt wird clientseitig über `get_seiten`.
         let teams = self
             .graph
-            .get_seiten::<Team>(
-                "/me/joinedTeams",
-                &[("$top", "100".to_string())],
-                HOECHSTENS_LISTE,
-            )
+            .get_seiten::<Team>("/me/joinedTeams", &[], HOECHSTENS_LISTE)
             .await?;
         let liste: Vec<Value> = teams
             .iter()
@@ -967,9 +986,10 @@ impl<A: Anmeldung + 'static> Quiver<A> {
     async fn teams_kanaele_lauf(&self, anfrage: TeamsKanaeleAnfrage) -> Result<String, ToolFehler> {
         let team = self.team_finden(&anfrage.team).await?;
         let pfad = format!("/teams/{}/channels", team.id);
+        // Auch hier kein `$top` (Aufgabe 07).
         let kanaele = self
             .graph
-            .get_seiten::<Kanal>(&pfad, &[("$top", "100".to_string())], HOECHSTENS_LISTE)
+            .get_seiten::<Kanal>(&pfad, &[], HOECHSTENS_LISTE)
             .await?;
         let liste: Vec<Value> = kanaele
             .iter()
@@ -1145,7 +1165,8 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         let mitglieder = self
             .graph
             .get_seiten::<Mitglied>(&pfad, &[("$top", "200".to_string())], HOECHSTENS_LISTE)
-            .await?;
+            .await
+            .map_err(mitglieder_fehler)?;
         let liste: Vec<Value> = mitglieder.iter().map(mitglied_json).collect();
         als_json(&json!({"wo": wo, "mitglieder": liste})).map_err(ToolFehler::from)
     }
@@ -1247,11 +1268,18 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         } else {
             "group"
         };
-        // Der User selbst gehört immer dazu (Graph erwartet ihn ausdrücklich).
+        // Der User selbst gehört immer dazu (Graph erwartet ihn ausdrücklich) –
+        // aber als **eigene Id**, nicht als `/me`: `user@odata.bind` verlangt eine
+        // Bindung an die Ressource (Aufgabe 07: „'user@odata.bind' field is
+        // missing“ bei `…/me`).
+        let (ich_id, _) = self.ich().await?;
+        let ich_id = ich_id.ok_or_else(|| {
+            ungueltig_tool("Die eigene Benutzer-Id fehlt in der Antwort von Graph (/me).")
+        })?;
         let mut mitglieder = vec![json!({
             "@odata.type": "#microsoft.graph.aadUserConversationMember",
             "roles": ["owner"],
-            "user@odata.bind": "https://graph.microsoft.com/v1.0/me",
+            "user@odata.bind": format!("https://graph.microsoft.com/v1.0/users('{ich_id}')"),
         })];
         for person in &personen {
             mitglieder.push(json!({
@@ -1381,6 +1409,10 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         let ich_id = ich_id.ok_or_else(|| {
             ungueltig_tool("Die eigene Benutzer-Id fehlt in der Antwort von Graph (/me).")
         })?;
+        // `markChatReadForUser` verlangt den Mandanten des Users im Rumpf
+        // (Aufgabe 07: „TenantId for the user must be specified“). Er steht im
+        // `tid`-Anspruch des Access-Tokens.
+        let mandant = self.mandant().await?;
         let chat = self.chat_finden(&anfrage.chat).await?;
         let aktion = if gelesen {
             "markChatReadForUser"
@@ -1391,7 +1423,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             .graph
             .post(
                 &format!("/chats/{}/{aktion}", chat.id),
-                &json!({"user": {"id": ich_id}}),
+                &json!({"user": {"id": ich_id, "tenantId": mandant}}),
             )
             .await?;
 
@@ -1402,6 +1434,22 @@ impl<A: Anmeldung + 'static> Quiver<A> {
 // ---------------------------------------------------------------------------
 // Reine Hilfen
 // ---------------------------------------------------------------------------
+
+/// Ein 403 bei `teams_mitglieder` ist keine Panne, sondern ein fehlendes Recht:
+/// statt des Rohfehlers kommt der Satz aus [`MITGLIEDER_HINWEIS`] (Aufgabe 07).
+/// Ein 403 mit `Missing scope` bleibt der allgemeine Zustimmungs-Hinweis, und
+/// alles andere bleibt, wie es war.
+fn mitglieder_fehler(fehler: GraphFehler) -> ToolFehler {
+    if fehler.zustimmung_fehlt() {
+        return ToolFehler::from(fehler);
+    }
+    match &fehler {
+        GraphFehler::Graph { status: 403, .. } => {
+            ToolFehler::Hinweis(MITGLIEDER_HINWEIS.to_string())
+        }
+        _ => ToolFehler::from(fehler),
+    }
+}
 
 /// Der Graph-Körper einer neuen Nachricht.
 ///

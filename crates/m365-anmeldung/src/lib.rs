@@ -41,6 +41,8 @@ pub const STANDARD_SCOPES: &[&str] = &[
     "Channel.ReadBasic.All",
     "ChannelMessage.Read.All",
     "ChannelMessage.Send",
+    // Mitglieder lesen (`teams_mitglieder`, Aufgabe 07).
+    "TeamMember.Read.All",
     "Chat.ReadWrite",
     "User.ReadBasic.All",
     // SharePoint/OneDrive, Planner/To Do, Kontakte/Personen, OneNote

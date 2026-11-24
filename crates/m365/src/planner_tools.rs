@@ -32,9 +32,6 @@ const HOECHSTENS_LISTE: usize = 200;
 /// `$select` für Planner-Aufgaben (inklusive ETag).
 const AUFGABE_FELDER: &str =
     "id,planId,bucketId,title,percentComplete,priority,dueDateTime,completedDateTime,createdDateTime,assignments";
-/// `$select` für To-Do-Aufgaben.
-const TODO_FELDER: &str =
-    "id,title,status,importance,dueDateTime,completedDateTime,createdDateTime,lastModifiedDateTime,body";
 
 /// `GET /groups?$search=…` – nur Id und Name.
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -355,16 +352,12 @@ impl<A: Anmeldung + 'static> Quiver<A> {
     }
 
     async fn todo_listen_laden(&self) -> Result<Vec<ToDoListe>, ToolFehler> {
+        // `/me/todo/lists` verträgt **kein** `$top` und **kein** `$select`
+        // (`invalidRequest`, Aufgabe 07). Begrenzt wird clientseitig, geblättert
+        // über `@odata.nextLink`.
         Ok(self
             .graph
-            .get_seiten::<ToDoListe>(
-                "/me/todo/lists",
-                &[
-                    ("$select", "id,displayName,wellknownListName".to_string()),
-                    ("$top", HOECHSTENS_LISTE.to_string()),
-                ],
-                HOECHSTENS_LISTE,
-            )
+            .get_seiten::<ToDoListe>("/me/todo/lists", &[], HOECHSTENS_LISTE)
             .await?)
     }
 
@@ -373,14 +366,13 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         liste: &Anzeige,
         anzahl: u32,
     ) -> Result<Vec<ToDoAufgabe>, ToolFehler> {
+        // `$top` ist bei Aufgaben erlaubt, `$select` nicht (Aufgabe 07) – die
+        // Felder kommen so, wie Graph sie liefert, und werden im Modell gelesen.
         Ok(self
             .graph
             .get_seiten::<ToDoAufgabe>(
                 &format!("/me/todo/lists/{}/tasks", liste.id),
-                &[
-                    ("$select", TODO_FELDER.to_string()),
-                    ("$top", anzahl.to_string()),
-                ],
+                &[("$top", anzahl.to_string())],
                 anzahl as usize,
             )
             .await?)

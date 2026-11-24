@@ -33,5 +33,6 @@ pub use server::{
     Quiver, ANMELDUNG_HINWEIS, NICHT_ANGEMELDET_HINWEIS, ZUSTIMMUNG_ERWEITERT_HINWEIS,
     ZUSTIMMUNG_HINWEIS,
 };
+pub use teams_tools::MITGLIEDER_HINWEIS;
 pub use tresorwahl::TresorWahl;
 pub use unterbefehle::Ausgang;

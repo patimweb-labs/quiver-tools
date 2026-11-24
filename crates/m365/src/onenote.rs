@@ -91,7 +91,7 @@ pub fn notizbuch_json(notizbuch: &Notizbuch) -> Value {
     json!({
         "id": notizbuch.id,
         "name": notizbuch.display_name,
-        "link": notizbuch.web_url,
+        "link": notizbuch.link(),
     })
 }
 
@@ -100,7 +100,7 @@ pub fn abschnitt_json(abschnitt: &Abschnitt) -> Value {
     json!({
         "id": abschnitt.id,
         "name": abschnitt.display_name,
-        "link": abschnitt.web_url,
+        "link": abschnitt.link(),
     })
 }
 

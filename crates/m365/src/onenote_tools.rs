@@ -27,6 +27,13 @@ use crate::server::{als_json, ergebnis_erweitert, ungueltig_tool, Quiver, ToolFe
 /// So viele Notizbücher/Abschnitte/Seiten holt eine Suche höchstens.
 const HOECHSTENS_LISTE: usize = 200;
 
+/// `$select` für Notizbücher und Abschnitte.
+///
+/// **Kein `webUrl`**: Microsoft Graph kennt dieses Feld bei OneNote-Notizbüchern
+/// und -Abschnitten nicht (`Could not find a property named 'webUrl'`,
+/// Aufgabe 07). Der Link kommt aus `links.oneNoteWebUrl.href`.
+const NOTEBOOK_FELDER: &str = "id,displayName,createdDateTime,lastModifiedDateTime";
+
 // ---------------------------------------------------------------------------
 // Parameter der Tools
 // ---------------------------------------------------------------------------
@@ -155,7 +162,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             .graph
             .get_seiten::<Notizbuch>(
                 "/me/onenote/notebooks",
-                &[("$select", "id,displayName,webUrl".to_string())],
+                &[("$select", NOTEBOOK_FELDER.to_string())],
                 HOECHSTENS_LISTE,
             )
             .await?;
@@ -178,7 +185,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             .graph
             .get_seiten::<Abschnitt>(
                 "/me/onenote/sections",
-                &[("$select", "id,displayName,webUrl".to_string())],
+                &[("$select", NOTEBOOK_FELDER.to_string())],
                 HOECHSTENS_LISTE,
             )
             .await?;
@@ -200,7 +207,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             .graph
             .get_seiten::<Notizbuch>(
                 "/me/onenote/notebooks",
-                &[("$select", "id,displayName,webUrl".to_string())],
+                &[("$select", NOTEBOOK_FELDER.to_string())],
                 HOECHSTENS_LISTE,
             )
             .await?;
@@ -231,7 +238,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             .graph
             .get_seiten::<Abschnitt>(
                 &pfad,
-                &[("$select", "id,displayName,webUrl".to_string())],
+                &[("$select", NOTEBOOK_FELDER.to_string())],
                 HOECHSTENS_LISTE,
             )
             .await?;

@@ -402,7 +402,7 @@ fn kopf(eintrag: &Element) -> Option<Kopf> {
         knoten,
         kante,
         lage: mx::lage(eintrag),
-        text: html_zu_text(&mx::wert(eintrag)),
+        text: mx::text(eintrag),
         art: art(&stil),
         farbe: stil.wert("fillColor").and_then(farbe_aus_hex),
         schriftgroesse,

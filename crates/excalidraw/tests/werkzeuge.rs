@@ -144,7 +144,7 @@ fn erstellen_lesen_aendern_rundlauf() {
     let angelegt = text(
         &server,
         "excalidraw_erstellen",
-        json!({ "pfad": "plan.excalidraw", "modell": modell() }),
+        json!({ "datei": "plan.excalidraw", "modell": modell() }),
     );
     assert!(angelegt.contains("angelegt"), "{angelegt}");
     assert!(angelegt.contains("knoten-start"), "{angelegt}");
@@ -161,7 +161,7 @@ fn erstellen_lesen_aendern_rundlauf() {
     let fehler_text = fehler(
         &server,
         "excalidraw_erstellen",
-        json!({ "pfad": "plan.excalidraw", "modell": modell() }),
+        json!({ "datei": "plan.excalidraw", "modell": modell() }),
     );
     assert!(fehler_text.contains("existiert bereits"), "{fehler_text}");
 
@@ -171,7 +171,7 @@ fn erstellen_lesen_aendern_rundlauf() {
     let gelesen = text(
         &server,
         "excalidraw_lesen",
-        json!({ "pfad": "plan.excalidraw" }),
+        json!({ "datei": "plan.excalidraw" }),
     );
     assert!(gelesen.contains("„knoten-pruefen“ diamond"), "{gelesen}");
     assert!(gelesen.contains("Text in „knoten-pruefen“"), "{gelesen}");
@@ -182,7 +182,7 @@ fn erstellen_lesen_aendern_rundlauf() {
     let roh_text = text(
         &server,
         "excalidraw_lesen",
-        json!({ "pfad": "plan.excalidraw", "roh": true, "max_zeichen": 200 }),
+        json!({ "datei": "plan.excalidraw", "roh": true, "max_zeichen": 200 }),
     );
     assert!(roh_text.contains("\"type\": \"excalidraw\""), "{roh_text}");
     assert!(roh_text.contains("Zeichen weggelassen"), "{roh_text}");
@@ -191,7 +191,7 @@ fn erstellen_lesen_aendern_rundlauf() {
         &server,
         "excalidraw_elemente_aendern",
         json!({
-            "pfad": "plan.excalidraw",
+            "datei": "plan.excalidraw",
             "stand": stand_neu,
             "elemente": [
                 { "id": "knoten-pruefen", "text": "Freigabe", "farbe": "gruen", "form": "rechteck" },
@@ -238,7 +238,7 @@ fn ein_falscher_stand_schreibt_nichts() {
     text(
         &server,
         "excalidraw_erstellen",
-        json!({ "pfad": "plan.excalidraw", "modell": modell() }),
+        json!({ "datei": "plan.excalidraw", "modell": modell() }),
     );
     let vorher = std::fs::read_to_string(ordner.path().join("plan.excalidraw")).unwrap();
 
@@ -246,7 +246,7 @@ fn ein_falscher_stand_schreibt_nichts() {
         &server,
         "excalidraw_elemente_aendern",
         json!({
-            "pfad": "plan.excalidraw",
+            "datei": "plan.excalidraw",
             "stand": "0".repeat(64),
             "elemente": [ { "id": "knoten-start", "text": "anders" } ]
         }),
@@ -259,7 +259,7 @@ fn ein_falscher_stand_schreibt_nichts() {
     let fehler_text = fehler(
         &server,
         "excalidraw_elemente_aendern",
-        json!({ "pfad": "plan.excalidraw", "stand": "abc", "elemente": [] }),
+        json!({ "datei": "plan.excalidraw", "stand": "abc", "elemente": [] }),
     );
     assert!(fehler_text.contains("kein SHA-256"), "{fehler_text}");
 }
@@ -272,7 +272,7 @@ fn ohne_schreiben_wird_nichts_angelegt() {
     let hinweis = text(
         &server,
         "excalidraw_erstellen",
-        json!({ "pfad": "plan.excalidraw", "modell": modell() }),
+        json!({ "datei": "plan.excalidraw", "modell": modell() }),
     );
     assert!(
         hinweis.contains("Schalter „schreiben“ ist aus"),
@@ -292,7 +292,7 @@ fn hinzufuegen_und_entfernen_loesen_die_bindungen() {
     let angelegt = text(
         &server,
         "excalidraw_erstellen",
-        json!({ "pfad": "plan.excalidraw", "modell": modell() }),
+        json!({ "datei": "plan.excalidraw", "modell": modell() }),
     );
     let stand_neu = stand(&angelegt);
 
@@ -300,7 +300,7 @@ fn hinzufuegen_und_entfernen_loesen_die_bindungen() {
         &server,
         "excalidraw_elemente_hinzufuegen",
         json!({
-            "pfad": "plan.excalidraw",
+            "datei": "plan.excalidraw",
             "stand": stand_neu,
             "elemente": [
                 { "art": "rectangle", "id": "notiz", "text": "Neu", "farbe": "gelb", "x": 400.0, "y": 0.0 },
@@ -330,7 +330,7 @@ fn hinzufuegen_und_entfernen_loesen_die_bindungen() {
     let entfernt = text(
         &server,
         "excalidraw_elemente_entfernen",
-        json!({ "pfad": "plan.excalidraw", "stand": stand_danach, "ids": ["knoten-start"] }),
+        json!({ "datei": "plan.excalidraw", "stand": stand_danach, "ids": ["knoten-start"] }),
     );
     assert!(entfernt.contains("entfernt"), "{entfernt}");
 
@@ -371,12 +371,12 @@ fn ein_unbekanntes_element_wird_beim_bild_genannt() {
     text(
         &server,
         "excalidraw_erstellen",
-        json!({ "pfad": "plan.excalidraw", "modell": modell() }),
+        json!({ "datei": "plan.excalidraw", "modell": modell() }),
     );
     let gelesen = text(
         &server,
         "excalidraw_lesen",
-        json!({ "pfad": "plan.excalidraw" }),
+        json!({ "datei": "plan.excalidraw" }),
     );
     let stand_neu = stand(&gelesen);
 
@@ -385,7 +385,7 @@ fn ein_unbekanntes_element_wird_beim_bild_genannt() {
         &server,
         "excalidraw_elemente_hinzufuegen",
         json!({
-            "pfad": "plan.excalidraw",
+            "datei": "plan.excalidraw",
             "stand": stand_neu,
             "elemente": [ { "art": "image", "id": "bild", "x": 0.0, "y": 400.0 } ]
         }),
@@ -394,7 +394,7 @@ fn ein_unbekanntes_element_wird_beim_bild_genannt() {
     let ergebnis = aufruf(
         &server,
         "excalidraw_bild",
-        json!({ "pfad": "plan.excalidraw", "max_kante": 600 }),
+        json!({ "datei": "plan.excalidraw", "max_kante": 600 }),
     )
     .expect("Bild");
     let arten: Vec<&str> = ergebnis
@@ -431,13 +431,13 @@ fn exportieren_schreibt_svg_und_png() {
     text(
         &server,
         "excalidraw_erstellen",
-        json!({ "pfad": "plan.excalidraw", "modell": modell() }),
+        json!({ "datei": "plan.excalidraw", "modell": modell() }),
     );
 
     let svg_antwort = text(
         &server,
         "excalidraw_exportieren",
-        json!({ "pfad": "plan.excalidraw", "ziel": "ausgabe/plan.svg" }),
+        json!({ "datei": "plan.excalidraw", "ausgabe": "ausgabe/plan.svg" }),
     );
     assert!(svg_antwort.contains("plan.svg"), "{svg_antwort}");
     let svg = std::fs::read_to_string(ordner.path().join("ausgabe/plan.svg")).unwrap();
@@ -447,7 +447,7 @@ fn exportieren_schreibt_svg_und_png() {
     text(
         &server,
         "excalidraw_exportieren",
-        json!({ "pfad": "plan.excalidraw", "ziel": "plan.png", "max_kante": 400 }),
+        json!({ "datei": "plan.excalidraw", "ausgabe": "plan.png", "max_kante": 400 }),
     );
     let png = std::fs::read(ordner.path().join("plan.png")).unwrap();
     assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
@@ -456,7 +456,7 @@ fn exportieren_schreibt_svg_und_png() {
     let fehler_text = fehler(
         &server,
         "excalidraw_exportieren",
-        json!({ "pfad": "plan.excalidraw", "ziel": "plan.png" }),
+        json!({ "datei": "plan.excalidraw", "ausgabe": "plan.png" }),
     );
     assert!(fehler_text.contains("existiert bereits"), "{fehler_text}");
 
@@ -464,7 +464,7 @@ fn exportieren_schreibt_svg_und_png() {
     let fehler_text = fehler(
         &server,
         "excalidraw_exportieren",
-        json!({ "pfad": "plan.excalidraw", "ziel": "plan.txt" }),
+        json!({ "datei": "plan.excalidraw", "ausgabe": "plan.txt" }),
     );
     assert!(fehler_text.contains(".svg oder .png"), "{fehler_text}");
 }
@@ -477,13 +477,13 @@ fn oeffnen_startet_den_browser_nur_wenn_gewuenscht() {
     text(
         &server,
         "excalidraw_erstellen",
-        json!({ "pfad": "plan.excalidraw", "modell": modell() }),
+        json!({ "datei": "plan.excalidraw", "modell": modell() }),
     );
 
     let nur_link = text(
         &server,
         "excalidraw_oeffnen",
-        json!({ "pfad": "plan.excalidraw", "nur_link": true }),
+        json!({ "datei": "plan.excalidraw", "nur_link": true }),
     );
     assert!(nur_link.contains("Nichts geöffnet"), "{nur_link}");
     assert!(nur_link.contains("https://excalidraw.com"), "{nur_link}");
@@ -496,7 +496,7 @@ fn oeffnen_startet_den_browser_nur_wenn_gewuenscht() {
     let geoeffnet = text(
         &server,
         "excalidraw_oeffnen",
-        json!({ "pfad": "plan.excalidraw" }),
+        json!({ "datei": "plan.excalidraw" }),
     );
     assert!(geoeffnet.contains("im Browser geöffnet"), "{geoeffnet}");
     assert!(geoeffnet.contains("Ziehe die Datei"), "{geoeffnet}");
@@ -506,7 +506,7 @@ fn oeffnen_startet_den_browser_nur_wenn_gewuenscht() {
     let fehler_text = fehler(
         &server,
         "excalidraw_oeffnen",
-        json!({ "pfad": "gibtsnicht.excalidraw" }),
+        json!({ "datei": "gibtsnicht.excalidraw" }),
     );
     assert!(fehler_text.contains("gibt es nicht"), "{fehler_text}");
     assert_eq!(browser.aufrufe().len(), 1);
@@ -519,12 +519,12 @@ fn der_stille_browser_ist_eine_meldung_und_kein_absturz() {
     text(
         &server,
         "excalidraw_erstellen",
-        json!({ "pfad": "plan.excalidraw", "modell": modell() }),
+        json!({ "datei": "plan.excalidraw", "modell": modell() }),
     );
     let antwort = text(
         &server,
         "excalidraw_oeffnen",
-        json!({ "pfad": "plan.excalidraw" }),
+        json!({ "datei": "plan.excalidraw" }),
     );
     assert!(antwort.contains("ließ sich nicht öffnen"), "{antwort}");
     assert!(antwort.contains("plan.excalidraw"), "{antwort}");
@@ -537,7 +537,7 @@ fn aus_quelltext_prueft_streng_und_erhaelt_unbekanntes() {
     text(
         &server,
         "excalidraw_erstellen",
-        json!({ "pfad": "vorlage.excalidraw", "modell": modell() }),
+        json!({ "datei": "vorlage.excalidraw", "modell": modell() }),
     );
     let mut roh = datei_auf_der_platte(ordner.path(), "vorlage.excalidraw");
     // Ein Mensch hat daran gearbeitet: ein eigenes Feld, ein Bild.
@@ -552,7 +552,7 @@ fn aus_quelltext_prueft_streng_und_erhaelt_unbekanntes() {
     let geschrieben = text(
         &server,
         "excalidraw_aus_quelltext",
-        json!({ "pfad": "mensch.excalidraw", "quelltext": quelltext }),
+        json!({ "datei": "mensch.excalidraw", "quelltext": quelltext }),
     );
     assert!(geschrieben.contains("geschrieben"), "{geschrieben}");
     let stand_neu = stand(&geschrieben);
@@ -562,7 +562,7 @@ fn aus_quelltext_prueft_streng_und_erhaelt_unbekanntes() {
         &server,
         "excalidraw_elemente_hinzufuegen",
         json!({
-            "pfad": "mensch.excalidraw",
+            "datei": "mensch.excalidraw",
             "stand": stand_neu,
             "elemente": [ { "art": "text", "text": "dazu" } ]
         }),
@@ -580,7 +580,7 @@ fn aus_quelltext_prueft_streng_und_erhaelt_unbekanntes() {
     let fehler_text = fehler(
         &server,
         "excalidraw_aus_quelltext",
-        json!({ "pfad": "kaputt.excalidraw", "quelltext": serde_json::to_string_pretty(&kaputt).unwrap() }),
+        json!({ "datei": "kaputt.excalidraw", "quelltext": serde_json::to_string_pretty(&kaputt).unwrap() }),
     );
     assert!(fehler_text.contains("versionNonce"), "{fehler_text}");
     assert!(!ordner.path().join("kaputt.excalidraw").exists());
@@ -598,7 +598,7 @@ fn pfade_verlassen_den_arbeitsordner_nicht() {
         let fehler_text = fehler(
             &server,
             "excalidraw_erstellen",
-            json!({ "pfad": pfad, "modell": modell() }),
+            json!({ "datei": pfad, "modell": modell() }),
         );
         assert!(
             fehler_text.contains("Arbeitsordner")
@@ -610,7 +610,7 @@ fn pfade_verlassen_den_arbeitsordner_nicht() {
     let fehler_text = fehler(
         &server,
         "excalidraw_erstellen",
-        json!({ "pfad": "ohne-endung", "modell": modell() }),
+        json!({ "datei": "ohne-endung", "modell": modell() }),
     );
     assert!(fehler_text.contains("Endung"), "{fehler_text}");
 }
@@ -624,7 +624,7 @@ fn eine_kaputte_datei_wird_mit_hinweis_auf_roh_gemeldet() {
     let antwort = text(
         &server,
         "excalidraw_lesen",
-        json!({ "pfad": "kaputt.excalidraw" }),
+        json!({ "datei": "kaputt.excalidraw" }),
     );
     assert!(antwort.contains("kein gültiges JSON"), "{antwort}");
     assert!(antwort.contains("roh: true"), "{antwort}");
@@ -632,7 +632,7 @@ fn eine_kaputte_datei_wird_mit_hinweis_auf_roh_gemeldet() {
     let roh = text(
         &server,
         "excalidraw_lesen",
-        json!({ "pfad": "kaputt.excalidraw", "roh": true }),
+        json!({ "datei": "kaputt.excalidraw", "roh": true }),
     );
     assert_eq!(roh, "{ nicht json");
 }
@@ -645,7 +645,7 @@ fn ein_ungueltiges_modell_wird_mit_allen_meldungen_abgelehnt() {
         &server,
         "excalidraw_erstellen",
         json!({
-            "pfad": "plan.excalidraw",
+            "datei": "plan.excalidraw",
             "modell": { "knoten": [ { "id": "a", "text": "A" }, { "id": "a", "text": "B" } ],
                         "kanten": [ { "von": "a", "nach": "gibtsnicht" } ] }
         }),
@@ -662,7 +662,7 @@ fn farbe_form_und_kante_werden_geprueft() {
     let angelegt = text(
         &server,
         "excalidraw_erstellen",
-        json!({ "pfad": "plan.excalidraw", "modell": modell() }),
+        json!({ "datei": "plan.excalidraw", "modell": modell() }),
     );
     let stand_neu = stand(&angelegt);
 
@@ -670,7 +670,7 @@ fn farbe_form_und_kante_werden_geprueft() {
         &server,
         "excalidraw_elemente_aendern",
         json!({
-            "pfad": "plan.excalidraw", "stand": stand_neu,
+            "datei": "plan.excalidraw", "stand": stand_neu,
             "elemente": [ { "id": "knoten-start", "farbe": "pink" } ]
         }),
     );
@@ -680,7 +680,7 @@ fn farbe_form_und_kante_werden_geprueft() {
         &server,
         "excalidraw_elemente_aendern",
         json!({
-            "pfad": "plan.excalidraw", "stand": stand_neu,
+            "datei": "plan.excalidraw", "stand": stand_neu,
             "verbindungen": [ { "von": "knoten-start", "nach": "knoten-ende", "art": "wackelig" } ]
         }),
     );
@@ -690,7 +690,7 @@ fn farbe_form_und_kante_werden_geprueft() {
         &server,
         "excalidraw_elemente_aendern",
         json!({
-            "pfad": "plan.excalidraw", "stand": stand_neu,
+            "datei": "plan.excalidraw", "stand": stand_neu,
             "elemente": [ { "id": "gibtsnicht", "text": "x" } ]
         }),
     );
@@ -704,7 +704,7 @@ fn verbindungen_werden_angelegt_geaendert_und_geloest() {
     let angelegt = text(
         &server,
         "excalidraw_erstellen",
-        json!({ "pfad": "plan.excalidraw", "modell": modell() }),
+        json!({ "datei": "plan.excalidraw", "modell": modell() }),
     );
     let stand_neu = stand(&angelegt);
 
@@ -712,7 +712,7 @@ fn verbindungen_werden_angelegt_geaendert_und_geloest() {
         &server,
         "excalidraw_elemente_aendern",
         json!({
-            "pfad": "plan.excalidraw", "stand": stand_neu,
+            "datei": "plan.excalidraw", "stand": stand_neu,
             "verbindungen": [ { "von": "knoten-start", "nach": "knoten-ende", "art": "linie" } ]
         }),
     );
@@ -724,7 +724,7 @@ fn verbindungen_werden_angelegt_geaendert_und_geloest() {
         &server,
         "excalidraw_elemente_aendern",
         json!({
-            "pfad": "plan.excalidraw", "stand": stand_zwei,
+            "datei": "plan.excalidraw", "stand": stand_zwei,
             "verbindungen": [ { "von": "knoten-start", "nach": "knoten-ende", "entfernen": true } ]
         }),
     );

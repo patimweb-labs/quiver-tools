@@ -70,7 +70,7 @@ pub fn lesen(pfad: &str, inhalt: &Inhalt, datei: &Datei, ordner: &Path) -> Strin
         text.push_str("\n\n");
         text.push_str(&beschreibung);
     }
-    text.push_str("\n\nÄndern: `excalidraw_elemente_aendern` mit `pfad` und diesem `stand`.");
+    text.push_str("\n\nÄndern: `excalidraw_elemente_aendern` mit `datei` und diesem `stand`.");
     text
 }
 

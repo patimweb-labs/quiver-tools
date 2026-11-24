@@ -960,6 +960,7 @@ pub struct ErstellenParam {
     pub seite: Option<String>,
     /// Modell: `{"richtung":"unten|rechts","knoten":[{"id","text","form","farbe","gruppe"}],
     /// "kanten":[{"von","nach","text","art"}],"gruppen":[{"id","titel"}]}`.
+    #[schemars(with = "serde_json::Map<String, Value>")]
     pub modell: Value,
 }
 
@@ -1115,6 +1116,7 @@ pub struct SeiteHinzufuegenParam {
     pub id: Option<String>,
     /// Modell wie bei `drawio_erstellen`; ohne Angabe und ohne `quelltext` wird die Seite leer.
     #[serde(default)]
+    #[schemars(with = "Option<serde_json::Map<String, Value>>")]
     pub modell: Option<Value>,
     /// Fertiges `<mxGraphModel>`-XML statt eines Modells.
     #[serde(default)]

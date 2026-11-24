@@ -61,7 +61,7 @@ pub fn modell_aus_zeichnung(zeichnung: &Zeichnung) -> Element {
         stil.setze("strokeColor", toene.rand);
         let zelle = Element::neu("mxCell")
             .mit("id", gruppe.id.as_str())
-            .mit("value", gruppe.titel.as_str())
+            .mit("value", mx::als_label(&stil, &gruppe.titel))
             .mit("style", stil.als_text())
             .mit("vertex", "1")
             .mit("parent", mx::EBENE_ID);
@@ -97,7 +97,7 @@ pub fn modell_aus_zeichnung(zeichnung: &Zeichnung) -> Element {
         }
         let zelle = Element::neu("mxCell")
             .mit("id", knoten.id.as_str())
-            .mit("value", knoten.text.as_str())
+            .mit("value", mx::als_label(&stil, &knoten.text))
             .mit("style", stil.als_text())
             .mit("vertex", "1")
             .mit("parent", eltern);
@@ -136,7 +136,7 @@ pub fn modell_aus_zeichnung(zeichnung: &Zeichnung) -> Element {
             .unwrap_or("");
         let mut zelle = Element::neu("mxCell")
             .mit("id", kennung)
-            .mit("value", beschriftung)
+            .mit("value", mx::als_label(&stil, beschriftung))
             .mit("style", stil.als_text())
             .mit("edge", "1")
             .mit("source", kante.von.as_str())

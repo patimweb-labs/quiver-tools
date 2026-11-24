@@ -484,7 +484,36 @@ pub fn wert(eintrag: &Element) -> String {
         .to_string()
 }
 
-/// Setzt die Beschriftung als Text; die XML-Schicht maskiert sie beim Schreiben.
+/// Liest draw.io die Beschriftung dieser Zelle als HTML?
+fn ist_html(stil: &Stil) -> bool {
+    stil.wert("html") == Some("1")
+}
+
+/// Text so, wie er in `value` gehört: bei `html=1` als HTML maskiert. Sonst
+/// verschwände „<neu>“ als unbekanntes Tag, und ein Agent könnte Markup setzen.
+pub fn als_label(stil: &Stil, text: &str) -> String {
+    if !ist_html(stil) {
+        return text.to_string();
+    }
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace("\r\n", "\n")
+        .replace('\n', "<br>")
+}
+
+/// Die Beschriftung als lesbarer Text (Gegenstück zu [`als_label`]).
+pub fn text(eintrag: &Element) -> String {
+    let roh = wert(eintrag);
+    if ist_html(&stil(eintrag)) {
+        crate::bild::html_zu_text(&roh)
+    } else {
+        roh
+    }
+}
+
+/// Setzt die Beschriftung; die XML-Schicht maskiert sie beim Schreiben.
 pub fn setze_wert(eintrag: &mut Element, text: &str) {
     if eintrag.name == "mxCell" {
         eintrag.setze_attribut("value", text);
@@ -634,7 +663,7 @@ pub fn zellen(root: &Element) -> Vec<Zelle> {
             };
             Zelle {
                 id: id(eintrag).unwrap_or_default().to_string(),
-                text: wert(eintrag),
+                text: text(eintrag),
                 kante: ist_kante(eintrag),
                 quelle: quelle(eintrag),
                 ziel: ziel(eintrag),
@@ -941,10 +970,8 @@ pub fn aendern(root: &mut Element, aenderungen: &[Aenderung]) -> Result<Vec<Stri
         let Some(eintrag) = eintrag else {
             continue;
         };
-        if let Some(text) = aenderung.text {
-            setze_wert(eintrag, text);
-        }
         let mut stil = stil(eintrag);
+        let war_html = ist_html(&stil);
         let mut stil_aendern = false;
         if let Some(form) = aenderung.form {
             form.anwenden(&mut stil);
@@ -953,6 +980,16 @@ pub fn aendern(root: &mut Element, aenderungen: &[Aenderung]) -> Result<Vec<Stri
         if let Some(farbe) = aenderung.farbe {
             Form::farbe_setzen(&mut stil, farbe);
             stil_aendern = true;
+        }
+        // Die Beschriftung zuletzt: eine neue Form kann `html=1` einschalten,
+        // dann muss auch der vorhandene Text maskiert werden.
+        if let Some(text) = aenderung.text {
+            setze_wert(eintrag, &als_label(&stil, text));
+        } else if ist_html(&stil) && !war_html {
+            let alt = wert(eintrag);
+            if !alt.is_empty() {
+                setze_wert(eintrag, &als_label(&stil, &alt));
+            }
         }
         if stil_aendern {
             setze_stil(eintrag, &stil);
@@ -1079,7 +1116,7 @@ pub fn zelle_bauen(root: &Element, neu: &NeueZelle) -> Result<Element, FormatFeh
         }
         let mut zelle = Element::neu("mxCell")
             .mit("id", id)
-            .mit("value", neu.text)
+            .mit("value", als_label(&stil, neu.text))
             .mit("style", stil.als_text())
             .mit("edge", "1")
             .mit("parent", eltern.unwrap_or(EBENE_ID));
@@ -1103,7 +1140,7 @@ pub fn zelle_bauen(root: &Element, neu: &NeueZelle) -> Result<Element, FormatFeh
     }
     let mut zelle = Element::neu("mxCell")
         .mit("id", id)
-        .mit("value", neu.text)
+        .mit("value", als_label(&stil, neu.text))
         .mit("style", stil.als_text())
         .mit("vertex", "1")
         .mit("parent", eltern.unwrap_or(EBENE_ID));
@@ -1482,8 +1519,12 @@ mod tests {
         assert!(text.contains("link=\"https://example.test\""), "{text}");
         assert!(text.contains("style=\"rounded=1;html=1;\""), "{text}");
         assert!(text.contains("width=\"120\""), "{text}");
-        // Der neue Text steht maskiert in der Hülle, nicht als HTML.
-        assert!(text.contains("label=\"&lt;b&gt;neu&lt;/b&gt;\""), "{text}");
+        // Der neue Text steht als Text in der Hülle: für das HTML maskiert
+        // (`html=1`) und darüber für das XML.
+        assert!(
+            text.contains("label=\"&amp;lt;b&amp;gt;neu&amp;lt;/b&amp;gt;\""),
+            "{text}"
+        );
     }
 
     #[test]
@@ -1736,5 +1777,29 @@ mod tests {
         assert!(datei
             .seite_hinzufuegen("Nochmal", Some("s1"), leeres_modell())
             .is_err());
+    }
+
+    #[test]
+    fn beschriftungen_sind_bei_html_maskiert_und_lesen_sich_gleich() {
+        let html = Stil::aus_text("rounded=1;html=1;");
+        let schlicht = Stil::aus_text("rounded=1;");
+        for text in [
+            "Größe <neu> & \"alt\"",
+            "<img src=x onerror=alert(1)>",
+            "&lt;schon maskiert&gt;",
+            "eins\nzwei",
+        ] {
+            assert_eq!(als_label(&schlicht, text), text);
+            let label = als_label(&html, text);
+            assert!(!label.replace("<br>", "").contains('<'), "{label}");
+            for (stil, wert) in [("html=1;", label.as_str()), ("rounded=1;", text)] {
+                let zelle = Element::neu("mxCell")
+                    .mit("id", "a")
+                    .mit("value", wert)
+                    .mit("style", stil)
+                    .mit("vertex", "1");
+                assert_eq!(super::text(&zelle), text);
+            }
+        }
     }
 }

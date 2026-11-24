@@ -235,8 +235,8 @@ fn gleiche_beschreibung_ergibt_gleiches_dokument() {
     for id in ["start", "pruefen", "daten", "ende", "g"] {
         assert!(text.contains(&format!("id=\"{id}\"")), "{id} fehlt: {text}");
     }
-    // Der Text wird maskiert, nicht als HTML geschrieben.
-    assert!(text.contains("Prüfung &amp; Freigabe"), "{text}");
+    // Der Text wird für HTML (`html=1`) und XML maskiert, wie draw.io es schreibt.
+    assert!(text.contains("Prüfung &amp;amp; Freigabe"), "{text}");
 }
 
 #[test]

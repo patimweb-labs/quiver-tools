@@ -130,7 +130,7 @@ impl ExcalidrawServer {
                 "Ändert Elemente je Id: `text`, `farbe`, `form`, `x`/`y`/`breite`/`hoehe` und \
                  `verbindungen` (verbinden oder mit `entfernen: true` lösen). Texte in Formen und \
                  Pfeile an Elementen bleiben beidseitig gebunden; Verschieben zieht sie mit. \
-                 Braucht `pfad` und den gelesenen `stand`.",
+                 Braucht `datei` und den gelesenen `stand`.",
             ),
             schreibend::<HinzufuegenParam>(
                 "excalidraw_elemente_hinzufuegen",
@@ -149,7 +149,7 @@ impl ExcalidrawServer {
             schreibend::<ExportParam>(
                 "excalidraw_exportieren",
                 "Exportieren",
-                "Schreibt die Datei als SVG oder PNG in den Arbeitsordner (`ziel` endet auf .svg \
+                "Schreibt die Datei als SVG oder PNG in den Arbeitsordner (`ausgabe` endet auf .svg \
                  oder .png). Vorhandene Ausgaben werden nie überschrieben.",
             ),
         ];
@@ -239,7 +239,7 @@ impl ExcalidrawServer {
             Ok(teile) => teile,
             Err(ohne) => return ohne.in_ergebnis(),
         };
-        let inhalt = ablage.lesen(&p.pfad).map_err(fehler_zu_mcp)?;
+        let inhalt = ablage.lesen(&p.datei).map_err(fehler_zu_mcp)?;
         if p.roh {
             let max = p
                 .max_zeichen
@@ -256,7 +256,7 @@ impl ExcalidrawServer {
             }
         };
         Ok(antwort(format::lesen(
-            &p.pfad,
+            &p.datei,
             &inhalt,
             &datei,
             ablage.wurzel(),
@@ -269,7 +269,7 @@ impl ExcalidrawServer {
             Ok(teile) => teile,
             Err(ohne) => return ohne.in_ergebnis(),
         };
-        let datei = self.datei(&ablage, &p.pfad)?;
+        let datei = self.datei(&ablage, &p.datei)?;
         let gezeichnet = bild::bild(&datei);
         let kante = p.max_kante.unwrap_or(bild::STANDARD_KANTE);
         let png = gezeichnet.png(kante).map_err(fehler_zu_mcp)?;
@@ -285,9 +285,9 @@ impl ExcalidrawServer {
             Ok(teile) => teile,
             Err(ohne) => return ohne.in_ergebnis(),
         };
-        let voll = ablage.pfad(&p.pfad).map_err(fehler_zu_mcp)?;
+        let voll = ablage.pfad(&p.datei).map_err(fehler_zu_mcp)?;
         // Der Pfad muss auf eine lesbare Datei zeigen.
-        ablage.stand(&p.pfad).map_err(fehler_zu_mcp)?;
+        ablage.stand(&p.datei).map_err(fehler_zu_mcp)?;
 
         if p.nur_link {
             return Ok(antwort(format!(
@@ -323,10 +323,10 @@ impl ExcalidrawServer {
         let datei = bauen::aus_diagramm(&diagramm).map_err(fehler_zu_mcp)?;
         Selbstpruefung::pruefe(&datei)?;
         let text = datei.als_text().map_err(fehler_zu_mcp)?;
-        let stand = ablage.anlegen(&p.pfad, &text).map_err(fehler_zu_mcp)?;
+        let stand = ablage.anlegen(&p.datei, &text).map_err(fehler_zu_mcp)?;
         Ok(antwort(format!(
             "`{}` angelegt: {}.\nStand: {stand}\n\n{}",
-            p.pfad,
+            p.datei,
             format::anzahl_text(&datei),
             format::beschreibung(&datei)
         )))
@@ -340,11 +340,11 @@ impl ExcalidrawServer {
         };
         let datei = pruefen::pruefen_und_lesen(&p.quelltext).map_err(fehler_zu_mcp)?;
         let stand = ablage
-            .anlegen(&p.pfad, &p.quelltext)
+            .anlegen(&p.datei, &p.quelltext)
             .map_err(fehler_zu_mcp)?;
         Ok(antwort(format!(
             "`{}` geschrieben: {}.\nStand: {stand}",
-            p.pfad,
+            p.datei,
             format::anzahl_text(&datei)
         )))
     }
@@ -362,7 +362,7 @@ impl ExcalidrawServer {
                 None,
             ));
         }
-        let (inhalt, mut datei) = self.lesen_und_pruefen(&ablage, &p.pfad)?;
+        let (inhalt, mut datei) = self.lesen_und_pruefen(&ablage, &p.datei)?;
 
         let mut meldungen = Vec::new();
         for aenderung in &p.elemente {
@@ -425,11 +425,11 @@ impl ExcalidrawServer {
         }
 
         Selbstpruefung::pruefe(&datei)?;
-        let neu = self.zurueckschreiben(&ablage, &p.pfad, &datei, &stand)?;
+        let neu = self.zurueckschreiben(&ablage, &p.datei, &datei, &stand)?;
         Ok(antwort(format!(
             "{}\n\n`{}` gespeichert, {} (vorher {}).\nStand: {neu}",
             meldungen.join("\n"),
-            p.pfad,
+            p.datei,
             format::anzahl_text(&datei),
             format::anzahl_text(&Datei::aus_text(&inhalt.text).unwrap_or_default()),
         )))
@@ -448,7 +448,7 @@ impl ExcalidrawServer {
                 None,
             ));
         }
-        let (_, mut datei) = self.lesen_und_pruefen(&ablage, &p.pfad)?;
+        let (_, mut datei) = self.lesen_und_pruefen(&ablage, &p.datei)?;
 
         let mut meldungen = Vec::new();
         for neues in &p.elemente {
@@ -457,11 +457,11 @@ impl ExcalidrawServer {
         }
 
         Selbstpruefung::pruefe(&datei)?;
-        let neu = self.zurueckschreiben(&ablage, &p.pfad, &datei, &stand)?;
+        let neu = self.zurueckschreiben(&ablage, &p.datei, &datei, &stand)?;
         Ok(antwort(format!(
             "{}\n\n`{}` gespeichert: {}.\nStand: {neu}",
             meldungen.join("\n"),
-            p.pfad,
+            p.datei,
             format::anzahl_text(&datei)
         )))
     }
@@ -479,7 +479,7 @@ impl ExcalidrawServer {
                 None,
             ));
         }
-        let (_, mut datei) = self.lesen_und_pruefen(&ablage, &p.pfad)?;
+        let (_, mut datei) = self.lesen_und_pruefen(&ablage, &p.datei)?;
 
         let mut meldungen = Vec::new();
         for id in &p.ids {
@@ -492,11 +492,11 @@ impl ExcalidrawServer {
         }
 
         Selbstpruefung::pruefe(&datei)?;
-        let neu = self.zurueckschreiben(&ablage, &p.pfad, &datei, &stand)?;
+        let neu = self.zurueckschreiben(&ablage, &p.datei, &datei, &stand)?;
         Ok(antwort(format!(
             "{}\n\n`{}` gespeichert: {}.\nStand: {neu}",
             meldungen.join("\n"),
-            p.pfad,
+            p.datei,
             format::anzahl_text(&datei)
         )))
     }
@@ -507,10 +507,10 @@ impl ExcalidrawServer {
             Ok(ablage) => ablage,
             Err(ohne) => return ohne.in_ergebnis(),
         };
-        let datei = self.datei(&ablage, &p.pfad)?;
+        let datei = self.datei(&ablage, &p.datei)?;
         let gezeichnet = bild::bild(&datei);
         let kante = p.max_kante.unwrap_or(bild::STANDARD_KANTE);
-        let ziel = p.ziel.trim();
+        let ziel = p.ausgabe.trim();
         let klein = ziel.to_ascii_lowercase();
         let groesse = if klein.ends_with(".svg") {
             let svg = gezeichnet.svg();
@@ -764,7 +764,7 @@ pub struct LeerParam {}
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct LesenParam {
     /// Pfad im Arbeitsordner, z. B. `plan.excalidraw`.
-    pub pfad: String,
+    pub datei: String,
     /// Den Quelltext statt der Beschreibung zeigen (gekürzt).
     #[serde(default)]
     pub roh: bool,
@@ -777,7 +777,7 @@ pub struct LesenParam {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct BildParam {
     /// Pfad im Arbeitsordner.
-    pub pfad: String,
+    pub datei: String,
     /// Größte Kantenlänge des PNG in Pixeln (Standard 1600, höchstens 2000).
     #[serde(default)]
     pub max_kante: Option<u32>,
@@ -787,7 +787,7 @@ pub struct BildParam {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct OeffnenParam {
     /// Pfad im Arbeitsordner.
-    pub pfad: String,
+    pub datei: String,
     /// Nichts öffnen, nur Adresse und Pfad nennen.
     #[serde(default)]
     pub nur_link: bool,
@@ -797,8 +797,9 @@ pub struct OeffnenParam {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ErstellenParam {
     /// Pfad im Arbeitsordner; die Datei darf es noch nicht geben.
-    pub pfad: String,
+    pub datei: String,
     /// Das Modell: `{ richtung, knoten: [...], kanten: [...], gruppen: [...] }`.
+    #[schemars(with = "serde_json::Map<String, Value>")]
     pub modell: Value,
 }
 
@@ -806,7 +807,7 @@ pub struct ErstellenParam {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct QuelltextParam {
     /// Pfad im Arbeitsordner; die Datei darf es noch nicht geben.
-    pub pfad: String,
+    pub datei: String,
     /// Die fertige Datei als JSON.
     pub quelltext: String,
 }
@@ -858,7 +859,7 @@ pub struct VerbindungParam {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct AendernParam {
     /// Pfad im Arbeitsordner.
-    pub pfad: String,
+    pub datei: String,
     /// Der zuletzt gelesene `stand` (SHA-256).
     pub stand: String,
     /// Änderungen je Element.
@@ -913,7 +914,7 @@ pub struct NeuesParam {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct HinzufuegenParam {
     /// Pfad im Arbeitsordner.
-    pub pfad: String,
+    pub datei: String,
     /// Der zuletzt gelesene `stand` (SHA-256).
     pub stand: String,
     /// Die neuen Elemente.
@@ -924,7 +925,7 @@ pub struct HinzufuegenParam {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct EntfernenParam {
     /// Pfad im Arbeitsordner.
-    pub pfad: String,
+    pub datei: String,
     /// Der zuletzt gelesene `stand` (SHA-256).
     pub stand: String,
     /// Ids der zu entfernenden Elemente.
@@ -935,9 +936,9 @@ pub struct EntfernenParam {
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ExportParam {
     /// Pfad der Datei im Arbeitsordner.
-    pub pfad: String,
+    pub datei: String,
     /// Ziel im Arbeitsordner, mit `.svg` oder `.png`.
-    pub ziel: String,
+    pub ausgabe: String,
     /// Größte Kantenlänge des PNG (Standard 1600, höchstens 2000).
     #[serde(default)]
     pub max_kante: Option<u32>,
@@ -1072,7 +1073,7 @@ mod tests {
         for (name, argumente) in [
             ("excalidraw_status", json!({})),
             ("excalidraw_liste", json!({})),
-            ("excalidraw_lesen", json!({ "pfad": "x.excalidraw" })),
+            ("excalidraw_lesen", json!({ "datei": "x.excalidraw" })),
         ] {
             let text = text_von(aufruf(&server, name, argumente));
             assert!(text.contains("quiver-Fenster"), "{name}: {text}");
@@ -1092,7 +1093,7 @@ mod tests {
         let antwort = text_von(aufruf(
             &server,
             "excalidraw_erstellen",
-            json!({ "pfad": "plan.excalidraw", "modell": { "knoten": [ { "id": "a", "text": "A" } ] } }),
+            json!({ "datei": "plan.excalidraw", "modell": { "knoten": [ { "id": "a", "text": "A" } ] } }),
         ));
         assert!(antwort.contains("Stand: "), "{antwort}");
 

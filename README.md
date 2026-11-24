@@ -579,6 +579,19 @@ until someone switches it on in the quiver window.
 
 Decision record: [docs/adr/0007-devops-mit-pat.md](docs/adr/0007-devops-mit-pat.md).
 
+## quiver-m365 (Microsoft 365 über Graph)
+
+Mail, Kalender, Dateien und **Teams** über Microsoft Graph, mit **einer** Anmeldung im
+Browser. Die Anmeldung löst der Knopf „Anmelden“ im quiver-Fenster aus (Tools → Microsoft 365),
+**nie** ein Agent. Das Refresh-Token liegt in der Tresor-Datei, und quiver-m365 erneuert es
+selbst. Crates: `crates/m365-anmeldung` (PKCE, Loopback, Tresor), `crates/m365-graph`
+(Graph-Client) und `crates/m365` (Programm `quiver-m365`, MCP-Tools).
+
+Ausführlich: [docs/m365/README.md](docs/m365/README.md), App-Registrierung und Freigabe:
+[docs/m365/entra-app.md](docs/m365/entra-app.md), Spezifikation:
+[docs/m365/SPEC.md](docs/m365/SPEC.md). Bis 2026-11-24 war quiver-m365 ein eigenes Repo; die
+Historie ist hier übernommen.
+
 ## Entwickeln
 
 ```bash

@@ -225,12 +225,13 @@ pub fn zertifikat(
     host: &str,
     ca_datei: Option<&str>,
 ) -> (Zertifikat, Option<String>) {
-    if pruefen {
-        return (Zertifikat::Pruefen, None);
-    }
+    // Ein eigenes CA-Zertifikat gilt immer; es ergänzt die Prüfung.
     let ca = ca_datei.map(str::trim).filter(|pfad| !pfad.is_empty());
     if let Some(pfad) = ca {
         return (Zertifikat::EigenesCa(PathBuf::from(pfad)), None);
+    }
+    if pruefen {
+        return (Zertifikat::Pruefen, None);
     }
     if ist_loopback_host(host) {
         return (Zertifikat::AusLoopback, None);

@@ -158,7 +158,7 @@ async fn der_notfall_ueber_den_browser_meldet_an() {
     let werkzeuge = vermittler.werkzeuge().await.expect("Werkzeugliste");
     assert!(werkzeuge
         .iter()
-        .any(|werkzeug| werkzeug.name == "zep_projekte"));
+        .any(|werkzeug| werkzeug.name == "get_project_info"));
 }
 
 #[tokio::test]
@@ -311,7 +311,7 @@ async fn invalid_grant_fuehrt_zur_routine_und_die_werkzeuge_gehen_weiter() {
     let werkzeuge = vermittler.werkzeuge().await.expect("Werkzeugliste");
     assert!(werkzeuge
         .iter()
-        .any(|werkzeug| werkzeug.name == "zep_zeiten"));
+        .any(|werkzeug| werkzeug.name == "get_attendances"));
 
     // Refresh-Token widerrufen und das Access-Token verwerfen.
     let refresh = tresor
@@ -327,7 +327,10 @@ async fn invalid_grant_fuehrt_zur_routine_und_die_werkzeuge_gehen_weiter() {
 
     // Und die Werkzeuge gehen weiter.
     let ergebnis = vermittler
-        .aufrufen(CallToolRequestParams::new("zep_projekte".to_string()), true)
+        .aufrufen(
+            CallToolRequestParams::new("get_project_info".to_string()),
+            true,
+        )
         .await
         .expect("Werkzeugaufruf");
     let text = ergebnis
@@ -353,7 +356,10 @@ async fn ein_abgelehntes_access_token_wird_erneuert_und_einmal_wiederholt() {
     // ZEP kennt das Access-Token nicht mehr: der nächste Aufruf bekommt 401.
     attrappe.access_tokens_entwerten();
     let ergebnis = vermittler
-        .aufrufen(CallToolRequestParams::new("zep_zeiten".to_string()), true)
+        .aufrufen(
+            CallToolRequestParams::new("get_attendances".to_string()),
+            true,
+        )
         .await
         .expect("nach der Erneuerung");
     let text = ergebnis

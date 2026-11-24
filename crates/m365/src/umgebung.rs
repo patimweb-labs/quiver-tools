@@ -117,6 +117,49 @@ pub const BEREICHE: &[Bereich] = &[
     },
 ];
 
+/// Der Bibliothekseintrag für quiver: Anmeldung über den Knopf im Fenster und
+/// je Bereich ein Schalter, Standard aus.
+pub fn eintrag(befehl: Option<&str>) -> serde_json::Value {
+    let mut umgebung = serde_json::Map::new();
+    umgebung.insert("RUST_LOG".into(), "info".into());
+    let mut felder = Vec::new();
+    for bereich in BEREICHE
+        .iter()
+        .filter(|bereich| bereich.name != "allgemein")
+    {
+        let feld = format!("schreiben_{}", bereich.name);
+        umgebung.insert(bereich.variabale.into(), format!("${{{feld}}}").into());
+        felder.push(serde_json::json!({
+            "name": feld,
+            "titel": bereich.titel,
+            "beschreibung": "Standard: aus. Lesen geht immer; ohne diesen Schalter ändert ein Agent hier nichts.",
+            "art": "schalter",
+            "quelle": "client",
+            "pflicht": false,
+            "standard": "aus",
+        }));
+    }
+    serde_json::json!({
+        "id": "microsoft-365",
+        "version": env!("CARGO_PKG_VERSION"),
+        "titel": "Microsoft 365",
+        "beschreibung": "Mail, Kalender, Teams, Dateien, Planner, Kontakte und OneNote über Microsoft Graph – mit einer Anmeldung im Browser.",
+        "herkunft": "eigen",
+        "laufzeit": {
+            "art": "stdio",
+            "befehl": befehl.unwrap_or("quiver-m365"),
+            "argumente": [],
+            "umgebung": umgebung,
+        },
+        "felder": felder,
+        "anmeldung": {
+            "anmelden": ["anmelden"],
+            "status": ["status"],
+            "abmelden": ["abmelden"],
+        },
+    })
+}
+
 /// Ein Schalter aus der Umgebung: nur ein ausdrückliches Einschalten gilt.
 pub fn schalter(name: &str) -> bool {
     schalter_mit(name, |name| std::env::var(name).ok())
@@ -202,6 +245,25 @@ pub fn hinweis_gesperrt(werkzeug: &str, bereich: &str) -> String {
 #[cfg(test)]
 mod schreibschutz_tests {
     use super::*;
+
+    #[test]
+    fn der_eintrag_hat_je_bereich_einen_schalter_standard_aus() {
+        let eintrag = eintrag(Some("/opt/quiver-m365"));
+        assert_eq!(eintrag["id"], "microsoft-365");
+        assert_eq!(eintrag["laufzeit"]["befehl"], "/opt/quiver-m365");
+        let felder = eintrag["felder"].as_array().unwrap();
+        assert_eq!(felder.len(), BEREICHE.len() - 1);
+        for feld in felder {
+            assert_eq!(feld["art"], "schalter");
+            assert_eq!(feld["standard"], "aus");
+            let platzhalter = format!("${{{}}}", feld["name"].as_str().unwrap());
+            assert!(eintrag["laufzeit"]["umgebung"]
+                .as_object()
+                .unwrap()
+                .values()
+                .any(|wert| wert == &serde_json::json!(platzhalter)));
+        }
+    }
 
     fn aus<'a>(werte: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
         move |name| {

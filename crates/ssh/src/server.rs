@@ -111,8 +111,8 @@ impl SshServer {
                 "ssh_upload",
                 "Datei hochladen",
                 "Kopiert eine Datei aus dem Austauschordner über SFTP auf die entfernte Maschine. \
-                 `lokal` ist relativ zum Austauschordner aus dem quiver-Fenster; `entfernt` ist ein \
-                 relativer Pfad ohne `..`. Verlässt den Austauschordner nie.",
+                 `lokal` ist relativ zum Austauschordner aus dem quiver-Fenster und verlässt ihn nie; \
+                 `entfernt` enthält den Dateinamen, eine vorhandene Datei wird dort überschrieben.",
             ),
             schreib_werkzeug::<DownloadParam>(
                 "ssh_download",
@@ -523,22 +523,12 @@ fn pflicht<'a>(wert: &'a str, name: &str) -> Result<&'a str, McpError> {
     Ok(wert)
 }
 
-/// Ein entfernter Pfad: relativ, ohne `..` und ohne Steuerzeichen.
-///
-/// Damit bleibt der Transfer im Austauschbereich der Sitzung; ein absoluter
-/// Pfad oder `..` führte aus dem Arbeitsbereich des Users heraus.
+/// Der Pfad auf der entfernten Maschine: frei wählbar (dort gelten die Rechte
+/// des angemeldeten Benutzers), aber nie leer und ohne Steuerzeichen.
 fn entfernt_pruefen(pfad: &str) -> Result<(), McpError> {
-    let verboten = pfad.trim().is_empty()
-        || pfad.starts_with('/')
-        || pfad.contains('\\')
-        || pfad.chars().any(char::is_control)
-        || pfad.split('/').any(|teil| teil == ".." || teil == ".");
-    if verboten {
+    if pfad.trim().is_empty() || pfad.chars().any(char::is_control) {
         return Err(McpError::invalid_params(
-            format!(
-                "„{pfad}“ ist kein relativer Pfad im Austauschbereich – bitte ohne führenden „/“ \
-                 und ohne „..“ angeben."
-            ),
+            "Bitte den Pfad auf der entfernten Maschine angeben (ohne Steuerzeichen).".to_string(),
             None,
         ));
     }

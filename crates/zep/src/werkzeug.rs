@@ -38,7 +38,35 @@ pub const UNVERSCHLUESSELT: &str = quiver_tools_kern::net::FELD_UNVERSCHLUESSELT
 /// jede Behauptung übernimmt, reicht auch ein Schreibwerkzeug als „lesend“
 /// durch. Alles, was hier nicht steht, gilt als schreibend und ist ohne
 /// Schalter gesperrt.
-pub const LESENDE: &[&str] = &["zep_projekte", "zep_zeiten", "zep_kunden", "zep_profile"];
+///
+/// Namen des ZEP-Servers (Stand 2026-11-24). `execute_tools` fehlt bewusst: es
+/// führt andere Werkzeuge aus, auch schreibende.
+pub const LESENDE: &[&str] = &[
+    "analyze_report",
+    "describe_data",
+    "get_absences",
+    "get_attendances",
+    "get_customer_analytics",
+    "get_customer_info",
+    "get_dynamic_attributes",
+    "get_employee_analytics",
+    "get_employee_dossier",
+    "get_employee_info",
+    "get_invoice_analytics",
+    "get_invoice_info",
+    "get_offers",
+    "get_project_analytics",
+    "get_project_info",
+    "get_receipt_info",
+    "get_resource_planning",
+    "get_suppliers",
+    "get_tickets",
+    "get_work_items",
+    "list_tools",
+    "search_tools",
+    "whoami",
+    "zep_profile",
+];
 
 /// Ist dieser Name nach der festen Liste lesend?
 pub fn ist_lesend(name: &str) -> bool {
@@ -320,8 +348,25 @@ mod tests {
 
     #[test]
     fn nur_die_feste_liste_gilt_als_lesend() {
-        assert!(ist_lesend("zep_projekte"));
-        assert!(ist_lesend("zep_zeiten"));
+        assert!(ist_lesend("get_project_info"));
+        assert!(ist_lesend("get_attendances"));
+        for schreibend in [
+            "bulk_attendance",
+            "create_attendance",
+            "delete_attendance",
+            "duplicate_attendance_day",
+            "execute_tools",
+            "fill_attendance_gaps",
+            "insert_pause",
+            "move_attendance",
+            "submit_for_approval",
+            "update_attendance",
+            "upsert_meals",
+            "zep_cancel_action",
+            "zep_confirm_action",
+        ] {
+            assert!(!ist_lesend(schreibend), "{schreibend}");
+        }
         assert!(!ist_lesend("zep_umschalten"));
         assert!(!ist_lesend("gibtsnicht"));
     }

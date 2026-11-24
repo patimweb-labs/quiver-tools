@@ -405,7 +405,7 @@ mod tests {
             .unwrap();
         // Der Host ist nicht erreichbar: statt eines Fehlers kommt der Hinweis.
         let ergebnis = laufzeit
-            .block_on(server.aufrufen("zep_projekte", None))
+            .block_on(server.aufrufen("get_project_info", None))
             .unwrap();
         let text = ergebnis.content[0].as_text().unwrap().text.clone();
         assert!(text.contains("ZEP-Anmeldung nötig"), "{text}");

@@ -253,8 +253,8 @@ fn kindprozess_reicht_die_werkzeuge_durch_und_meldet_list_changed() {
         eprintln!("stderr: {}", kind.stderr());
     }
     for erwartet in [
-        "zep_projekte",
-        "zep_zeiten",
+        "get_project_info",
+        "get_attendances",
         "zep_umschalten",
         "zep_profile",
     ] {
@@ -267,7 +267,7 @@ fn kindprozess_reicht_die_werkzeuge_durch_und_meldet_list_changed() {
     assert_eq!(mock.login_posts(), 1, "die Routine meldet einmal an");
 
     // 2. Ein Aufruf geht durch: Text unverändert.
-    let aufruf = kind.aufrufen(3, "zep_projekte");
+    let aufruf = kind.aufrufen(3, "get_project_info");
     assert_eq!(text(&aufruf), "Projekte der Attrappe: Neoimpulse, Quiver.");
     assert_eq!(aufruf["result"]["isError"], json!(false));
 
@@ -300,8 +300,11 @@ fn kindprozess_reicht_die_werkzeuge_durch_und_meldet_list_changed() {
             .map(|werkzeug| werkzeug["annotations"].clone())
             .unwrap_or(Value::Null)
     };
-    assert_eq!(annotations("zep_projekte")["readOnlyHint"], json!(true));
-    assert_eq!(annotations("zep_projekte")["destructiveHint"], json!(false));
+    assert_eq!(annotations("get_project_info")["readOnlyHint"], json!(true));
+    assert_eq!(
+        annotations("get_project_info")["destructiveHint"],
+        json!(false)
+    );
     assert_eq!(annotations("zep_kunden")["readOnlyHint"], json!(true));
     assert_eq!(
         annotations("zep_umschalten")["destructiveHint"],
@@ -364,7 +367,7 @@ fn beim_start_meldet_sich_das_werkzeug_selbst_an() {
         .iter()
         .map(|werkzeug| werkzeug["name"].as_str().unwrap().to_string())
         .collect();
-    assert!(namen.contains(&"zep_projekte".to_string()), "{namen:?}");
+    assert!(namen.contains(&"get_project_info".to_string()), "{namen:?}");
     assert_eq!(mock.login_posts(), 1, "kein zweiter Login");
 
     let stderr = kind.beenden();
@@ -377,7 +380,7 @@ fn ohne_umgebung_kommt_der_hinweis_und_kein_fehler() {
     let namen = kind.begruessen();
     assert_eq!(namen, vec!["zep_profile".to_string()]);
 
-    let aufruf = kind.aufrufen(3, "zep_projekte");
+    let aufruf = kind.aufrufen(3, "get_project_info");
     let text = text(&aufruf);
     assert!(text.contains("Zugang fehlt"), "{text}");
     assert!(text.contains("Tools → ZEP"), "{text}");
@@ -540,10 +543,10 @@ fn ohne_schreibschalter_geht_keine_aenderung_hinaus() {
         ("ZEP_ZUSTAND", &zustand),
     ]);
     let namen = kind.begruessen();
-    assert!(namen.contains(&"zep_projekte".to_string()), "{namen:?}");
+    assert!(namen.contains(&"get_project_info".to_string()), "{namen:?}");
 
     // Lesend geht weiter – die feste Liste, nicht die Kennzeichnung der Gegenseite.
-    let lesend = kind.aufrufen(3, "zep_projekte");
+    let lesend = kind.aufrufen(3, "get_project_info");
     assert_eq!(text(&lesend), "Projekte der Attrappe: Neoimpulse, Quiver.");
 
     // Schreibend nicht: der Hinweis nennt das Feld im quiver-Fenster.

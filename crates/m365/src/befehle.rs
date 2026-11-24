@@ -21,6 +21,8 @@ pub enum Befehl {
     Abmelden,
     /// Admin-Freigabe im Browser (`--tenant` überschreibt `M365_TENANT`).
     Freigeben { tenant: Option<String> },
+    /// Den Bibliothekseintrag für quiver ausgeben.
+    Eintrag { befehl: Option<String> },
     /// `--version`
     Version,
     /// `--help`
@@ -41,6 +43,8 @@ Aufruf:
   quiver-m365 abmelden             Refresh-Token löschen
   quiver-m365 freigeben [--tenant <id|domain>]
                                    Admin-Freigabe im Browser, einmal pro Firma
+  quiver-m365 eintrag [--befehl <pfad>]
+                                   Bibliothekseintrag für quiver ausgeben (JSON)
   quiver-m365 --version            Version ausgeben
   quiver-m365 --help               diese Hilfe
 
@@ -64,11 +68,28 @@ pub fn befehl(args: &[String]) -> Befehl {
         "anmelden" => Befehl::Anmelden,
         "status" => Befehl::Status,
         "abmelden" => Befehl::Abmelden,
+        "eintrag" => Befehl::Eintrag {
+            befehl: befehl_aus(&args[1..]),
+        },
         "freigeben" => Befehl::Freigeben {
             tenant: tenant_aus(&args[1..]),
         },
         anderes => Befehl::Unbekannt(anderes.to_string()),
     }
+}
+
+/// `--befehl wert` oder `--befehl=wert`.
+fn befehl_aus(args: &[String]) -> Option<String> {
+    let mut rest = args.iter();
+    while let Some(argument) = rest.next() {
+        if let Some(wert) = argument.strip_prefix("--befehl=") {
+            return nicht_leer(wert);
+        }
+        if argument == "--befehl" {
+            return rest.next().and_then(|wert| nicht_leer(wert));
+        }
+    }
+    None
 }
 
 /// `--tenant wert` oder `--tenant=wert`; das letzte Vorkommen gewinnt.

@@ -162,8 +162,8 @@ impl Zustand {
 
     fn werkzeugliste(&self) -> Vec<Tool> {
         let mut liste = vec![
-            werkzeug("zep_projekte", "Projekte", "Listet die Projekte.", true),
-            werkzeug("zep_zeiten", "Zeiten", "Listet gebuchte Zeiten.", true),
+            werkzeug("get_project_info", "Projekte", "Listet die Projekte.", true),
+            werkzeug("get_attendances", "Zeiten", "Listet gebuchte Zeiten.", true),
             werkzeug(
                 "zep_umschalten",
                 "Umschalten",
@@ -437,8 +437,8 @@ impl ServerHandler for Werkzeuge {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let antwort = match request.name.as_ref() {
-            "zep_projekte" => "Projekte der Attrappe: Neoimpulse, Quiver.",
-            "zep_zeiten" => "Zeiten der Attrappe: 2 Buchungen.",
+            "get_project_info" => "Projekte der Attrappe: Neoimpulse, Quiver.",
+            "get_attendances" => "Zeiten der Attrappe: 2 Buchungen.",
             "zep_kunden" => "Kunden der Attrappe: niemand.",
             "zep_umschalten" => {
                 self.zustand.umgeschaltet.store(true, Ordering::SeqCst);

@@ -239,7 +239,7 @@ impl Sammlung {
             Some(name) => self
                 .systeme
                 .iter()
-                .find(|system| system.name == name)
+                .find(|system| system.name.eq_ignore_ascii_case(name))
                 .ok_or_else(|| AuswahlFehler::Unbekannt {
                     name: name.to_string(),
                     bekannt: self.namen().iter().map(|n| n.to_string()).collect(),
@@ -399,6 +399,17 @@ mod tests {
         assert!(!schalter(Some("off")));
         assert!(schalter(Some("  ")));
         assert!(schalter(Some("1")));
+    }
+
+    #[test]
+    fn der_systemname_ist_ohne_gross_und_kleinschreibung() {
+        // Der User nennt das System „BL4_900“, der Agent schreibt „bl4_900“.
+        let sammlung =
+            Sammlung::aus_zugaengen(vec![vollstaendig("BL4_900"), vollstaendig("dev-100")])
+                .unwrap();
+        assert_eq!(sammlung.waehlen(Some("bl4_900")).unwrap().name, "BL4_900");
+        assert_eq!(sammlung.waehlen(Some("DEV-100")).unwrap().name, "dev-100");
+        assert!(sammlung.waehlen(Some("bl4_901")).is_err());
     }
 
     #[test]

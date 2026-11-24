@@ -189,7 +189,7 @@ impl Sammlung {
             Some(name) => self
                 .verbindungen
                 .iter()
-                .find(|verbindung| verbindung.name == name)
+                .find(|verbindung| verbindung.name.eq_ignore_ascii_case(name))
                 .ok_or_else(|| AuswahlFehler::Unbekannt {
                     name: name.to_string(),
                     bekannt: self.namen().iter().map(|n| n.to_string()).collect(),

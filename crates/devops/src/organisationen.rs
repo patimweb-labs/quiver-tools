@@ -187,7 +187,7 @@ impl Sammlung {
             Some(name) => self
                 .organisationen
                 .iter()
-                .find(|organisation| organisation.name == name)
+                .find(|organisation| organisation.name.eq_ignore_ascii_case(name))
                 .ok_or_else(|| AuswahlFehler::Unbekannt {
                     name: name.to_string(),
                     bekannt: self.namen().iter().map(|n| n.to_string()).collect(),

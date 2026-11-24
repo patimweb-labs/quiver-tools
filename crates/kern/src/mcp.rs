@@ -69,7 +69,12 @@ pub fn profile_tool(zugang: &Zugang) -> Tool {
             "Zeigt den Zugang für {} aus der Umgebung: Name und nicht-geheime Felder. Geheimnisse stehen nie darin.",
             zugang.titel()
         ),
-        JsonObject::new(),
+        // MCP verlangt ein Objekt-Schema; `{}` lässt z. B. Hermes die ganze
+        // Tool-Liste ablehnen.
+        serde_json::from_value::<JsonObject>(
+            serde_json::json!({ "type": "object", "properties": {} }),
+        )
+        .expect("festes Schema"),
     )
     .annotate(ToolAnnotations::from_raw(
         Some(format!("Zugang von {}", zugang.titel())),

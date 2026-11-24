@@ -294,6 +294,20 @@ mod tests {
         Zugang::mit_umgebung(&crate::werkzeug::Zep, |_| None)
     }
 
+    #[test]
+    fn das_profil_tool_hat_ein_objekt_schema() {
+        // Ohne `"type": "object"` lehnt z. B. Hermes die ganze Tool-Liste ab.
+        let server = ZepServer::neu(ohne_zugang());
+        for werkzeug in server.werkzeuge() {
+            assert_eq!(
+                werkzeug.input_schema.get("type"),
+                Some(&serde_json::json!("object")),
+                "{}",
+                werkzeug.name
+            );
+        }
+    }
+
     fn zugang(adresse: &str) -> Zugang {
         Zugang::mit_umgebung(&crate::werkzeug::Zep, |name| match name {
             "ZEP_URL" => Some(adresse.to_string()),

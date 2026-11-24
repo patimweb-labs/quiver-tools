@@ -85,7 +85,8 @@ pub fn profile_tool(zugang: &Zugang) -> Tool {
     ))
 }
 
-/// Antwort für `<name>_profile`: das eine Profil, ohne Geheimnisse.
+/// Antwort für `<name>_profile`: das eine Profil, ohne Geheimnisse und nur mit
+/// ausdrücklich harmlosen Feldern.
 ///
 /// Fehlt der Zugang, kommt der Hinweis auf das quiver-Fenster – wie bei jedem
 /// anderen Tool.
@@ -102,12 +103,57 @@ pub fn profile_antwort(zugang: &Zugang) -> Result<CallToolResult, McpError> {
         profil.name
     );
     for (name, wert) in &profil.werte {
-        if wert.is_empty() {
+        if wert.is_empty() || !feld_harmlos(name) {
             continue;
         }
         text.push_str(&format!("\n  {name}: {wert}"));
     }
     Ok(antwort(text))
+}
+
+/// Felder, die `<name>_profile` zeigen darf – ausdrücklich aufgezählt.
+///
+/// Alles andere bleibt draußen, auch wenn es nicht als Passwort deklariert ist:
+/// ein Tippfehler in der Feldart kann so kein Geheimnis drucken. Ein neues Feld
+/// erscheint im Profil erst, wenn es hier bewusst aufgenommen wird.
+pub const HARMLOSE_FELDER: &[&str] = &[
+    // Adressen und Ziele
+    "url",
+    "adresse",
+    "host",
+    "port",
+    "imap_host",
+    "imap_port",
+    "imap_sicherheit",
+    "smtp_host",
+    "smtp_port",
+    "smtp_sicherheit",
+    // Konto und System
+    "name",
+    "benutzer",
+    "mandant",
+    "sprache",
+    "projekt",
+    // Grenzen und Schalter
+    "nur",
+    "schreiben",
+    "ordner",
+    "austauschordner",
+    "zertifikat_pruefen",
+    "unverschluesselt_erlauben",
+    "ca_zertifikat",
+];
+
+/// Steht dieser Feldname auf der Liste der harmlosen Felder?
+///
+/// Zusätzlich abgelehnt wird alles, was wie ein Geheimnis aussieht – doppelte
+/// Sicherung gegen einen Tippfehler in der Feldart.
+pub fn feld_harmlos(name: &str) -> bool {
+    let klein = name.to_ascii_lowercase();
+    let verdaechtig = ["pass", "token", "key", "secret", "geheim"]
+        .iter()
+        .any(|teil| klein.contains(teil));
+    !verdaechtig && HARMLOSE_FELDER.contains(&klein.as_str())
 }
 
 /// Kürzt `text` auf höchstens `max_zeichen` Zeichen, möglichst an einer
@@ -192,5 +238,18 @@ mod tests {
         let text = antwort.content[0].as_text().unwrap().text.clone();
         assert!(text.contains("Zugang fehlt"), "{text}");
         assert!(text.contains("Outline-Wiki"), "{text}");
+    }
+
+    #[test]
+    fn das_profil_zeigt_nur_ausdruecklich_harmlose_felder() {
+        assert!(feld_harmlos("url"));
+        assert!(feld_harmlos("host"));
+        assert!(feld_harmlos("schreiben"));
+        assert!(!feld_harmlos("api_key"));
+        assert!(!feld_harmlos("zertifikat_datei"));
+        // Ein Tippfehler in der Feldart hilft nicht: der Name verrät es.
+        assert!(!feld_harmlos("session_token"));
+        assert!(!feld_harmlos("benutzer_passwort"));
+        assert!(!feld_harmlos("gibtsnicht"));
     }
 }

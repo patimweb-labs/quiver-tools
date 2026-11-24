@@ -205,7 +205,33 @@ pub fn zugang(name: &str, port: u16, anmelde: Option<&str>, sudo: Option<&str>) 
     if let Some(passwort) = sudo {
         werte.insert("sudo_passwort".to_string(), json!(passwort));
     }
+    // Die Tests prüfen die Werkzeuge, nicht den Schalter: Schreiben ist an.
+    werte.insert("schreiben".to_string(), json!("an"));
     json!({ "name": name, "werte": werte })
+}
+
+/// Ein Eintrag ohne Schreibschalter – so wie nach dem Update.
+pub fn zugang_ohne_schreiben(name: &str, port: u16) -> Value {
+    let mut eintrag = zugang(name, port, None, None);
+    if let Some(werte) = eintrag
+        .get_mut("werte")
+        .and_then(|werte| werte.as_object_mut())
+    {
+        werte.remove("schreiben");
+    }
+    eintrag
+}
+
+/// Ein Eintrag mit Austauschordner (für Hoch- und Herunterladen).
+pub fn zugang_mit_ordner(name: &str, port: u16, ordner: &str) -> Value {
+    let mut eintrag = zugang(name, port, None, None);
+    if let Some(werte) = eintrag
+        .get_mut("werte")
+        .and_then(|werte| werte.as_object_mut())
+    {
+        werte.insert("austauschordner".to_string(), json!(ordner));
+    }
+    eintrag
 }
 
 // ------------------------------------------------------------ SSH-Server

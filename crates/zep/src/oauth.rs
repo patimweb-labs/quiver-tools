@@ -124,7 +124,9 @@ pub async fn registrieren(http: &reqwest::Client, endpunkt: &Url) -> Result<Stri
         })?;
 
     let status = antwort.status();
-    let koerper = antwort.text().await.unwrap_or_default();
+    let koerper = quiver_tools_kern::net::text_begrenzt(antwort)
+        .await
+        .unwrap_or_default();
     if !status.is_success() {
         return Err(statusfehler(endpunkt, status.as_u16(), &koerper));
     }

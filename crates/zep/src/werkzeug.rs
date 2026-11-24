@@ -27,6 +27,23 @@ pub const ADRESSE: &str = "url";
 pub const BENUTZER: &str = "benutzer";
 /// Feldname des Passworts (`ZEP_PASSWORT`, geheim).
 pub const PASSWORT: &str = "passwort";
+/// Feldname des Schalters „Schreiben erlauben“ (Standard **aus**).
+pub const SCHREIBEN: &str = quiver_tools_kern::FELD_SCHREIBEN;
+/// Feldname des Schalters „Unverschlüsselt erlauben“ (Standard **aus**).
+pub const UNVERSCHLUESSELT: &str = quiver_tools_kern::net::FELD_UNVERSCHLUESSELT;
+
+/// Werkzeuge des ZEP-MCP, die **nur lesen** – fest im Programm.
+///
+/// Die Kennzeichnung der Gegenseite allein genügt nicht: ein Vermittler, der
+/// jede Behauptung übernimmt, reicht auch ein Schreibwerkzeug als „lesend“
+/// durch. Alles, was hier nicht steht, gilt als schreibend und ist ohne
+/// Schalter gesperrt.
+pub const LESENDE: &[&str] = &["zep_projekte", "zep_zeiten", "zep_kunden", "zep_profile"];
+
+/// Ist dieser Name nach der festen Liste lesend?
+pub fn ist_lesend(name: &str) -> bool {
+    LESENDE.contains(&name)
+}
 
 /// Der Standard für den Takt der Hintergrund-Erneuerung.
 pub const TAKT: Duration = Duration::from_secs(60);
@@ -77,6 +94,27 @@ impl Werkzeug for Zep {
                 pflicht: true,
                 standard: None,
                 hilfe: "Ihr ZEP-Passwort; liegt in der Tresor-Datei und geht nie an einen Agenten",
+                link: None,
+            },
+            Feld {
+                name: UNVERSCHLUESSELT,
+                titel: quiver_tools_kern::net::TITEL_UNVERSCHLUESSELT,
+                art: FeldArt::Schalter,
+                pflicht: false,
+                standard: Some("aus"),
+                hilfe: "Nur nötig, wenn der ZEP-MCP über http:// erreichbar ist (z. B. eine \
+                        lokale Attrappe). Ohne diesen Schalter sind nur 127.0.0.1, localhost \
+                        und [::1] per http erlaubt.",
+                link: None,
+            },
+            Feld {
+                name: SCHREIBEN,
+                titel: quiver_tools_kern::TITEL_SCHREIBEN,
+                art: FeldArt::Schalter,
+                pflicht: false,
+                standard: Some("aus"),
+                hilfe: "Erlaubt die verändernden Werkzeuge des ZEP-MCP (Buchen, Löschen, \
+                        Umschalten). Standard: aus – lesende Werkzeuge sind nicht betroffen.",
                 link: None,
             },
         ]
@@ -162,6 +200,14 @@ impl ZepKonfig {
         if passwort.is_empty() {
             anyhow::bail!("Im Zugang fehlt das ZEP-Passwort.");
         }
+        // Eine Regel für alle Tools (kern::net): https immer, http nur auf dem
+        // Loopback oder mit eingeschaltetem Feld „Unverschlüsselt erlauben“.
+        quiver_tools_kern::net::adresse_erlaubt(
+            &url,
+            quiver_tools_kern::schalter_aus(profil.werte.get(UNVERSCHLUESSELT).map(String::as_str)),
+        )
+        .map_err(|fehler| anyhow::anyhow!(fehler.to_string()))?;
+
         Ok(ZepKonfig {
             url,
             benutzer,
@@ -250,13 +296,17 @@ mod tests {
     }
 
     #[test]
-    fn das_werkzeug_nennt_drei_felder_und_ein_geheimes() {
+    fn das_werkzeug_nennt_fuenf_felder_und_ein_geheimes() {
         let werkzeug = Zep;
         assert_eq!(werkzeug.name(), "zep");
         assert_eq!(werkzeug.titel(), "ZEP");
         assert!(werkzeug.beschreibung().contains("ZEP"));
         let felder = werkzeug.felder();
-        assert_eq!(felder.len(), 3);
+        assert_eq!(felder.len(), 5);
+        assert_eq!(felder[3].name, UNVERSCHLUESSELT);
+        assert_eq!(felder[3].standard, Some("aus"));
+        assert_eq!(felder[4].name, SCHREIBEN);
+        assert_eq!(felder[4].standard, Some("aus"));
         assert_eq!(felder[0].name, "url");
         assert_eq!(felder[0].art, FeldArt::Url);
         assert!(felder[0].pflicht);
@@ -269,6 +319,14 @@ mod tests {
     }
 
     #[test]
+    fn nur_die_feste_liste_gilt_als_lesend() {
+        assert!(ist_lesend("zep_projekte"));
+        assert!(ist_lesend("zep_zeiten"));
+        assert!(!ist_lesend("zep_umschalten"));
+        assert!(!ist_lesend("gibtsnicht"));
+    }
+
+    #[test]
     fn die_konfiguration_kommt_aus_dem_profil() {
         let konfig = ZepKonfig::aus_profil(&profil()).unwrap();
         assert_eq!(
@@ -277,6 +335,35 @@ mod tests {
         );
         assert_eq!(konfig.benutzer, "ada");
         assert_eq!(konfig.passwort, "streng-geheim-4711");
+    }
+
+    #[test]
+    fn eine_http_adresse_ohne_schalter_wird_abgelehnt() {
+        let mut mit_http = profil();
+        mit_http.werte.insert(
+            ADRESSE.to_string(),
+            "http://zep.example.test/next/mcp".to_string(),
+        );
+        let fehler = ZepKonfig::aus_profil(&mit_http).unwrap_err().to_string();
+        assert!(fehler.contains("Unverschlüsselt erlauben"), "{fehler}");
+        assert!(!fehler.contains("streng-geheim-4711"));
+
+        // Auf dem Loopback ist http ohne Schalter erlaubt (Attrappe).
+        mit_http.werte.insert(
+            ADRESSE.to_string(),
+            "http://127.0.0.1:8080/next/mcp".to_string(),
+        );
+        assert!(ZepKonfig::aus_profil(&mit_http).is_ok());
+
+        // Mit Schalter auch ein anderer Host.
+        mit_http.werte.insert(
+            ADRESSE.to_string(),
+            "http://zep.example.test/next/mcp".to_string(),
+        );
+        mit_http
+            .werte
+            .insert(UNVERSCHLUESSELT.to_string(), "an".to_string());
+        assert!(ZepKonfig::aus_profil(&mit_http).is_ok());
     }
 
     #[test]

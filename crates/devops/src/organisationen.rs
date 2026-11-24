@@ -22,6 +22,10 @@ pub const PROJEKT: &str = "projekt";
 pub const PAT: &str = "pat";
 /// Feldname des Schalters „Schreiben erlauben“ (Standard **aus**).
 pub const SCHREIBEN: &str = "schreiben";
+/// Feldname des Schalters „Unverschlüsselt erlauben“ (Standard **aus**).
+pub const UNVERSCHLUESSELT: &str = quiver_tools_kern::net::FELD_UNVERSCHLUESSELT;
+/// Feldname des eigenen CA-Zertifikats (Pfad einer Datei).
+pub const CA_ZERTIFIKAT: &str = quiver_tools_kern::net::FELD_CA_ZERTIFIKAT;
 
 /// Eine Organisation mit allen Werten. `Debug` zeigt den PAT nie.
 #[derive(Clone, PartialEq, Eq)]
@@ -36,6 +40,8 @@ pub struct Organisation {
     pub pat: String,
     /// Erlaubt die verändernden Werkzeuge. Standard **aus**.
     pub schreiben: bool,
+    /// Eigenes CA-Zertifikat (Pfad einer PEM-Datei), falls eingetragen.
+    pub ca_zertifikat: Option<String>,
 }
 
 impl std::fmt::Debug for Organisation {
@@ -46,6 +52,7 @@ impl std::fmt::Debug for Organisation {
             .field("projekt", &self.projekt)
             .field("pat", &(!self.pat.is_empty()))
             .field("schreiben", &self.schreiben)
+            .field("ca_zertifikat", &self.ca_zertifikat.is_some())
             .finish()
     }
 }
@@ -72,7 +79,14 @@ impl Organisation {
         let pat = feld(PAT)?;
 
         let url = url.trim().trim_end_matches('/').to_string();
-        if !(url.starts_with("https://") || url.starts_with("http://")) {
+        // Eine Regel für alle Tools (kern::net): https immer, http nur auf dem
+        // Loopback oder mit eingeschaltetem Feld „Unverschlüsselt erlauben“.
+        if quiver_tools_kern::net::adresse_erlaubt(
+            &url,
+            schalter_aus(zugang.wert(UNVERSCHLUESSELT)),
+        )
+        .is_err()
+        {
             return Err(OrganisationsFehler::Url {
                 name: name.clone(),
                 url,
@@ -85,6 +99,7 @@ impl Organisation {
             projekt: zugang.wert(PROJEKT).map(str::to_string),
             pat,
             schreiben: schalter_aus(zugang.wert(SCHREIBEN)),
+            ca_zertifikat: zugang.wert(CA_ZERTIFIKAT).map(str::to_string),
         })
     }
 
@@ -102,16 +117,27 @@ impl Organisation {
             .or_else(|| self.projekt.clone())
     }
 
-    /// `neoimpulse · https://dev.azure.com/neoimpulse · Projekt SCODA · Schreiben aus`
-    /// – ohne PAT.
+    /// `neoimpulse · https://dev.azure.com/neoimpulse · Standardprojekt SCODA
+    /// (frei wählbar) · Schreiben aus` – ohne PAT.
+    ///
+    /// Das Projekt ist ein **Standard**, keine Grenze: jedes Werkzeug darf ein
+    /// anderes nennen. Der Text sagt das ausdrücklich (Härtung Paket 4).
     pub fn beschreibung(&self) -> String {
+        let projekt = match self.projekt.as_deref() {
+            Some(projekt) => format!("Standardprojekt {projekt} (frei wählbar)"),
+            None => "Standardprojekt (frei wählbar, je Aufruf)".to_string(),
+        };
         format!(
-            "{} · {} · Projekt {} · Schreiben {}",
+            "{} · {} · {} · Schreiben {}",
             self.name,
             self.url,
-            self.projekt.as_deref().unwrap_or("(je Aufruf)"),
+            projekt,
             if self.schreiben { "an" } else { "aus" }
-        )
+        ) + if self.url.starts_with("http://") {
+            " · ohne Verschlüsselung (http)"
+        } else {
+            ""
+        }
     }
 }
 
@@ -290,7 +316,7 @@ mod tests {
         assert!(!organisation.schreiben_erlaubt());
         assert_eq!(
             organisation.beschreibung(),
-            "neoimpulse · https://dev.azure.com/neoimpulse · Projekt SCODA · Schreiben aus"
+            "neoimpulse · https://dev.azure.com/neoimpulse · Standardprojekt SCODA (frei wählbar) · Schreiben aus"
         );
         assert_eq!(organisation.projekt(None).as_deref(), Some("SCODA"));
         assert_eq!(
@@ -314,8 +340,8 @@ mod tests {
         assert_eq!(organisation.projekt(None), None);
         assert_eq!(
             organisation.beschreibung(),
-            "kunde · https://tfs.kunde.de/tfs/DefaultCollection · Projekt (je Aufruf) · \
-             Schreiben aus"
+            "kunde · https://tfs.kunde.de/tfs/DefaultCollection · Standardprojekt \
+             (frei wählbar, je Aufruf) · Schreiben aus"
         );
         assert_eq!(
             organisation.projekt(Some("SCODA")).as_deref(),

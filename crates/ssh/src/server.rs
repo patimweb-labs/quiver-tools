@@ -9,9 +9,9 @@
 //! Verbindung darf der Name fehlen.
 
 use std::any::Any;
-use std::path::Path;
 use std::time::Duration;
 
+use quiver_tools_kern::schutz::{hinweis_gesperrt, ist_lesend, TITEL_SCHREIBEN};
 use quiver_tools_kern::{antwort, hinweis_zugang, OhneProfil, Zugang};
 use rmcp::handler::server::tool::schema_for_type;
 use rmcp::model::{
@@ -73,7 +73,19 @@ impl SshServer {
 
     /// Alle Werkzeuge, wie `tools/list` sie meldet.
     pub fn werkzeuge(&self) -> Vec<Tool> {
-        vec![
+        // Hoch- und Herunterladen gibt es nur mit einem Austauschordner: ohne
+        // ihn wäre jedes lokale Verzeichnis erreichbar (Härtung Paket 4).
+        let austausch = self
+            .verbindungen
+            .as_ref()
+            .map(|sammlung| {
+                sammlung
+                    .alle()
+                    .iter()
+                    .any(|verbindung| verbindung.austauschordner.is_some())
+            })
+            .unwrap_or(false);
+        let mut werkzeuge = vec![
             lese_werkzeug::<StatusParam>(
                 "ssh_status",
                 "Verbindungen",
@@ -98,14 +110,16 @@ impl SshServer {
             schreib_werkzeug::<UploadParam>(
                 "ssh_upload",
                 "Datei hochladen",
-                "Kopiert eine Datei von diesem Gerät über SFTP auf die entfernte Maschine. `entfernt` \
-                 enthält den Dateinamen; eine vorhandene Datei wird überschrieben.",
+                "Kopiert eine Datei aus dem Austauschordner über SFTP auf die entfernte Maschine. \
+                 `lokal` ist relativ zum Austauschordner aus dem quiver-Fenster; `entfernt` ist ein \
+                 relativer Pfad ohne `..`. Verlässt den Austauschordner nie.",
             ),
             schreib_werkzeug::<DownloadParam>(
                 "ssh_download",
                 "Datei herunterladen",
-                "Kopiert eine Datei über SFTP von der entfernten Maschine auf dieses Gerät. Fehlende \
-                 lokale Ordner werden angelegt. Für Binärdateien besser als `cat` über ssh_exec.",
+                "Kopiert eine Datei über SFTP von der entfernten Maschine in den Austauschordner. \
+                 `lokal` ist relativ zum Austauschordner; vorhandene Dateien werden nie überschrieben. \
+                 Für Binärdateien besser als `cat` über ssh_exec.",
             ),
             schreib_werkzeug::<EinrichtenParam>(
                 "ssh_schluessel_einrichten",
@@ -115,11 +129,36 @@ impl SshServer {
                  neue Verbindung nur mit dem Schlüssel und ersetzt erst dann den alten Schlüssel. \
                  Nötig nach einem Server-Neuaufbau, wenn die normale Anmeldung den Schlüssel ablehnt.",
             ),
-        ]
+        ];
+        if !austausch {
+            werkzeuge.retain(|werkzeug| {
+                !matches!(werkzeug.name.as_ref(), "ssh_upload" | "ssh_download")
+            });
+        }
+        werkzeuge
     }
 
     /// Ein Werkzeug aufrufen. Auch der Weg, den die Tests nehmen.
+    ///
+    /// Die Schreibsperre steht **vor** dem Verteiler und gilt je Verbindung:
+    /// ohne den Schalter „Schreiben erlauben“ geht kein Befehl an den Host.
     pub async fn aufrufen(&self, name: &str, argumente: Option<JsonObject>) -> Ergebnis {
+        let werkzeuge = self.werkzeuge();
+        if !ist_lesend(&werkzeuge, name) {
+            let gewaehlt = argumente
+                .as_ref()
+                .and_then(|karte| karte.get("verbindung"))
+                .and_then(|wert| wert.as_str());
+            if let Ok(verbindung) = self.waehlen(gewaehlt) {
+                if !verbindung.schreiben_erlaubt() {
+                    return Ok(antwort(format!(
+                        "{}\n\n(Verbindung „{}“)",
+                        hinweis_gesperrt(name, TITEL, TITEL_SCHREIBEN),
+                        verbindung.name
+                    )));
+                }
+            }
+        }
         match name {
             "ssh_status" => self.status(argumente),
             "ssh_list" => self.liste(argumente).await,
@@ -311,6 +350,21 @@ impl SshServer {
         };
         let lokal = pflicht(&p.lokal, "lokal")?;
         let entfernt = pflicht(&p.entfernt, "entfernt")?;
+        let ablage = match verbindung.ablage() {
+            Ok(ablage) => ablage,
+            Err(fehler) => return Err(McpError::invalid_params(fehler.to_string(), None)),
+        };
+        let quelle = match ablage.pfad(lokal) {
+            Ok(pfad) => pfad,
+            Err(fehler) => return Err(McpError::invalid_params(fehler.to_string(), None)),
+        };
+        if !quelle.is_file() {
+            return Err(McpError::invalid_params(
+                format!("„{lokal}“ gibt es im Austauschordner nicht."),
+                None,
+            ));
+        }
+        entfernt_pruefen(entfernt)?;
 
         let bereit = match self.verbinden(&verbindung).await {
             Ok(bereit) => bereit,
@@ -318,7 +372,7 @@ impl SshServer {
         };
         let bytes = bereit
             .sitzung
-            .hochladen(Path::new(lokal), entfernt)
+            .hochladen(&quelle, entfernt)
             .await
             .map_err(|fehler| fern_fehler(&verbindung.name, fehler))?;
         bereit.sitzung.beenden().await;
@@ -341,17 +395,38 @@ impl SshServer {
         };
         let entfernt = pflicht(&p.entfernt, "entfernt")?;
         let lokal = pflicht(&p.lokal, "lokal")?;
+        let ablage = match verbindung.ablage() {
+            Ok(ablage) => ablage,
+            Err(fehler) => return Err(McpError::invalid_params(fehler.to_string(), None)),
+        };
+        entfernt_pruefen(entfernt)?;
+        // Vor der Verbindung prüfen: ein vorhandenes Ziel bleibt unberührt.
+        if let Ok(ziel) = ablage.pfad(lokal) {
+            if ziel.exists() {
+                return Err(McpError::invalid_params(
+                    format!(
+                        "„{lokal}“ gibt es im Austauschordner schon – es wird nicht überschrieben."
+                    ),
+                    None,
+                ));
+            }
+        }
 
         let bereit = match self.verbinden(&verbindung).await {
             Ok(bereit) => bereit,
             Err(ohne) => return ohne.in_ergebnis(),
         };
-        let bytes = bereit
+        let inhalt = bereit
             .sitzung
-            .herunterladen(entfernt, Path::new(lokal))
+            .herunterladen_bytes(entfernt)
             .await
             .map_err(|fehler| fern_fehler(&verbindung.name, fehler))?;
         bereit.sitzung.beenden().await;
+        let bytes = inhalt.len() as u64;
+        let ziel = ablage
+            .schreiben_bytes_neu(lokal, &inhalt)
+            .map_err(|fehler| McpError::invalid_params(fehler.to_string(), None))?;
+        let lokal = ziel.display().to_string();
 
         Ok(antwort(format::mit_hinweis(
             format!(
@@ -446,6 +521,28 @@ fn pflicht<'a>(wert: &'a str, name: &str) -> Result<&'a str, McpError> {
         ));
     }
     Ok(wert)
+}
+
+/// Ein entfernter Pfad: relativ, ohne `..` und ohne Steuerzeichen.
+///
+/// Damit bleibt der Transfer im Austauschbereich der Sitzung; ein absoluter
+/// Pfad oder `..` führte aus dem Arbeitsbereich des Users heraus.
+fn entfernt_pruefen(pfad: &str) -> Result<(), McpError> {
+    let verboten = pfad.trim().is_empty()
+        || pfad.starts_with('/')
+        || pfad.contains('\\')
+        || pfad.chars().any(char::is_control)
+        || pfad.split('/').any(|teil| teil == ".." || teil == ".");
+    if verboten {
+        return Err(McpError::invalid_params(
+            format!(
+                "„{pfad}“ ist kein relativer Pfad im Austauschbereich – bitte ohne führenden „/“ \
+                 und ohne „..“ angeben."
+            ),
+            None,
+        ));
+    }
+    Ok(())
 }
 
 /// Ein Fehler beim Arbeiten auf der entfernten Maschine.
@@ -614,7 +711,10 @@ mod tests {
     fn lesende_und_schreibende_werkzeuge_tragen_die_richtigen_hinweise() {
         let (server, _temp) = ohne_verbindungen();
         let werkzeuge = server.werkzeuge();
-        assert_eq!(werkzeuge.len(), 6);
+        // Ohne Austauschordner gibt es Hoch- und Herunterladen nicht.
+        assert_eq!(werkzeuge.len(), 4);
+        assert!(!werkzeuge.iter().any(|w| w.name == "ssh_upload"));
+        assert!(!werkzeuge.iter().any(|w| w.name == "ssh_download"));
 
         let lesend = ["ssh_status", "ssh_list"];
         for werkzeug in &werkzeuge {
@@ -634,6 +734,32 @@ mod tests {
                 werkzeug.name
             );
         }
+    }
+
+    #[test]
+    fn mit_austauschordner_gibt_es_hoch_und_herunterladen() {
+        let temp = tempfile::tempdir().unwrap();
+        let austausch = tempfile::tempdir().unwrap();
+        let pfade = Pfade::neu(temp.path().join("quiver-tools/ssh"), None);
+        let liste = json!([{
+            "name": "web-01",
+            "werte": {
+                "host": "127.0.0.1",
+                "benutzer": "admin",
+                "schreiben": "an",
+                "austauschordner": austausch.path().to_str().unwrap()
+            }
+        }]);
+        let sammlung =
+            Sammlung::mit_umgebung(|name| (name == "QUIVER_ZUGAENGE").then(|| liste.to_string()));
+        let server = SshServer::mit(Zugang::mit_umgebung(&Ssh, |_| None), pfade, sammlung);
+        let namen: Vec<String> = server
+            .werkzeuge()
+            .iter()
+            .map(|w| w.name.to_string())
+            .collect();
+        assert!(namen.contains(&"ssh_upload".to_string()), "{namen:?}");
+        assert!(namen.contains(&"ssh_download".to_string()), "{namen:?}");
     }
 
     #[test]

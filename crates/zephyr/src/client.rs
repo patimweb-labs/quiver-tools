@@ -150,12 +150,22 @@ impl std::fmt::Debug for Client {
 impl Client {
     /// Ein Client für diesen Zugang. Das Token steht nur im Speicher.
     pub fn neu(zugang: &Zugang) -> Result<Client, ZephyrFehler> {
-        let http = reqwest::Client::builder()
-            .timeout(ZEITLIMIT)
-            .user_agent(concat!("quiver-zephyr/", env!("CARGO_PKG_VERSION")))
-            // Das Token verlässt den eingetragenen Host nie.
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
+        // Keine Weiterleitung, feste Frist (kern::net); ein eigenes
+        // CA-Zertifikat ersetzt den Systemspeicher, sonst bleibt die Prüfung an.
+        let host = crate::zugaenge::host(&zugang.basis_url).unwrap_or_default();
+        let (regel, _warnung) =
+            quiver_tools_kern::net::zertifikat(true, &host, zugang.ca_zertifikat.as_deref());
+        let http = regel
+            .anwenden(quiver_tools_kern::net::bauen(concat!(
+                "quiver-zephyr/",
+                env!("CARGO_PKG_VERSION")
+            )))
+            .and_then(|bauer| {
+                bauer
+                    .timeout(ZEITLIMIT)
+                    .build()
+                    .map_err(|fehler| quiver_tools_kern::net::NetFehler::Client(fehler.to_string()))
+            })
             .map_err(|fehler| ZephyrFehler::Netz {
                 text: fehler.to_string(),
             })?;
@@ -261,7 +271,7 @@ impl Client {
             let status = antwort.status().as_u16();
             let wartezeit = wartezeit(antwort.headers());
             // Ein unlesbarer Rumpf ist ein Fehler, keine leere Antwort.
-            let gelesen = antwort.text().await;
+            let gelesen = quiver_tools_kern::net::text_begrenzt(antwort).await;
 
             if status == 401 {
                 // Kein Wiederholen: ein falsches Token wird davon nicht besser.
@@ -274,7 +284,8 @@ impl Client {
                 return Err(ZephyrFehler::Rechte {
                     verbindung: self.zugang.name.clone(),
                     text: gelesen
-                        .map(|rumpf| crate::fehler::meldung(&rumpf))
+                        .as_deref()
+                        .map(crate::fehler::meldung)
                         .unwrap_or_default(),
                 });
             }
@@ -507,6 +518,7 @@ mod tests {
             projekt: Some("QA".into()),
             nur: vec![],
             schreiben: true,
+            ca_zertifikat: None,
         }
     }
 

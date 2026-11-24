@@ -57,6 +57,55 @@ der Kern liest sie also alle, nicht nur die des gewählten Zugangs; kaputtes JSO
 Inhalt. Ein Feld `schreiben` (Schalter, Standard **aus**) erlaubt verändernde Werkzeuge je Zugang; ist
 es aus, antworten sie mit einem Hinweis **ohne** Anfrage.
 
+## 2b. Schreibschutz (Härtung Paket 4)
+
+**Festlegung (Nutzer, 2026-11-24):** Ein Zugang, der etwas ändern darf, hat einen Schalter
+`schreiben` (Feldart `Schalter`, Standard **aus**). Bei den Einzelzugängen steht er am Eintrag
+(`outline`, `email`, `zep`), bei den Listen je Eintrag (`ssh`, `abap`, `devops`, `jira`,
+`confluence`, `zephyr`); Microsoft 365 hat zusätzlich einen Schalter je Bereich (Mail, Kalender,
+Dateien, Teams, Planner/To Do, Kontakte, OneNote).
+
+Durchgesetzt wird das **zentral im Kern** über die Werkzeug-Registrierung: Was nicht als
+`read_only_hint = true` gekennzeichnet ist, ist ohne Schalter gesperrt – es antwortet mit einem
+Text, der das Feld und den Ort im quiver-Fenster nennt, und es geht **keine** Anfrage hinaus.
+Ein einzelnes Werkzeug kann die Prüfung nicht vergessen; ein Vertragstest über alle Programme prüft,
+dass jedes Werkzeug entweder lesend gekennzeichnet oder über einen Schalter gesperrt ist.
+
+*Begründung:* `destructive_hint` ist laut MCP nur ein Hinweis, den viele Clients nicht durchsetzen.
+Ohne Schalter gab es keinen Unterschied zwischen „Werkzeug angeschlossen“ und „Werkzeug darf
+schreiben“. *Preis:* Nach dem Update ist Schreiben überall aus; der User muss es je Zugang
+einschalten. Damit das nicht still geschieht, nennt jede Sperre das Feld, und der Start nach dem
+Update schreibt „Schreiben ist jetzt aus“ ins Log.
+
+Zusätzlich: `<tool>_profile` zeigt nur eine **ausdrückliche Liste harmloser Felder**
+(Adressen, Host, Port, Projekt, Ordner, Schalter). Ein Tippfehler in der Feldart kann so kein
+Geheimnis drucken.
+
+## 2c. Netz und Zertifikate (Härtung Paket 4)
+
+- **Ein Client für alle** (`quiver_tools_kern::net`): keine Weiterleitung, 60 s Frist,
+  höchstens 8 MB je Antwort (stückweise gelesen, Überschreitung ist ein Fehler).
+- **Adressen:** `https` immer; `http` nur für `127.0.0.1`, `localhost`, `[::1]` **oder** wenn der
+  User das Feld „Unverschlüsselt erlauben“ (`unverschluesselt_erlauben`, Standard aus) einschaltet.
+  Unverschlüsselte Adressen nennen eine Warnung im Status und im Log. Ein bestehender Zugang mit
+  `http` fällt damit nicht still aus: der Fehler nennt das Feld, das einzuschalten ist.
+- **Zertifikat:** abschalten nur auf dem Loopback; für andere Hosts bleibt die Prüfung an, es sei
+  denn der User trägt ein eigenes CA-Zertifikat ein (`ca_zertifikat`, Pfad einer PEM-Datei).
+- **Graph:** `@odata.nextLink` und jede absolute Adresse müssen Schema, Host und Port der Basis
+  treffen; ein fremder Host ist ein Fehler **ohne** Anfrage.
+
+## 2d. Dateien und Tresor (Härtung Paket 4)
+
+- Schreiben geht über **eine** `Ablage` mit fester Wurzel (Feld `ordner` bzw. `austauschordner`):
+  nur relative Namen, kein `..`, keine absoluten Pfade, keine versteckten Namen, keine Symlinks auf
+  jeder Ebene, `create_new` statt Überschreiben, 10 MB je Datei.
+- `outline_read` schreibt **keine** Datei mehr (der Parameter `save_dir` ist entfallen); Speichern
+  gibt es nur über `outline_export` in den Arbeitsordner.
+- `ssh_upload`/`ssh_download` gibt es nur mit einem Austauschordner; beide Seiten sind relative
+  Namen darin, ein Download überschreibt nie.
+- Fehlt in einem vorhandenen Tresor (`m365-anmeldung`, `zep`) die Schlüsseldatei, ist das ein
+  Fehler: es wird **kein** neuer Schlüssel erzeugt und keine Datei angefasst.
+
 ## 3. Wo die Werte liegen
 
 - Offene Werte: Client-Konfiguration von quiver; sie erscheinen in `<tool>_profile`.
@@ -117,7 +166,17 @@ Semantik, Parameter und Ausgaben folgen der Vorlage (TypeScript-Quelltext lesen)
 
 ## 7. Tests
 
-Gegen Attrappen (axum) – nie gegen echte Server. Die Umgebung wird als Paar-Menge übergeben
+Gegen Attrappen (axum) – nie gegen echte Server. Die Attrappen antworten in der Form des
+Dienstes: DevOps nach der REST-Spezifikation 7.1 (`count`, `value`, `url`, `_links`, `rev`),
+ABAP mit echtem ADT-XML (relative URIs, Versionsverweise) – ein Werkzeug, das absolute
+Adressen erwartet, fällt dort auf.
+
+Dazu zwei Tests, die mehr als einen Fall abdecken:
+
+- **Fuzz** (fester Startwert, 20 000 erzeugte Eingaben) über alle Leser: Farben, XML,
+  komprimierte Seiten, Excalidraw-JSON. Keine Eingabe darf das Programm beenden.
+- **Vertrag über alle Programme**: jedes MCP-Werkzeug ist entweder lesend gekennzeichnet oder
+  gehört zu einem Programm mit Schreibschalter (Standard aus). Die Umgebung wird als Paar-Menge übergeben
 (`Zugang::mit_umgebung`, kein Prozesszustand), der Kindprozess-Test setzt sie als echte Variablen und
 prüft beide Fälle: gesetzte Umgebung und fehlende (Hinweistext). `eintrag` wird gegen eine Kopie von
 `quiver_domain::Eintrag` deserialisiert.

@@ -21,7 +21,7 @@
 use std::collections::BTreeMap;
 
 use quiver_tools_kern::zugaenge::{self, ZugaengeFehler};
-use url::{Host, Url};
+use url::Url;
 
 /// Feldname der Site-Adresse (Pflicht), z. B. `https://firma.atlassian.net`.
 pub const URL: &str = "url";
@@ -33,6 +33,10 @@ pub const TOKEN: &str = "api_token";
 pub const NUR: &str = "nur";
 /// Feldname des Schalters „Schreiben erlauben“ (Standard **aus**).
 pub const SCHREIBEN: &str = "schreiben";
+/// Feldname des Schalters „Unverschlüsselt erlauben“ (Standard **aus**).
+pub const UNVERSCHLUESSELT: &str = quiver_tools_kern::net::FELD_UNVERSCHLUESSELT;
+/// Feldname des eigenen CA-Zertifikats (Pfad einer Datei).
+pub const CA_ZERTIFIKAT: &str = quiver_tools_kern::net::FELD_CA_ZERTIFIKAT;
 
 /// Die Adresse des Jira-REST-API, relativ zur Site.
 pub const API: &str = "/rest/api/3";
@@ -52,6 +56,8 @@ pub struct Site {
     pub nur: Vec<String>,
     /// Erlaubt die verändernden Werkzeuge. Standard **aus**.
     pub schreiben: bool,
+    /// Eigenes CA-Zertifikat (Pfad einer PEM-Datei), falls eingetragen.
+    pub ca_zertifikat: Option<String>,
     /// Die geprüfte Adresse – Grundlage für den Vergleich von Schema, Host
     /// und Port (einer Folgeseite).
     adresse: Url,
@@ -66,6 +72,7 @@ impl std::fmt::Debug for Site {
             .field("token", &(!self.token.is_empty()))
             .field("nur", &self.nur)
             .field("schreiben", &self.schreiben)
+            .field("ca_zertifikat", &self.ca_zertifikat.is_some())
             .finish()
     }
 }
@@ -91,7 +98,8 @@ impl Site {
         let url = feld(URL)?;
         let email = feld(EMAIL)?;
         let token = feld(TOKEN)?;
-        let (url, adresse) = pruefe_url(&name, &url)?;
+        let unverschluesselt = schalter_aus(zugang.wert(UNVERSCHLUESSELT));
+        let (url, adresse) = pruefe_url(&name, &url, unverschluesselt)?;
 
         Ok(Site {
             name,
@@ -100,6 +108,7 @@ impl Site {
             token,
             nur: erlaubte_projekte(zugang.wert(NUR)),
             schreiben: schalter_aus(zugang.wert(SCHREIBEN)),
+            ca_zertifikat: zugang.wert(CA_ZERTIFIKAT).map(str::to_string),
             adresse,
         })
     }
@@ -157,7 +166,11 @@ impl Site {
             self.url,
             self.nur_text(),
             if self.schreiben { "an" } else { "aus" }
-        )
+        ) + if self.url.starts_with("http://") {
+            " · ohne Verschlüsselung (http)"
+        } else {
+            ""
+        }
     }
 }
 
@@ -166,7 +179,7 @@ impl Site {
 /// Liefert die Adresse ohne Schrägstrich am Ende und dasselbe als [`Url`].
 /// Alles wird an der geparsten `Url` entschieden – `user@host`, Abfrage und
 /// Fragment werden abgelehnt.
-fn pruefe_url(name: &str, roh: &str) -> Result<(String, Url), SiteFehler> {
+fn pruefe_url(name: &str, roh: &str, unverschluesselt: bool) -> Result<(String, Url), SiteFehler> {
     let roh = roh.trim().trim_end_matches('/');
     let fehler = |grund: &'static str| SiteFehler::Url {
         name: name.to_string(),
@@ -183,27 +196,18 @@ fn pruefe_url(name: &str, roh: &str) -> Result<(String, Url), SiteFehler> {
     if url.fragment().is_some() {
         return Err(fehler("eine Basisadresse hat kein Fragment"));
     }
-    // `Host` ist schon normalisiert (klein, IPv6 ohne Klammern).
-    let Some(host) = url.host() else {
+    if url.host().is_none() {
         return Err(fehler("die Adresse hat keinen Host"));
-    };
-    let erlaubt = url.scheme() == "https" || (ist_loopback(&host) && url.scheme() == "http");
-    if !erlaubt {
+    }
+    // Eine Regel für alle Tools (kern::net): https immer, http nur auf dem
+    // Loopback oder mit eingeschaltetem Feld „Unverschlüsselt erlauben“.
+    if quiver_tools_kern::net::adresse_erlaubt(roh, unverschluesselt).is_err() {
         return Err(fehler(
-            "die Adresse muss mit https:// beginnen (nur die Attrappe darf http:// auf \
-             Loopback sein)",
+            "die Adresse muss mit https:// beginnen (http nur auf 127.0.0.1, localhost und \
+             [::1] oder mit dem Feld „Unverschlüsselt erlauben“)",
         ));
     }
     Ok((roh.to_string(), url))
-}
-
-/// Ist der Host die eigene Maschine? (Attrappe im Test.)
-fn ist_loopback(host: &Host<&str>) -> bool {
-    match host {
-        Host::Domain(domain) => domain.eq_ignore_ascii_case("localhost"),
-        Host::Ipv4(adresse) => adresse.is_loopback(),
-        Host::Ipv6(adresse) => adresse.is_loopback(),
-    }
 }
 
 /// Ein Schalter, der im Zweifel **aus** ist (Feld `schreiben`).

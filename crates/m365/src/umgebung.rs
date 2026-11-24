@@ -54,3 +54,211 @@ mod tests {
         assert_eq!(STANDARD_ZEITZONE, "Europe/Berlin");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Schreibschutz je Bereich (Härtung Paket 4)
+// ---------------------------------------------------------------------------
+
+/// Ein Bereich, in dem geschrieben werden kann, mit Schalter und Beschriftung.
+///
+/// Jeder Schalter ist im Zweifel **aus**: fehlt er oder ist er leer, ändert das
+/// Programm nichts. Ein lesendes Werkzeug braucht keinen Schalter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Bereich {
+    /// Kurzname, z. B. `mail`.
+    pub name: &'static str,
+    /// Name der Umgebungsvariablen (Feld im quiver-Fenster).
+    pub variabale: &'static str,
+    /// Beschriftung des Feldes im quiver-Fenster.
+    pub titel: &'static str,
+}
+
+/// Alle Bereiche mit eigenem Schalter.
+pub const BEREICHE: &[Bereich] = &[
+    Bereich {
+        name: "mail",
+        variabale: "M365_SCHREIBEN_MAIL",
+        titel: "Mail senden erlauben",
+    },
+    Bereich {
+        name: "kalender",
+        variabale: "M365_SCHREIBEN_KALENDER",
+        titel: "Kalender ändern erlauben",
+    },
+    Bereich {
+        name: "dateien",
+        variabale: "M365_SCHREIBEN_DATEIEN",
+        titel: "Dateien ändern erlauben",
+    },
+    Bereich {
+        name: "teams",
+        variabale: "M365_SCHREIBEN_TEAMS",
+        titel: "Teams schreiben erlauben",
+    },
+    Bereich {
+        name: "planner",
+        variabale: "M365_SCHREIBEN_PLANNER",
+        titel: "Planner und To Do ändern erlauben",
+    },
+    Bereich {
+        name: "kontakte",
+        variabale: "M365_SCHREIBEN_KONTAKTE",
+        titel: "Kontakte ändern erlauben",
+    },
+    Bereich {
+        name: "onenote",
+        variabale: "M365_SCHREIBEN_ONENOTE",
+        titel: "OneNote ändern erlauben",
+    },
+    Bereich {
+        name: "allgemein",
+        variabale: "M365_SCHREIBEN",
+        titel: "Schreiben erlauben",
+    },
+];
+
+/// Ein Schalter aus der Umgebung: nur ein ausdrückliches Einschalten gilt.
+pub fn schalter(name: &str) -> bool {
+    schalter_mit(name, |name| std::env::var(name).ok())
+}
+
+/// Wie [`schalter`], aus einer beliebigen Quelle (Tests).
+pub fn schalter_mit(name: &str, lesen: impl Fn(&str) -> Option<String>) -> bool {
+    matches!(
+        lesen(name)
+            .map(|roh| roh.trim().to_string())
+            .filter(|roh| !roh.is_empty())
+            .map(|roh| roh.to_ascii_lowercase()),
+        Some(wert) if matches!(wert.as_str(), "an" | "ja" | "1" | "true" | "ein" | "on")
+    )
+}
+
+/// Ein Bereich nach Namen.
+pub fn bereich(name: &str) -> &'static Bereich {
+    BEREICHE
+        .iter()
+        .find(|bereich| bereich.name == name)
+        .unwrap_or(&BEREICHE[BEREICHE.len() - 1])
+}
+
+/// Zu welchem Bereich gehört ein Werkzeug? Alles Unbekannte gilt als
+/// „allgemein“ – im Zweifel zu.
+pub fn bereich_fuer(werkzeug: &str) -> &'static str {
+    let name = werkzeug.to_ascii_lowercase();
+    let passt = |praefixe: &[&str]| praefixe.iter().any(|praefix| name.starts_with(praefix));
+    if passt(&["mail_"]) {
+        "mail"
+    } else if passt(&["termin"]) {
+        "kalender"
+    } else if passt(&["datei", "ordner_", "sharepoint_"]) {
+        "dateien"
+    } else if passt(&["teams_"]) {
+        "teams"
+    } else if passt(&["planner_", "todo_"]) {
+        "planner"
+    } else if passt(&["kontakt", "personen_"]) {
+        "kontakte"
+    } else if passt(&["onenote_"]) {
+        "onenote"
+    } else {
+        "allgemein"
+    }
+}
+
+/// Darf in diesem Bereich geschrieben werden?
+pub fn schreiben_erlaubt(bereich: &str) -> bool {
+    schreiben_erlaubt_mit(bereich, |name| std::env::var(name).ok())
+}
+
+/// Wie [`schreiben_erlaubt`], aus einer beliebigen Quelle (Tests).
+///
+/// Der allgemeine Schalter `M365_SCHREIBEN` gilt für alle Bereiche – so lässt
+/// sich das Schreiben mit einem Feld freigeben, ohne sieben zu setzen.
+pub fn schreiben_erlaubt_mit(bereich: &str, lesen: impl Fn(&str) -> Option<String>) -> bool {
+    let eintrag = bereich_als(bereich);
+    schalter_mit(eintrag.variabale, &lesen)
+        || (eintrag.name != "allgemein" && schalter_mit("M365_SCHREIBEN", &lesen))
+}
+
+/// Wie [`bereich`], aber ohne den Platzhalter für unbekannte Namen.
+fn bereich_als(name: &str) -> &'static Bereich {
+    BEREICHE
+        .iter()
+        .find(|bereich| bereich.name == name)
+        .unwrap_or(&BEREICHE[BEREICHE.len() - 1])
+}
+
+/// Der Hinweis, den ein gesperrtes Werkzeug zurückgibt.
+pub fn hinweis_gesperrt(werkzeug: &str, bereich: &str) -> String {
+    let eintrag = bereich_als(bereich);
+    format!(
+        "„{werkzeug}“ ändert etwas. Für Microsoft 365 ist das nicht freigegeben – bitte im \
+         quiver-Fenster unter Tools → Microsoft 365 das Feld „{}“ einschalten. Ohne diesen \
+         Schalter geht keine Anfrage hinaus.",
+        eintrag.titel
+    )
+}
+
+#[cfg(test)]
+mod schreibschutz_tests {
+    use super::*;
+
+    fn aus<'a>(werte: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |name| {
+            werte
+                .iter()
+                .find(|(schluessel, _)| *schluessel == name)
+                .map(|(_, wert)| (*wert).to_string())
+        }
+    }
+
+    #[test]
+    fn jeder_bereich_hat_einen_eigenen_schalter_und_ist_im_zweifel_aus() {
+        assert!(!schreiben_erlaubt_mit("mail", aus(&[])));
+        assert!(!schreiben_erlaubt_mit(
+            "mail",
+            aus(&[("M365_SCHREIBEN_MAIL", "aus")])
+        ));
+        assert!(schreiben_erlaubt_mit(
+            "mail",
+            aus(&[("M365_SCHREIBEN_MAIL", "an")])
+        ));
+        // Der allgemeine Schalter gilt für alle Bereiche.
+        assert!(schreiben_erlaubt_mit(
+            "teams",
+            aus(&[("M365_SCHREIBEN", "an")])
+        ));
+        // Ein Bereichsschalter gilt nicht für einen anderen.
+        assert!(!schreiben_erlaubt_mit(
+            "teams",
+            aus(&[("M365_SCHREIBEN_MAIL", "an")])
+        ));
+    }
+
+    #[test]
+    fn werkzeuge_werden_ihrem_bereich_zugeordnet() {
+        assert_eq!(bereich_fuer("mail_senden"), "mail");
+        assert_eq!(bereich_fuer("mail_loeschen"), "mail");
+        assert_eq!(bereich_fuer("termin_anlegen"), "kalender");
+        assert_eq!(bereich_fuer("termin_loeschen"), "kalender");
+        assert_eq!(bereich_fuer("datei_hochladen"), "dateien");
+        assert_eq!(bereich_fuer("sharepoint_listeneintrag_anlegen"), "dateien");
+        assert_eq!(bereich_fuer("teams_kanal_senden"), "teams");
+        assert_eq!(bereich_fuer("planner_aufgabe_anlegen"), "planner");
+        assert_eq!(bereich_fuer("todo_aufgabe_erledigen"), "planner");
+        assert_eq!(bereich_fuer("kontakt_anlegen"), "kontakte");
+        assert_eq!(bereich_fuer("onenote_seite_anlegen"), "onenote");
+        // Unbekanntes gilt als allgemein – im Zweifel zu.
+        assert_eq!(bereich_fuer("irgendwas"), "allgemein");
+        assert!(!schreiben_erlaubt_mit("allgemein", aus(&[])));
+    }
+
+    #[test]
+    fn der_hinweis_nennt_das_feld_und_die_quelle() {
+        let text = hinweis_gesperrt("mail_senden", "mail");
+        assert!(text.contains("mail_senden"), "{text}");
+        assert!(text.contains("Mail senden erlauben"), "{text}");
+        assert!(text.contains("quiver-Fenster"), "{text}");
+        assert!(text.contains("Microsoft 365"), "{text}");
+    }
+}

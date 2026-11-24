@@ -176,8 +176,14 @@ pub fn farbe_aus_hex(wert: &str) -> Option<Farbe> {
 }
 
 /// `#rrggbb` oder `#rgb` als Zahlen; alles andere ergibt `None`.
+///
+/// Geprüft wird über Bytes: ein Wert wie `😀ab` hat sechs Bytes, aber keine
+/// sechs Zeichen – ein Schnitt an Zeichengrenzen würde das Programm beenden.
 fn rgb(wert: &str) -> Option<(i32, i32, i32)> {
     let wert = wert.trim().trim_start_matches('#');
+    if !wert.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
     let (r, g, b) = match wert.len() {
         3 => (
             u8::from_str_radix(&wert[0..1].repeat(2), 16).ok()?,
@@ -197,6 +203,21 @@ fn rgb(wert: &str) -> Option<(i32, i32, i32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn farbwerte_mit_mehrbyte_zeichen_paniken_nicht() {
+        // Sechs Bytes, aber das erste Zeichen ist vier Bytes breit.
+        assert_eq!(farbe_aus_hex("😀ab"), None);
+        assert_eq!(farbe_aus_hex("#😀ab"), None);
+        // Drei Bytes aus einem Zeichen.
+        assert_eq!(farbe_aus_hex("€"), None);
+        assert_eq!(farbe_aus_hex("#äöü"), None);
+        assert_eq!(farbe_aus_hex("Grün"), None);
+        // Gültiges bleibt gültig.
+        assert!(farbe_aus_hex("#ff0000").is_some());
+        assert!(farbe_aus_hex("f00").is_some());
+        assert_eq!(farbe_aus_hex("#ffffff"), None);
+    }
 
     #[test]
     fn jede_form_hat_einen_stil_und_laesst_sich_zuruecklesen() {

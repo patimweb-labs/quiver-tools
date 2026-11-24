@@ -391,17 +391,27 @@ fn eintrag_enthaelt_mehrfach_mit_vier_feldern_und_pat_link() {
         "{eintrag}"
     );
 
-    // … sondern eine Liste von Organisationen mit vier Feldern.
+    // … sondern eine Liste von Organisationen mit sechs Feldern.
     let mehrfach = &eintrag["mehrfach"];
     assert_eq!(mehrfach["titel"], json!("Organisationen"));
     assert_eq!(mehrfach["einzahl"], json!("Organisation"));
     let felder = mehrfach["felder"].as_array().unwrap();
-    assert_eq!(felder.len(), 4, "{mehrfach}");
+    assert_eq!(felder.len(), 6, "{mehrfach}");
     let namen: Vec<&str> = felder
         .iter()
         .map(|feld| feld["name"].as_str().unwrap())
         .collect();
-    assert_eq!(namen, vec!["url", "projekt", "pat", "schreiben"]);
+    assert_eq!(
+        namen,
+        vec![
+            "url",
+            "projekt",
+            "pat",
+            "unverschluesselt_erlauben",
+            "ca_zertifikat",
+            "schreiben"
+        ]
+    );
 
     assert_eq!(felder[0]["quelle"], json!("client"));
     assert_eq!(felder[0]["pflicht"], json!(true));
@@ -423,12 +433,18 @@ fn eintrag_enthaelt_mehrfach_mit_vier_feldern_und_pat_link() {
         felder[2]["link"]["url"],
         json!("${url}/_usersSettings/tokens")
     );
-    // Der Schalter „schreiben“ steht am Ende und ist im Zweifel aus.
-    assert_eq!(felder[3]["name"], json!("schreiben"));
+    // Härtung: http nur mit Schalter, eigenes CA-Zertifikat.
+    assert_eq!(felder[3]["name"], json!("unverschluesselt_erlauben"));
     assert_eq!(felder[3]["art"], json!("schalter"));
     assert_eq!(felder[3]["standard"], json!("aus"));
-    assert_eq!(felder[3]["pflicht"], json!(false));
-    assert!(felder[3]["beschreibung"]
+    assert_eq!(felder[4]["name"], json!("ca_zertifikat"));
+    assert_eq!(felder[4]["art"], json!("text"));
+    // Der Schalter „schreiben“ steht am Ende und ist im Zweifel aus.
+    assert_eq!(felder[5]["name"], json!("schreiben"));
+    assert_eq!(felder[5]["art"], json!("schalter"));
+    assert_eq!(felder[5]["standard"], json!("aus"));
+    assert_eq!(felder[5]["pflicht"], json!(false));
+    assert!(felder[5]["beschreibung"]
         .as_str()
         .unwrap()
         .contains("Pipelines starten"));

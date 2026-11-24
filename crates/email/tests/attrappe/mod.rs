@@ -313,6 +313,8 @@ pub fn umgebung(adresse: &str) -> Vec<(&'static str, String)> {
         ("EMAIL_BENUTZER", adresse.to_string()),
         ("EMAIL_PASSWORT", PASSWORT.to_string()),
         ("EMAIL_ZERTIFIKAT_PRUEFEN", "an".to_string()),
+        // Der Schreibschutz ist in den Tests an; die Sperre prüft ein eigener Test.
+        ("EMAIL_SCHREIBEN", "an".to_string()),
     ]
 }
 
@@ -330,6 +332,20 @@ pub fn zugang(adresse: &str) -> Zugang {
 /// Ein Zugang ohne jede Umgebung.
 pub fn ohne_zugang() -> Zugang {
     Zugang::mit_umgebung(&Email, |_| None)
+}
+
+/// Ein Zugang ohne Schreibschalter – so wie nach dem Update.
+pub fn zugang_ohne_schreiben(adresse: &str) -> Zugang {
+    let werte = umgebung(adresse);
+    Zugang::mit_umgebung(&Email, |name| {
+        if name == "EMAIL_SCHREIBEN" {
+            return None;
+        }
+        werte
+            .iter()
+            .find(|(schluessel, _)| *schluessel == name)
+            .map(|(_, wert)| wert.clone())
+    })
 }
 
 /// Beide Attrappen zusammen; sie teilen sich die Aufzeichnung nicht.

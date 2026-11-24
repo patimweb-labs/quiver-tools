@@ -634,11 +634,18 @@ impl AbapServer {
         };
         let tabelle = pflicht(&p.table, "table")?.to_uppercase();
         let zeilen = zeilen(&p.max_zeilen);
-        let filter = p
+        let roh_filter = p
             .filter
             .as_deref()
             .map(str::trim)
-            .filter(|filter| !filter.is_empty())
+            .filter(|filter| !filter.is_empty());
+        if let Some(filter) = roh_filter {
+            // Kein `;`, kein Kommentarzeichen – der Filter steht hinter einem
+            // WHERE, das das Werkzeug selbst baut (Härtung Paket 4).
+            crate::sql::filter(filter)
+                .map_err(|fehler| McpError::invalid_params(fehler.to_string(), None))?;
+        }
+        let filter = roh_filter
             .map(|filter| format!("WHERE {filter}"))
             .unwrap_or_default();
 
@@ -664,6 +671,10 @@ impl AbapServer {
             Err(ohne) => return ohne.in_ergebnis(),
         };
         let sql = pflicht(&p.sql, "sql")?;
+        // Nur ein einzelnes SELECT, ohne Kette, ohne INTO und ohne FOR UPDATE
+        // (Härtung Paket 4). Geprüft wird vor jeder Anfrage an das System.
+        crate::sql::nur_select(sql)
+            .map_err(|fehler| McpError::invalid_params(fehler.to_string(), None))?;
         let zeilen = zeilen(&p.max_zeilen);
 
         let client = Self::client(&system)?;
@@ -2233,6 +2244,7 @@ mod tests {
             passwort: "geheim-4711".into(),
             zertifikat_pruefen: true,
             schreiben: true,
+            ca_zertifikat: None,
         }
     }
 

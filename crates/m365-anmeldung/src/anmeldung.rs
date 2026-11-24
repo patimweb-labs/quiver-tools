@@ -74,9 +74,13 @@ impl<T: Tresor + 'static, B: Browser + 'static> EntraAnmeldung<T, B> {
         festes_token: Option<String>,
     ) -> anyhow::Result<Self> {
         let client = fluss::client_bauen(&konfig)?;
+        // Kein Folgen von Weiterleitungen (SSRF-Hinweis von oauth2) und eine
+        // feste Frist; dieselbe Regel wie in `kern::net`, hier ohne den Kern,
+        // damit diese kleine Bibliothek schlank bleibt.
         let http = reqwest::Client::builder()
-            // Kein Folgen von Weiterleitungen (SSRF-Hinweis von oauth2).
             .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(60))
+            .user_agent(concat!("quiver-m365-anmeldung/", env!("CARGO_PKG_VERSION")))
             .build()?;
         let schluessel = format!("{}/{}", konfig.tenant, konfig.client_id);
 

@@ -256,7 +256,7 @@ fn eintrag_liefert_den_bibliothekseintrag_als_json() {
     );
 
     let felder = eintrag["felder"].as_array().unwrap();
-    assert_eq!(felder.len(), 11);
+    assert_eq!(felder.len(), 12);
     assert_eq!(felder[0]["name"], json!("adresse"));
     assert_eq!(felder[0]["quelle"], json!("client"));
     assert_eq!(felder[0]["pflicht"], json!(true));
@@ -282,6 +282,14 @@ fn eintrag_liefert_den_bibliothekseintrag_als_json() {
         .unwrap();
     assert_eq!(schalter["standard"], json!("an"));
     assert_eq!(schalter["quelle"], json!("client"));
+
+    // Der Schreibschutz ist im Zweifel aus.
+    let schreiben = felder
+        .iter()
+        .find(|feld| feld["name"] == json!("schreiben"))
+        .unwrap();
+    assert_eq!(schreiben["art"], json!("schalter"));
+    assert_eq!(schreiben["standard"], json!("aus"));
 
     assert!(eintrag.get("einrichtung").is_none(), "{eintrag}");
 }

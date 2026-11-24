@@ -177,10 +177,28 @@ impl std::fmt::Debug for Client {
 impl Client {
     /// Ein Client für diese Organisation. Der PAT steht nur im Speicher.
     pub fn neu(organisation: &Organisation) -> Result<Client, DevopsFehler> {
-        let http = reqwest::Client::builder()
-            .timeout(ZEITLIMIT)
-            .user_agent(concat!("quiver-devops/", env!("CARGO_PKG_VERSION")))
-            .build()
+        // Keine Weiterleitung, feste Frist (kern::net); ein eigenes
+        // CA-Zertifikat ersetzt den Systemspeicher, sonst bleibt die Prüfung an.
+        let host = organisation
+            .url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .split(['/', ':'])
+            .next()
+            .unwrap_or(&organisation.url);
+        let (regel, _warnung) =
+            quiver_tools_kern::net::zertifikat(true, host, organisation.ca_zertifikat.as_deref());
+        let http = regel
+            .anwenden(quiver_tools_kern::net::bauen(concat!(
+                "quiver-devops/",
+                env!("CARGO_PKG_VERSION")
+            )))
+            .and_then(|bauer| {
+                bauer
+                    .timeout(ZEITLIMIT)
+                    .build()
+                    .map_err(|fehler| quiver_tools_kern::net::NetFehler::Client(fehler.to_string()))
+            })
             .map_err(|fehler| DevopsFehler::Netz {
                 text: fehler.to_string(),
             })?;
@@ -239,7 +257,9 @@ impl Client {
 
             let status = antwort.status().as_u16();
             let wartezeit = wartezeit(antwort.headers());
-            let rumpf = antwort.text().await.unwrap_or_default();
+            let rumpf = quiver_tools_kern::net::text_begrenzt(antwort)
+                .await
+                .unwrap_or_default();
 
             // 429: nur lesende Aufrufe werden wiederholt.
             if status == 429 && anfrage.ist_lesend() {
@@ -353,6 +373,7 @@ mod tests {
             projekt: Some("SCODA".into()),
             pat: "pat-4711".into(),
             schreiben: true,
+            ca_zertifikat: None,
         }
     }
 

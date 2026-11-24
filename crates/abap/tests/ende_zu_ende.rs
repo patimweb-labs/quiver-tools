@@ -423,12 +423,12 @@ fn eintrag_enthaelt_mehrfach_mit_sieben_feldern() {
         "{eintrag}"
     );
 
-    // … sondern eine Liste von Systemen mit sechs Feldern.
+    // … sondern eine Liste von Systemen mit neun Feldern.
     let mehrfach = &eintrag["mehrfach"];
     assert_eq!(mehrfach["titel"], json!("Systeme"));
     assert_eq!(mehrfach["einzahl"], json!("System"));
     let felder = mehrfach["felder"].as_array().unwrap();
-    assert_eq!(felder.len(), 7, "{mehrfach}");
+    assert_eq!(felder.len(), 9, "{mehrfach}");
     let namen: Vec<&str> = felder
         .iter()
         .map(|feld| feld["name"].as_str().unwrap())
@@ -442,6 +442,8 @@ fn eintrag_enthaelt_mehrfach_mit_sieben_feldern() {
             "sprache",
             "passwort",
             "zertifikat_pruefen",
+            "ca_zertifikat",
+            "unverschluesselt_erlauben",
             "schreiben"
         ]
     );
@@ -468,18 +470,24 @@ fn eintrag_enthaelt_mehrfach_mit_sieben_feldern() {
         .as_str()
         .unwrap()
         .contains("Zertifikatsspeicher"));
+    // Härtung: eigenes CA-Zertifikat, http nur mit Schalter.
+    assert_eq!(felder[6]["name"], json!("ca_zertifikat"));
+    assert_eq!(felder[6]["art"], json!("text"));
+    assert_eq!(felder[7]["name"], json!("unverschluesselt_erlauben"));
+    assert_eq!(felder[7]["art"], json!("schalter"));
+    assert_eq!(felder[7]["standard"], json!("aus"));
     // Der Schalter „schreiben“ steht am Ende und ist im Zweifel aus.
-    assert_eq!(felder[6]["name"], json!("schreiben"));
-    assert_eq!(felder[6]["art"], json!("schalter"));
-    assert_eq!(felder[6]["standard"], json!("aus"));
-    assert_eq!(felder[6]["pflicht"], json!(false));
-    assert!(felder[6]["beschreibung"]
+    assert_eq!(felder[8]["name"], json!("schreiben"));
+    assert_eq!(felder[8]["art"], json!("schalter"));
+    assert_eq!(felder[8]["standard"], json!("aus"));
+    assert_eq!(felder[8]["pflicht"], json!(false));
+    assert!(felder[8]["beschreibung"]
         .as_str()
         .unwrap()
         .contains("Produktivsysteme aus lassen"));
     // Die Beschreibung ist nur die Hilfe, der Titel steht in `titel`.
-    assert_eq!(felder[6]["titel"], json!("Schreiben erlauben"));
-    assert!(!felder[6]["beschreibung"]
+    assert_eq!(felder[8]["titel"], json!("Schreiben erlauben"));
+    assert!(!felder[8]["beschreibung"]
         .as_str()
         .unwrap()
         .contains("Schreiben erlauben –"));

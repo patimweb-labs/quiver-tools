@@ -327,7 +327,7 @@ async fn invalid_grant_fuehrt_zur_routine_und_die_werkzeuge_gehen_weiter() {
 
     // Und die Werkzeuge gehen weiter.
     let ergebnis = vermittler
-        .aufrufen(CallToolRequestParams::new("zep_projekte".to_string()))
+        .aufrufen(CallToolRequestParams::new("zep_projekte".to_string()), true)
         .await
         .expect("Werkzeugaufruf");
     let text = ergebnis
@@ -353,7 +353,7 @@ async fn ein_abgelehntes_access_token_wird_erneuert_und_einmal_wiederholt() {
     // ZEP kennt das Access-Token nicht mehr: der nächste Aufruf bekommt 401.
     attrappe.access_tokens_entwerten();
     let ergebnis = vermittler
-        .aufrufen(CallToolRequestParams::new("zep_zeiten".to_string()))
+        .aufrufen(CallToolRequestParams::new("zep_zeiten".to_string()), true)
         .await
         .expect("nach der Erneuerung");
     let text = ergebnis
@@ -441,4 +441,37 @@ async fn eine_inertia_zustimmung_fuer_einen_fremden_client_wird_nicht_bestaetigt
     let fehler = lauf.fehler.clone().expect("muss scheitern");
     assert!(fehler.contains("anderen Client"), "{fehler}");
     assert_eq!(attrappe.zustimmungen(), 0, "nichts bestätigt");
+}
+
+#[tokio::test]
+async fn ein_schreibender_aufruf_wird_nach_einem_401_nicht_wiederholt() {
+    let attrappe = Attrappe::starte().await;
+    let ordner = tempfile::tempdir().unwrap();
+    let tresor = speicher();
+    let anmeldung = baue(&attrappe, &ordner, Arc::clone(&tresor), browser());
+    anmeldung.access_token().await.expect("erste Anmeldung");
+
+    let vermittler = Vermittler::neu(Arc::new(anmeldung.clone()));
+    vermittler.werkzeuge().await.expect("Werkzeugliste");
+
+    // ZEP kennt das Access-Token nicht mehr.
+    attrappe.access_tokens_entwerten();
+    let erneuerungen = attrappe.refresh_aufrufe();
+    let ergebnis = vermittler
+        .aufrufen(
+            CallToolRequestParams::new("zep_umschalten".to_string()),
+            false,
+        )
+        .await;
+
+    // Kein zweiter Versuch: der Aufruf scheitert, und es wurde nichts erneuert.
+    assert!(
+        ergebnis.is_err(),
+        "ein Schreibaufruf darf nicht wiederholt werden"
+    );
+    assert_eq!(
+        attrappe.refresh_aufrufe(),
+        erneuerungen,
+        "für ein Schreibwerkzeug darf kein Token erneuert und wiederholt werden"
+    );
 }

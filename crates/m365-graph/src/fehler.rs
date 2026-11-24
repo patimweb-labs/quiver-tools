@@ -28,6 +28,10 @@ pub enum GraphFehler {
     /// Antwort, die nicht zum erwarteten Modell passt.
     #[error("Antwort von Graph unbrauchbar: {0}")]
     Antwort(String),
+    /// Eine Folgeseite oder eine absolute Adresse zeigt auf einen anderen Host
+    /// als Graph. Sie wird **nicht** geholt – das Token ist an Graph gebunden.
+    #[error("Die Adresse „{0}“ gehört nicht zu Graph und wird nicht geholt.")]
+    FremderHost(String),
 }
 
 impl GraphFehler {

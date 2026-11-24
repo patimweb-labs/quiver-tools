@@ -588,7 +588,35 @@ impl<A: Anmeldung + 'static> Quiver<A> {
 }
 
 #[tool_handler(router = self.tool_router, name = "quiver-m365")]
-impl<A: Anmeldung + 'static> ServerHandler for Quiver<A> {}
+impl<A: Anmeldung + 'static> ServerHandler for Quiver<A> {
+    /// Der Schreibschutz steht **vor** dem Verteiler: ein veränderndes Werkzeug
+    /// ohne Schalter antwortet mit einem Hinweis, und es geht keine Anfrage an
+    /// Graph (Härtung Paket 4). Lesende Werkzeuge sind nicht betroffen.
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
+        let name = request.name.to_string();
+        let werkzeug = self.tool_router.get(&name);
+        let lesend = werkzeug
+            .and_then(|werkzeug| werkzeug.annotations.as_ref())
+            .and_then(|annotationen| annotationen.read_only_hint)
+            == Some(true);
+        if werkzeug.is_some() && !lesend {
+            let bereich = crate::umgebung::bereich_fuer(&name);
+            if !crate::umgebung::schreiben_erlaubt(bereich) {
+                return Ok(rmcp::model::CallToolResponse::from(
+                    rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(
+                        crate::umgebung::hinweis_gesperrt(&name, bereich),
+                    )]),
+                ));
+            }
+        }
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        self.tool_router.call(tcc).await
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Reine Hilfen: Antwortform und Grenzen
@@ -1046,5 +1074,42 @@ mod tests {
         let text = format!("{fehler}");
         assert!(text.contains("ErrorInvalidRecipients"));
         assert!(text.contains("Die Empfänger sind ungültig."));
+    }
+}
+
+#[cfg(test)]
+mod schreibschutz_tests {
+    use rmcp::model::ToolAnnotations;
+
+    /// Jedes Werkzeug ist entweder lesend gekennzeichnet oder über einen
+    /// Bereichsschalter gesperrt (Härtung Paket 4).
+    #[test]
+    fn jedes_schreibende_werkzeug_hat_einen_bereich() {
+        let werkzeuge: Vec<(String, bool)> = vec![
+            ("mail_senden".to_string(), true),
+            ("mail_loeschen".to_string(), true),
+            ("termin_anlegen".to_string(), true),
+            ("termin_loeschen".to_string(), true),
+            ("datei_hochladen".to_string(), true),
+            ("teams_kanal_senden".to_string(), true),
+            ("planner_aufgabe_anlegen".to_string(), true),
+            ("kontakt_anlegen".to_string(), true),
+            ("onenote_seite_anlegen".to_string(), true),
+        ];
+        for (name, schreibend) in werkzeuge {
+            let annotationen = ToolAnnotations::from_raw(
+                None,
+                Some(!schreibend),
+                Some(schreibend),
+                Some(!schreibend),
+                Some(false),
+            );
+            let lesend = annotationen.read_only_hint == Some(true);
+            assert!(schreibend && !lesend, "{name} sollte schreibend sein");
+            let bereich = crate::umgebung::bereich_fuer(&name);
+            assert_ne!(bereich, "unbekannt", "{name}");
+            // Ohne Schalter ist jeder Bereich gesperrt.
+            assert!(!crate::umgebung::schreiben_erlaubt_mit(bereich, |_| None));
+        }
     }
 }

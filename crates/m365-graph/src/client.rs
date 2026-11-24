@@ -199,7 +199,11 @@ impl<A: Anmeldung> GraphClient<A> {
         Ok(antwort.text)
     }
 
-    /// Absolute Adresse unverändert, relative gegen die Basis.
+    /// Absolute Adresse nur auf dem Graph-Host, relative gegen die Basis.
+    ///
+    /// Folgeseiten (`@odata.nextLink`) und alle anderen absoluten Adressen
+    /// kommen aus einer Antwort. Sie dürfen das Bearer-Token nicht an einen
+    /// fremden Host tragen: Schema, Host und Port müssen zur Basis passen.
     fn adresse(&self, link: &str) -> Result<reqwest::Url, GraphFehler> {
         let link = link.trim();
         let ziel = match reqwest::Url::parse(link) {
@@ -207,11 +211,20 @@ impl<A: Anmeldung> GraphClient<A> {
             Err(_) => reqwest::Url::parse(&format!("{}{}", self.basis, link))
                 .map_err(|fehler| GraphFehler::Antwort(format!("Adresse unbrauchbar: {fehler}")))?,
         };
+        let erwartet = |kurz: &str| GraphFehler::FremderHost(kurz.to_string());
         if !matches!(ziel.scheme(), "http" | "https") {
-            return Err(GraphFehler::Antwort(format!(
-                "Adresse mit unerwartetem Schema: {}",
-                ziel.scheme()
-            )));
+            return Err(erwartet(ziel.as_str()));
+        }
+        if !ziel.username().is_empty() || ziel.password().is_some() {
+            return Err(erwartet(ziel.as_str()));
+        }
+        let basis = reqwest::Url::parse(&self.basis)
+            .map_err(|fehler| GraphFehler::Antwort(format!("Basis unbrauchbar: {fehler}")))?;
+        let gleich = basis.scheme() == ziel.scheme()
+            && basis.host_str() == ziel.host_str()
+            && basis.port_or_known_default() == ziel.port_or_known_default();
+        if !gleich {
+            return Err(erwartet(ziel.as_str()));
         }
         Ok(ziel)
     }
@@ -481,6 +494,13 @@ impl<A: Anmeldung> GraphClient<A> {
                 ziel.scheme()
             )));
         }
+        // Diese eine Weiterleitung trägt **kein** Token (der Link selbst ist
+        // die Erlaubnis), aber ein Herabstufen auf http ist nie nötig.
+        let basis = reqwest::Url::parse(&self.basis)
+            .map_err(|fehler| GraphFehler::Antwort(format!("Basis unbrauchbar: {fehler}")))?;
+        if basis.scheme() == "https" && ziel.scheme() == "http" {
+            return Err(GraphFehler::FremderHost(ziel.to_string()));
+        }
         let geholt = self
             .http
             .get(ziel)
@@ -644,6 +664,50 @@ fn kuerzen(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Eine Anmeldung mit festem Token (nur für Adress-Tests).
+    struct FestesToken;
+
+    impl m365_anmeldung::Anmeldung for FestesToken {
+        async fn access_token(
+            &self,
+        ) -> Result<m365_anmeldung::Token, m365_anmeldung::AnmeldeFehler> {
+            Ok(m365_anmeldung::Token::Bereit("test-token".to_string()))
+        }
+        fn verwerfen(&self) {}
+        fn abmelden(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn client() -> GraphClient<FestesToken> {
+        GraphClient::neu("https://graph.microsoft.com/v1.0", FestesToken).unwrap()
+    }
+
+    #[test]
+    fn folgeseiten_bleiben_auf_dem_graph_host() {
+        let client = client();
+        // Eigenes Schema, eigener Host, eigener Port: erlaubt.
+        assert!(client
+            .adresse("https://graph.microsoft.com/v1.0/me/messages?$skiptoken=abc")
+            .is_ok());
+        // Relativ gegen die Basis: erlaubt.
+        assert!(client.adresse("/v1.0/me/messages").is_ok());
+
+        for fremd in [
+            "https://fremd.example/v1.0/me/messages",
+            "https://graph.microsoft.com.evil.test/v1.0/me",
+            "http://graph.microsoft.com/v1.0/me",
+            "https://graph.microsoft.com:8443/v1.0/me",
+            "https://user@graph.microsoft.com/v1.0/me",
+        ] {
+            let fehler = client.adresse(fremd).unwrap_err();
+            assert!(
+                matches!(fehler, GraphFehler::FremderHost(_)),
+                "{fremd}: {fehler:?}"
+            );
+        }
+    }
 
     #[test]
     fn fehlerfelder_werden_gelesen() {

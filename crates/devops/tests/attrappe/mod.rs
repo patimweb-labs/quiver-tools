@@ -277,7 +277,7 @@ async fn bearbeiten(State(zustand): State<Arc<Zustand>>, anfrage: Request) -> Re
     match antwort {
         Some(Antwort::Json(wert)) => (
             StatusCode::OK,
-            [("content-type", "application/json")],
+            [("content-type", "application/json; charset=utf-8")],
             wert.to_string(),
         )
             .into_response(),
@@ -330,8 +330,18 @@ fn beantworten(
         return json_wert(json!({
             "count": 2,
             "value": [
-                { "id": PROJEKT_ID, "name": PROJEKT, "state": "wellFormed", "visibility": "private" },
-                { "id": "p2", "name": "Anderes", "state": "wellFormed", "visibility": "public" }
+                {
+                    "id": PROJEKT_ID, "name": PROJEKT, "state": "wellFormed",
+                    "visibility": "private", "revision": 12,
+                    "url": format!("https://dev.azure.com/x/_apis/projects/{PROJEKT_ID}"),
+                    "_links": { "self": { "href": format!("https://dev.azure.com/x/_apis/projects/{PROJEKT_ID}") } }
+                },
+                {
+                    "id": "p2", "name": "Anderes", "state": "wellFormed",
+                    "visibility": "public",
+                    "url": "https://dev.azure.com/x/_apis/projects/p2",
+                    "_links": { "self": { "href": "https://dev.azure.com/x/_apis/projects/p2" } }
+                }
             ]
         }));
     }
@@ -593,8 +603,13 @@ fn beantworten(
     if pfad.ends_with("/_apis/git/repositories") {
         return json_wert(json!({
             "count": 1,
-            "value": [ { "id": REPO_ID, "name": REPO,
-                         "defaultBranch": "refs/heads/main", "size": 4096 } ]
+            "value": [ {
+                "id": REPO_ID, "name": REPO,
+                "defaultBranch": "refs/heads/main", "size": 4096,
+                "url": format!("https://dev.azure.com/x/_apis/git/repositories/{REPO_ID}"),
+                "remoteUrl": format!("https://dev.azure.com/x/{PROJEKT}/_git/{REPO}"),
+                "_links": { "self": { "href": format!("https://dev.azure.com/x/_apis/git/repositories/{REPO_ID}") } }
+            } ]
         }));
     }
 
@@ -603,10 +618,15 @@ fn beantworten(
 
 /// Ein Arbeitsitem der Attrappe.
 fn item(id: u64) -> Value {
+    // Form nach der Azure-DevOps-REST-Spezifikation 7.1: `url`, `_links.self`,
+    // `rev`, `fields` und `relations`. Der Client liest nur einen Teil davon;
+    // die Attrappe antwortet trotzdem wie der Dienst (Lehre aus dem 404).
     json!({
         "id": id,
+        "url": format!("https://dev.azure.com/x/_apis/wit/workItems/{id}"),
         "rev": 3,
         "fields": {
+            "System.TeamProject": PROJEKT,
             "System.WorkItemType": "User Story",
             "System.State": "Active",
             "System.Title": "Login kaputt",
@@ -618,7 +638,10 @@ fn item(id: u64) -> Value {
             "System.Description": "<div>Der Anmelden-Knopf tut nichts.</div>",
             "Microsoft.VSTS.Common.AcceptanceCriteria": "<ul><li>Anmelden klappt</li></ul>"
         },
-        "_links": { "html": { "href": format!("https://dev.azure.com/x/_workitems/edit/{id}") } },
+        "_links": {
+            "self": { "href": format!("https://dev.azure.com/x/_apis/wit/workItems/{id}") },
+            "html": { "href": format!("https://dev.azure.com/x/_workitems/edit/{id}") }
+        },
         "relations": [
             { "rel": "System.LinkTypes.Hierarchy-Reverse",
               "url": "https://dev.azure.com/x/_apis/wit/workItems/100" }

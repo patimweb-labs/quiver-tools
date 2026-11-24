@@ -31,6 +31,10 @@ pub const TOKEN: &str = "api_token";
 pub const NUR: &str = "nur";
 /// Feldname des Schalters „Schreiben erlauben“ (Standard **aus**).
 pub const SCHREIBEN: &str = "schreiben";
+/// Feldname des Schalters „Unverschlüsselt erlauben“ (Standard **aus**).
+pub const UNVERSCHLUESSELT: &str = quiver_tools_kern::net::FELD_UNVERSCHLUESSELT;
+/// Feldname des eigenen CA-Zertifikats (Pfad einer Datei).
+pub const CA_ZERTIFIKAT: &str = quiver_tools_kern::net::FELD_CA_ZERTIFIKAT;
 
 /// Eine Site mit allen Werten. `Debug` zeigt weder Token noch E-Mail.
 #[derive(Clone, PartialEq, Eq)]
@@ -47,6 +51,8 @@ pub struct Site {
     pub nur: Vec<String>,
     /// Erlaubt die verändernden Werkzeuge. Standard **aus**.
     pub schreiben: bool,
+    /// Eigenes CA-Zertifikat (Pfad einer PEM-Datei), falls eingetragen.
+    pub ca_zertifikat: Option<String>,
 }
 
 impl std::fmt::Debug for Site {
@@ -58,6 +64,7 @@ impl std::fmt::Debug for Site {
             .field("token", &(!self.token.is_empty()))
             .field("nur", &self.nur)
             .field("schreiben", &self.schreiben)
+            .field("ca_zertifikat", &self.ca_zertifikat.is_some())
             .finish()
     }
 }
@@ -85,7 +92,7 @@ impl Site {
         let token = feld(TOKEN)?;
 
         let url = url.trim().trim_end_matches('/').to_string();
-        if !adresse_erlaubt(&url) {
+        if !adresse_erlaubt(&url, schalter_aus(zugang.wert(UNVERSCHLUESSELT))) {
             return Err(SiteFehler::Url {
                 name: name.clone(),
                 url,
@@ -99,6 +106,7 @@ impl Site {
             token,
             nur: bereiche_aus(zugang.wert(NUR)),
             schreiben: schalter_aus(zugang.wert(SCHREIBEN)),
+            ca_zertifikat: zugang.wert(CA_ZERTIFIKAT).map(str::to_string),
         })
     }
 
@@ -135,7 +143,11 @@ impl Site {
                 self.nur.join(", ")
             },
             if self.schreiben { "an" } else { "aus" }
-        )
+        ) + if self.url.starts_with("http://") {
+            " · ohne Verschlüsselung (http)"
+        } else {
+            ""
+        }
     }
 }
 
@@ -145,33 +157,16 @@ impl Site {
 /// (`127.0.0.1`, `localhost`, `[::1]`, auch mit Port). Geprüft wird über
 /// [`url::Url`] – nie über eine eigene Zerlegung: eine Adresse mit
 /// Benutzerteil, Abfrage oder Fragment ist kein Site-Ziel (Korrekturen 4).
-pub fn adresse_erlaubt(url: &str) -> bool {
+pub fn adresse_erlaubt(url: &str, unverschluesselt_erlauben: bool) -> bool {
+    if quiver_tools_kern::net::adresse_erlaubt(url, unverschluesselt_erlauben).is_err() {
+        return false;
+    }
     let Ok(url) = Url::parse(url) else {
         return false;
     };
-    if !url.username().is_empty() || url.password().is_some() {
-        return false;
-    }
-    if url.query().is_some() || url.fragment().is_some() {
-        return false;
-    }
     // Die Basis ist die Site selbst; ein Pfad würde `.../wiki/wiki/api/v2`
     // ergeben (`/wiki` hängt das Tool selbst an).
-    if url.path() != "/" {
-        return false;
-    }
-    match url.scheme() {
-        "https" => true,
-        "http" => {
-            let host = url.host_str().unwrap_or_default();
-            let host = host
-                .strip_prefix('[')
-                .and_then(|host| host.strip_suffix(']'))
-                .unwrap_or(host);
-            matches!(host, "127.0.0.1" | "localhost" | "::1")
-        }
-        _ => false,
-    }
+    url.path() == "/"
 }
 
 /// Die Bereichsschlüssel aus dem Feld `nur` (kommagetrennt, ohne Leerraum).
@@ -434,11 +429,20 @@ mod tests {
             "http://[::1]:8080",
             "http://[::1]",
         ] {
-            assert!(adresse_erlaubt(erlaubt), "{erlaubt} sollte erlaubt sein");
+            assert!(
+                adresse_erlaubt(erlaubt, false),
+                "{erlaubt} sollte erlaubt sein"
+            );
         }
+        // Mit eingeschaltetem Feld ist http erlaubt – aber nur dort.
+        assert!(adresse_erlaubt("http://firma.atlassian.net", true));
+        // 127.0.0.0/8 ist die Schleife, nicht nur 127.0.0.1.
+        assert!(adresse_erlaubt("http://127.0.0.2", false));
+        // Ein Benutzerteil macht auch mit Schalter kein Site-Ziel.
+        assert!(!adresse_erlaubt("http://127.0.0.1@evil.test", true));
+
         for verboten in [
             "http://firma.atlassian.net",
-            "http://127.0.0.2",
             "http://localhost.evil.test",
             "http://evil.test/127.0.0.1",
             "ftp://x",
@@ -456,7 +460,7 @@ mod tests {
             "https://firma.atlassian.net/wiki",
         ] {
             assert!(
-                !adresse_erlaubt(verboten),
+                !adresse_erlaubt(verboten, false),
                 "{verboten} sollte verboten sein"
             );
         }

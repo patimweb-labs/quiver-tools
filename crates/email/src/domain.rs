@@ -136,26 +136,11 @@ impl Konto {
     /// (Proton-Bridge, selbstsigniert) – sonst bleibt die Prüfung an und es
     /// gibt eine Warnung.
     pub fn prueft_zertifikat(gewuenscht: bool, host: &str) -> bool {
-        if gewuenscht {
-            return true;
-        }
-        if ist_lokaler_host(host) {
-            return false;
-        }
-        // Einmal je Prozess: `tracing` hat im Programm keinen Abonnenten
-        // (docs/offen.md), deshalb geht der Hinweis zusätzlich auf stderr –
-        // dort landet das Log, das quiver vom Werkzeug sieht.
-        static EINMAL: std::sync::Once = std::sync::Once::new();
-        EINMAL.call_once(|| {
-            tracing::warn!(
-                host,
-                "Zertifikatsprüfung abgeschaltet, aber der Host ist nicht lokal – Prüfung bleibt an"
-            );
-            eprintln!(
-                "Hinweis: zertifikat_pruefen ist aus, gilt aber nur für 127.0.0.1 und localhost – {host} wird weiter geprüft."
-            );
-        });
-        true
+        // Eine Regel für alle Tools (kern::net): Abschalten gilt nur auf dem
+        // Loopback; sonst bleibt die Prüfung an, und die Warnung nennt das Feld,
+        // das weiterhilft.
+        let (regel, _warnung) = quiver_tools_kern::net::zertifikat(gewuenscht, host, None);
+        !regel.ungeprueft()
     }
 }
 

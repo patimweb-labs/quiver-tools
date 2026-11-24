@@ -243,6 +243,8 @@ fn kindprozess_reicht_die_werkzeuge_durch_und_meldet_list_changed() {
         ("ZEP_PASSWORT", PASSWORT),
         ("ZEP_TRESOR", "speicher"),
         ("ZEP_ZUSTAND", &zustand),
+        // Die Tests prüfen das Durchreichen, nicht den Schalter.
+        ("ZEP_SCHREIBEN", "an"),
     ]);
 
     // 1. Die Werkzeuge sind die von ZEP – plus zep_profile.
@@ -413,13 +415,20 @@ fn eintrag_liefert_den_bibliothekseintrag_als_json() {
         eintrag["laufzeit"]["umgebung"]["ZEP_PASSWORT"],
         json!("${passwort}")
     );
-    assert_eq!(eintrag["felder"].as_array().unwrap().len(), 3);
+    assert_eq!(eintrag["felder"].as_array().unwrap().len(), 5);
     assert_eq!(eintrag["felder"][0]["name"], json!("url"));
     assert_eq!(eintrag["felder"][0]["quelle"], json!("client"));
     assert_eq!(eintrag["felder"][1]["name"], json!("benutzer"));
     assert_eq!(eintrag["felder"][1]["quelle"], json!("client"));
     assert_eq!(eintrag["felder"][2]["name"], json!("passwort"));
     assert_eq!(eintrag["felder"][2]["quelle"], json!("geheim"));
+    assert_eq!(
+        eintrag["felder"][3]["name"],
+        json!("unverschluesselt_erlauben")
+    );
+    assert_eq!(eintrag["felder"][3]["standard"], json!("aus"));
+    assert_eq!(eintrag["felder"][4]["name"], json!("schreiben"));
+    assert_eq!(eintrag["felder"][4]["standard"], json!("aus"));
     assert!(eintrag.get("einrichtung").is_none(), "{eintrag}");
 }
 
@@ -514,4 +523,48 @@ fn testen_und_status_gegen_die_attrappe() {
     assert!(bericht.contains("Client-Registrierung"), "{bericht}");
     assert!(!bericht.contains(PASSWORT), "{bericht}");
     assert!(!bericht.contains("rt-"), "{bericht}");
+}
+
+#[test]
+fn ohne_schreibschalter_geht_keine_aenderung_hinaus() {
+    let laufzeit = tokio::runtime::Runtime::new().unwrap();
+    let mock = laufzeit.block_on(Attrappe::starte());
+    let ordner = tempfile::tempdir().unwrap();
+    let zustand = ordner.path().display().to_string();
+
+    let mut kind = Kind::starte(&[
+        ("ZEP_URL", mock.mcp_adresse().as_str()),
+        ("ZEP_BENUTZER", attrappe::BENUTZER),
+        ("ZEP_PASSWORT", PASSWORT),
+        ("ZEP_TRESOR", "speicher"),
+        ("ZEP_ZUSTAND", &zustand),
+    ]);
+    let namen = kind.begruessen();
+    assert!(namen.contains(&"zep_projekte".to_string()), "{namen:?}");
+
+    // Lesend geht weiter – die feste Liste, nicht die Kennzeichnung der Gegenseite.
+    let lesend = kind.aufrufen(3, "zep_projekte");
+    assert_eq!(text(&lesend), "Projekte der Attrappe: Neoimpulse, Quiver.");
+
+    // Schreibend nicht: der Hinweis nennt das Feld im quiver-Fenster.
+    let gesperrt = kind.aufrufen(4, "zep_umschalten");
+    let antwort = text(&gesperrt);
+    assert!(antwort.contains("Schreiben erlauben"), "{antwort}");
+    assert!(antwort.contains("quiver-Fenster"), "{antwort}");
+    assert!(antwort.contains("zep_umschalten"), "{antwort}");
+    // Keine Änderung an ZEP: die Liste bleibt, wie sie war.
+    kind.sende(json!({
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "tools/list",
+        "params": {}
+    }));
+    let liste = kind.antwort(5);
+    let namen: Vec<String> = liste["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(!namen.contains(&"zep_kunden".to_string()), "{namen:?}");
 }

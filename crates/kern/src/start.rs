@@ -164,6 +164,10 @@ where
     F: FnOnce(Zugang) -> S,
 {
     let zugang = Zugang::neu(&werkzeug);
+    if let Some(hinweis) = crate::schutz::start_hinweis_fuer(&zugang) {
+        eprintln!("{hinweis}");
+        tracing::info!("{hinweis}");
+    }
     tracing::info!(
         werkzeug = werkzeug.name(),
         zugang = ?zugang.fehlende().iter().map(|feld| feld.name).collect::<Vec<_>>(),

@@ -27,6 +27,10 @@ pub const TOKEN: &str = "api_token";
 pub const PROJEKT: &str = "projekt";
 /// Feldname der erlaubten Projektschlüssel, kommagetrennt (optional).
 pub const NUR: &str = "nur";
+/// Feldname des Schalters „Unverschlüsselt erlauben“ (Standard **aus**).
+pub const UNVERSCHLUESSELT: &str = quiver_tools_kern::net::FELD_UNVERSCHLUESSELT;
+/// Feldname des eigenen CA-Zertifikats (Pfad einer Datei).
+pub const CA_ZERTIFIKAT: &str = quiver_tools_kern::net::FELD_CA_ZERTIFIKAT;
 /// Feldname des Schalters „Schreiben erlauben“ (Standard **aus**).
 pub const SCHREIBEN: &str = "schreiben";
 
@@ -49,6 +53,8 @@ pub struct Zugang {
     pub nur: Vec<String>,
     /// Erlaubt die verändernden Werkzeuge. Standard **aus**.
     pub schreiben: bool,
+    /// Eigenes CA-Zertifikat (Pfad einer PEM-Datei), falls eingetragen.
+    pub ca_zertifikat: Option<String>,
 }
 
 impl std::fmt::Debug for Zugang {
@@ -82,7 +88,7 @@ impl Zugang {
 
         // Ohne eigene Adresse gilt die öffentliche Cloud (Feld `standard`).
         let roh = zugang.wert(BASIS_URL).unwrap_or(STANDARD_BASIS_URL);
-        let basis_url = adresse_pruefen(&name, roh)?;
+        let basis_url = adresse_pruefen(&name, roh, schalter_aus(zugang.wert(UNVERSCHLUESSELT)))?;
 
         Ok(Zugang {
             name,
@@ -95,6 +101,7 @@ impl Zugang {
                 .map(str::to_string),
             nur: nur_lesen(zugang.wert(NUR)),
             schreiben: schalter_aus(zugang.wert(SCHREIBEN)),
+            ca_zertifikat: zugang.wert(CA_ZERTIFIKAT).map(str::to_string),
         })
     }
 
@@ -136,6 +143,9 @@ impl Zugang {
         if !self.nur.is_empty() {
             text.push_str(&format!(" · Nur: {}", self.nur.join(", ")));
         }
+        if self.basis_url.starts_with("http://") {
+            text.push_str(" · ohne Verschlüsselung (http)");
+        }
         text
     }
 }
@@ -148,7 +158,11 @@ impl Zugang {
 /// kein `https://` ist. Nur für die Attrappe ist `http://` auf Loopback erlaubt.
 ///
 /// Liefert die Adresse ohne Schrägstrich am Ende zurück.
-pub fn adresse_pruefen(name: &str, roh: &str) -> Result<String, ZugangsFehler> {
+pub fn adresse_pruefen(
+    name: &str,
+    roh: &str,
+    unverschluesselt: bool,
+) -> Result<String, ZugangsFehler> {
     let roh = roh.trim();
     let fehler = || ZugangsFehler::Url {
         name: name.to_string(),
@@ -166,14 +180,9 @@ pub fn adresse_pruefen(name: &str, roh: &str) -> Result<String, ZugangsFehler> {
         return Err(fehler());
     }
 
-    let host = url.host_str().unwrap_or_default();
-    let gueltig = match url.scheme() {
-        "https" => !host.is_empty(),
-        // Nur die Attrappe: Loopback über http.
-        "http" => ist_loopback(host),
-        _ => false,
-    };
-    if !gueltig {
+    // Eine Regel für alle Tools (kern::net): https immer, http nur auf dem
+    // Loopback oder mit eingeschaltetem Feld „Unverschlüsselt erlauben“.
+    if quiver_tools_kern::net::adresse_erlaubt(roh, unverschluesselt).is_err() {
         return Err(fehler());
     }
     Ok(roh.trim_end_matches('/').to_string())
@@ -467,16 +476,16 @@ mod tests {
     #[test]
     fn nur_https_und_loopback_sind_erlaubt() {
         assert_eq!(
-            adresse_pruefen("k", "https://api.zephyrscale.smartbear.com/v2/").unwrap(),
+            adresse_pruefen("k", "https://api.zephyrscale.smartbear.com/v2/", false).unwrap(),
             "https://api.zephyrscale.smartbear.com/v2"
         );
         // Die Attrappe läuft auf Loopback.
         assert_eq!(
-            adresse_pruefen("k", "http://127.0.0.1:8080/v2").unwrap(),
+            adresse_pruefen("k", "http://127.0.0.1:8080/v2", false).unwrap(),
             "http://127.0.0.1:8080/v2"
         );
-        assert!(adresse_pruefen("k", "http://localhost:8080").is_ok());
-        assert!(adresse_pruefen("k", "http://[::1]:8080/v2").is_ok());
+        assert!(adresse_pruefen("k", "http://localhost:8080", false).is_ok());
+        assert!(adresse_pruefen("k", "http://[::1]:8080/v2", false).is_ok());
 
         for falsch in [
             "http://api.zephyrscale.smartbear.com/v2",
@@ -493,7 +502,7 @@ mod tests {
             "http://evil.test\\@127.0.0.1/",
         ] {
             assert!(
-                adresse_pruefen("k", falsch).is_err(),
+                adresse_pruefen("k", falsch, false).is_err(),
                 "{falsch} sollte abgelehnt werden"
             );
         }

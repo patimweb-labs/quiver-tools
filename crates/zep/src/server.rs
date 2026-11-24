@@ -149,6 +149,19 @@ impl ZepServer {
             return self.profil();
         }
 
+        // Schreibschutz nach der **festen** Liste im Programm, nicht nach der
+        // Kennzeichnung der Gegenseite (Härtung Paket 4).
+        let lesend = crate::werkzeug::ist_lesend(name);
+        let schreiben =
+            quiver_tools_kern::schalter_aus(self.geteilt.zugang.wert(crate::werkzeug::SCHREIBEN));
+        if !lesend && !schreiben && self.geteilt.zugang.profil().is_ok() {
+            return Ok(antwort(quiver_tools_kern::schutz::hinweis_gesperrt(
+                name,
+                self.geteilt.zugang.titel(),
+                quiver_tools_kern::TITEL_SCHREIBEN,
+            )));
+        }
+
         // Fehlt der Zugang, sagt das der Kern – ein Text, kein Fehler.
         if self.geteilt.anmeldung.is_none() {
             return Ok(antwort(quiver_tools_kern::hinweis_zugang(
@@ -167,7 +180,7 @@ impl ZepServer {
 
         let params = CallToolRequestParams::new(name.to_string())
             .with_arguments(argumente.unwrap_or_default());
-        match vermittler.aufrufen(params).await {
+        match vermittler.aufrufen(params, lesend).await {
             Ok(ergebnis) => Ok(ergebnis),
             Err(fehler) if fehler.braucht_anmeldung() => Ok(antwort(HINWEIS_ANMELDUNG)),
             Err(fehler) => Err(McpError::internal_error(fehler.to_string(), None)),

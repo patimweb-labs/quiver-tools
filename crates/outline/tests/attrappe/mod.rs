@@ -350,6 +350,28 @@ pub fn zugang(adresse: &str) -> Zugang {
     Zugang::mit_umgebung(&Outline, |name| match name {
         "OUTLINE_URL" => Some(adresse.to_string()),
         "OUTLINE_API_KEY" => Some(SCHLUESSEL.to_string()),
+        // Die Tests prüfen die Werkzeuge, nicht den Schalter: Schreiben ist an.
+        "OUTLINE_SCHREIBEN" => Some("an".to_string()),
+        _ => None,
+    })
+}
+
+/// Ein Zugang ohne Schreibschalter – so wie nach dem Update.
+pub fn zugang_ohne_schreiben(adresse: &str) -> Zugang {
+    Zugang::mit_umgebung(&Outline, |name| match name {
+        "OUTLINE_URL" => Some(adresse.to_string()),
+        "OUTLINE_API_KEY" => Some(SCHLUESSEL.to_string()),
+        _ => None,
+    })
+}
+
+/// Ein Zugang mit Arbeitsordner (für `outline_export`).
+pub fn zugang_mit_ordner(adresse: &str, ordner: &str) -> Zugang {
+    Zugang::mit_umgebung(&Outline, |name| match name {
+        "OUTLINE_URL" => Some(adresse.to_string()),
+        "OUTLINE_API_KEY" => Some(SCHLUESSEL.to_string()),
+        "OUTLINE_SCHREIBEN" => Some("an".to_string()),
+        "OUTLINE_ORDNER" => Some(ordner.to_string()),
         _ => None,
     })
 }

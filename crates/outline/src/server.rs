@@ -10,10 +10,10 @@
 
 use std::any::Any;
 use std::collections::BTreeSet;
-use std::path::Path;
 
 use quiver_tools_kern::mcp::{profile_antwort, profile_tool};
-use quiver_tools_kern::{antwort, zugang, OhneProfil, Profil, Zugang};
+use quiver_tools_kern::schutz::{schreibschutz, FELD_SCHREIBEN, TITEL_SCHREIBEN};
+use quiver_tools_kern::{antwort, zugang, Ablage, OhneProfil, Profil, Zugang};
 use rmcp::handler::server::tool::schema_for_type;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, JsonObject, ListToolsResult,
@@ -73,7 +73,7 @@ impl OutlineServer {
             lese_werkzeug::<LeseParam>(
                 "outline_read",
                 "Seite lesen",
-                "Liest den Markdown-Rumpf einer Seite über ihre id (aus outline_search, outline_list oder outline_structure). Optional die Kindseiten auflisten oder die Seite als Markdown-Datei ablegen.",
+                "Liest den Markdown-Rumpf einer Seite über ihre id (aus outline_search, outline_list oder outline_structure). Optional die Kindseiten auflisten. Schreibt keine Datei – dafür gibt es outline_export.",
             ),
             lese_werkzeug::<KommentareParam>(
                 "outline_comments",
@@ -113,14 +113,33 @@ impl OutlineServer {
             schreib_werkzeug::<ExportParam>(
                 "outline_export",
                 "Seiten exportieren",
-                "Schreibt eine Seite (optional mit Kindern) oder eine ganze Sammlung als Markdown-Dateien in einen Ordner. Holt Wiki-Inhalte in ein Repository, ohne jede Seite durch das Modell zu schicken.",
+                "Schreibt eine Seite (optional mit Kindern) oder eine ganze Sammlung als Markdown-Dateien in den Arbeitsordner aus dem quiver-Fenster. Holt Wiki-Inhalte in ein Repository, ohne jede Seite durch das Modell zu schicken. Vorhandene Dateien werden nicht überschrieben.",
             ),
             profile_tool(&self.zugang),
         ]
     }
 
+    /// Ist das Schreiben für diesen Zugang freigegeben? (Standard: nein.)
+    pub fn schreiben_erlaubt(&self) -> bool {
+        quiver_tools_kern::schalter_aus(self.zugang.wert(FELD_SCHREIBEN))
+    }
+
     /// Ein Werkzeug aufrufen. Auch der Weg, den die Tests nehmen.
+    ///
+    /// Die Schreibsperre steht **vor** dem Verteiler: ein veränderndes Werkzeug
+    /// antwortet ohne Schalter mit einem Hinweis, und es geht keine Anfrage
+    /// hinaus (Härtung Paket 4).
     pub async fn aufrufen(&self, name: &str, argumente: Option<JsonObject>) -> Ergebnis {
+        if let Err(antwort) = schreibschutz(
+            &self.werkzeuge(),
+            name,
+            self.zugang.profil().is_ok(),
+            self.schreiben_erlaubt(),
+            self.zugang.titel(),
+            TITEL_SCHREIBEN,
+        ) {
+            return Ok(antwort);
+        }
         match name {
             "outline_collections" => self.sammlungen(argumente).await,
             "outline_structure" => self.struktur(argumente).await,
@@ -343,14 +362,6 @@ impl OutlineServer {
             &seite,
             p.max_zeichen.unwrap_or(8000) as usize,
         )];
-
-        if let Some(ordner) = p.save_dir.as_deref() {
-            let dateiname = format!("{}.md", datei::slug(seite.titel()));
-            let markdown = format!("# {}\n\n{}\n", seite.titel(), seite.text);
-            let pfad = datei::schreiben(Path::new(ordner), &dateiname, &markdown)
-                .map_err(|fehler| McpError::internal_error(fehler.to_string(), None))?;
-            teile.push(format!("Vollständig gespeichert: {}", pfad.display()));
-        }
 
         if p.include_children.unwrap_or(false) {
             let kinder = client
@@ -707,11 +718,6 @@ impl OutlineServer {
 
     async fn exportieren(&self, roh: Option<JsonObject>) -> Ergebnis {
         let p: ExportParam = argumente(roh)?;
-        if p.target_dir.trim().is_empty() {
-            return Err(parameter_fehler(
-                "outline_export braucht einen Zielordner (`target_dir`).",
-            ));
-        }
         match (&p.document_id, &p.collection_id) {
             (None, None) => {
                 return Err(parameter_fehler(
@@ -730,6 +736,10 @@ impl OutlineServer {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),
         };
+        let ablage = ablage_aus(&profil)?;
+        // Kein Abschneiden eines führenden `/`: ein absoluter Pfad muss als
+        // Ausbruch erkannt werden, nicht still zu einem Unterordner werden.
+        let unterordner = p.target_dir.as_deref().unwrap_or("").trim().to_string();
         let client = client(&profil)?;
 
         // Welche Seiten sollen in Dateien landen?
@@ -772,7 +782,6 @@ impl OutlineServer {
 
         let grenze = p.limit.unwrap_or(50) as usize;
         let anzahl = ziele.len();
-        let ordner = Path::new(p.target_dir.trim());
         let mut geschrieben: Vec<String> = Vec::new();
         let mut gescheitert: Vec<(String, String)> = Vec::new();
         let mut benutzt: BTreeSet<String> = BTreeSet::new();
@@ -795,8 +804,17 @@ impl OutlineServer {
                 stamm = format!("{stamm}-{}", kuerzen_roh(id, 8));
                 benutzt.insert(stamm.clone());
             }
-            match datei::schreiben(ordner, &format!("{stamm}.md"), &markdown) {
+            let relativ = if unterordner.is_empty() {
+                format!("{stamm}.md")
+            } else {
+                format!("{unterordner}/{stamm}.md")
+            };
+            match ablage.schreiben_neu(&relativ, &markdown) {
                 Ok(pfad) => geschrieben.push(pfad.display().to_string()),
+                Err(quiver_tools_kern::ablage::AblageFehler::Existiert(_)) => gescheitert.push((
+                    id.clone(),
+                    "gibt es schon – vorhandene Dateien werden nicht überschrieben".to_string(),
+                )),
                 Err(fehler) => gescheitert.push((id.clone(), fehler.to_string())),
             }
         }
@@ -804,7 +822,7 @@ impl OutlineServer {
         let mut zeilen = vec![format!(
             "{} Dokument(e) nach {} exportiert:",
             geschrieben.len(),
-            ordner.display()
+            ablage.wurzel().display()
         )];
         zeilen.extend(geschrieben.iter().map(|pfad| format!("- {pfad}")));
         if anzahl > grenze {
@@ -881,6 +899,24 @@ fn mcp_fehler(fehler: OutlineFehler) -> McpError {
 
 fn parameter_fehler(text: impl Into<String>) -> McpError {
     McpError::invalid_params(text.into(), None)
+}
+
+/// Der Arbeitsordner aus dem Zugang. Ohne ihn wird nicht geschrieben; der
+/// Fehler nennt das Feld im quiver-Fenster.
+fn ablage_aus(profil: &Profil) -> Result<Ablage, McpError> {
+    let ordner = profil
+        .werte
+        .get(crate::werkzeug::ORDNER)
+        .map(String::as_str)
+        .unwrap_or("")
+        .trim();
+    if ordner.is_empty() {
+        return Err(parameter_fehler(
+            "Für outline_export fehlt der Arbeitsordner – bitte im quiver-Fenster unter \
+             Tools → Outline-Wiki das Feld „Arbeitsordner“ auswählen.",
+        ));
+    }
+    Ablage::neu(ordner).map_err(|fehler| parameter_fehler(fehler.to_string()))
 }
 
 fn client(profil: &Profil) -> Result<Client, McpError> {
@@ -1021,9 +1057,6 @@ pub struct LeseParam {
     /// Auch die direkten Kindseiten auflisten. Standard false.
     #[serde(default)]
     pub include_children: Option<bool>,
-    /// Die Seite zusätzlich als Markdown-Datei in diesem Ordner ablegen.
-    #[serde(default)]
-    pub save_dir: Option<String>,
 }
 
 /// Parameter von `outline_comments`.
@@ -1140,8 +1173,10 @@ pub struct KommentarParam {
 /// Parameter von `outline_export`.
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct ExportParam {
-    /// Ordner für die .md-Dateien. Absolute Pfade sind am sichersten.
-    pub target_dir: String,
+    /// Unterordner im Arbeitsordner aus dem quiver-Fenster (Feld „Arbeitsordner“).
+    /// Leer heißt: direkt in den Arbeitsordner. Absolute Pfade und `..` sind nicht erlaubt.
+    #[serde(default)]
+    pub target_dir: Option<String>,
     /// Eine Seite exportieren. Schließt collection_id aus.
     #[serde(default)]
     pub document_id: Option<String>,

@@ -28,6 +28,10 @@ pub const PASSWORT: &str = "passwort";
 pub const ZERTIFIKAT_PRUEFEN: &str = "zertifikat_pruefen";
 /// Feldname des Schalters „Schreiben erlauben“ (Standard **aus**, Aufgabe 08).
 pub const SCHREIBEN: &str = "schreiben";
+/// Feldname des Schalters „Unverschlüsselt erlauben“ (Standard **aus**).
+pub const UNVERSCHLUESSELT: &str = quiver_tools_kern::net::FELD_UNVERSCHLUESSELT;
+/// Feldname des eigenen CA-Zertifikats (Pfad einer Datei).
+pub const CA_ZERTIFIKAT: &str = quiver_tools_kern::net::FELD_CA_ZERTIFIKAT;
 
 /// Anmeldesprache, wenn keine eingetragen ist.
 pub const STANDARD_SPRACHE: &str = "DE";
@@ -48,6 +52,8 @@ pub struct System {
     pub zertifikat_pruefen: bool,
     /// Erlaubt die schreibenden Werkzeuge. Standard **aus**.
     pub schreiben: bool,
+    /// Eigenes CA-Zertifikat (Pfad einer PEM-Datei), falls eingetragen.
+    pub ca_zertifikat: Option<String>,
 }
 
 impl std::fmt::Debug for System {
@@ -61,6 +67,7 @@ impl std::fmt::Debug for System {
             .field("passwort", &(!self.passwort.is_empty()))
             .field("zertifikat_pruefen", &self.zertifikat_pruefen)
             .field("schreiben", &self.schreiben)
+            .field("ca_zertifikat", &self.ca_zertifikat.is_some())
             .finish()
     }
 }
@@ -89,7 +96,14 @@ impl System {
         let mandant = feld(MANDANT)?;
 
         let url = url.trim_end_matches('/').to_string();
-        if !(url.starts_with("http://") || url.starts_with("https://")) {
+        // Eine Regel für alle Tools (kern::net): https immer, http nur auf dem
+        // Loopback oder mit eingeschaltetem Feld „Unverschlüsselt erlauben“.
+        if quiver_tools_kern::net::adresse_erlaubt(
+            &url,
+            quiver_tools_kern::schalter_aus(zugang.wert(UNVERSCHLUESSELT)),
+        )
+        .is_err()
+        {
             return Err(SystemFehler::Url {
                 name: name.clone(),
                 url,
@@ -102,6 +116,16 @@ impl System {
             .filter(|sprache| !sprache.is_empty())
             .unwrap_or_else(|| STANDARD_SPRACHE.to_string());
 
+        // Eine Regel für alle Tools: abschalten nur auf dem Loopback, sonst
+        // bleibt die Prüfung an (oder es gilt das eingetragene CA-Zertifikat).
+        let zertifikat_pruefen = {
+            let gewuenscht = schalter(zugang.wert(ZERTIFIKAT_PRUEFEN));
+            let host = host_aus(&url).to_string();
+            let (regel, _warnung) =
+                quiver_tools_kern::net::zertifikat(gewuenscht, &host, zugang.wert(CA_ZERTIFIKAT));
+            !regel.ungeprueft()
+        };
+
         Ok(System {
             name,
             benutzer,
@@ -109,8 +133,9 @@ impl System {
             mandant,
             sprache,
             passwort,
-            zertifikat_pruefen: schalter(zugang.wert(ZERTIFIKAT_PRUEFEN)),
+            zertifikat_pruefen,
             schreiben: schalter_aus(zugang.wert(SCHREIBEN)),
+            ca_zertifikat: zugang.wert(CA_ZERTIFIKAT).map(str::to_string),
         })
     }
 
@@ -129,7 +154,11 @@ impl System {
             self.mandant,
             self.sprache,
             if self.schreiben { "an" } else { "aus" }
-        )
+        ) + if self.url.starts_with("http://") {
+            " · ohne Verschlüsselung (http)"
+        } else {
+            ""
+        }
     }
 
     /// `benutzer@host` – der Name, mit dem sich das Werkzeug anmeldet.
@@ -151,6 +180,15 @@ impl System {
     pub fn zertifikat_ungeprueft(&self) -> bool {
         !self.zertifikat_pruefen
     }
+}
+
+/// Der Host einer Adresse, wie er im Zertifikat steht.
+fn host_aus(url: &str) -> &str {
+    url.trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .split(['/', ':'])
+        .next()
+        .unwrap_or(url)
 }
 
 /// Ein Schalter aus dem quiver-Fenster: fehlt er, gilt „an“.
@@ -383,10 +421,42 @@ mod tests {
             System::aus_zugang(&zugang("dev", &alle)).unwrap()
         };
 
+        // Abschalten gilt nur für den Loopback: bei einem echten Host bleibt
+        // die Prüfung an (Härtung Paket 4).
         let system = mit(&[("sprache", "en"), ("zertifikat_pruefen", "aus")]);
         assert_eq!(system.sprache, "EN");
-        assert!(!system.zertifikat_pruefen);
-        assert!(system.zertifikat_ungeprueft());
+        assert!(system.zertifikat_pruefen);
+        assert!(!system.zertifikat_ungeprueft());
+
+        // Auf dem Loopback ist es abschaltbar (Attrappe im Test).
+        let lokal = System::aus_zugang(&zugang(
+            "dev",
+            &[
+                ("benutzer", "DEVELOPER"),
+                ("url", "https://127.0.0.1:44300"),
+                ("mandant", "100"),
+                ("passwort", "x"),
+                ("zertifikat_pruefen", "aus"),
+            ],
+        ))
+        .unwrap();
+        assert!(lokal.zertifikat_ungeprueft());
+
+        // Mit eigenem CA-Zertifikat bleibt die Prüfung an, nur die Wurzel ist anders.
+        let mit_ca = System::aus_zugang(&zugang(
+            "dev",
+            &[
+                ("benutzer", "DEVELOPER"),
+                ("url", "https://sap.example.test"),
+                ("mandant", "100"),
+                ("passwort", "x"),
+                ("zertifikat_pruefen", "aus"),
+                ("ca_zertifikat", "/tmp/ca.pem"),
+            ],
+        ))
+        .unwrap();
+        assert!(mit_ca.zertifikat_pruefen);
+        assert_eq!(mit_ca.ca_zertifikat.as_deref(), Some("/tmp/ca.pem"));
         // Der Schrägstrich am Ende fliegt raus.
         assert_eq!(system.url, "https://sap.example.test");
 

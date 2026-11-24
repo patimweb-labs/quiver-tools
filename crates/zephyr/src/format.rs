@@ -727,6 +727,7 @@ mod tests {
             projekt: Some("QA".into()),
             nur: vec!["QA".into()],
             schreiben: false,
+            ca_zertifikat: None,
         }
     }
 

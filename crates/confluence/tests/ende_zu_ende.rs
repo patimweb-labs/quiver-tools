@@ -406,17 +406,28 @@ fn eintrag_enthaelt_mehrfach_mit_fuenf_feldern_und_token_link() {
         "{eintrag}"
     );
 
-    // … sondern eine Liste von Sites mit fünf Feldern.
+    // … sondern eine Liste von Sites mit sieben Feldern.
     let mehrfach = &eintrag["mehrfach"];
     assert_eq!(mehrfach["titel"], json!("Sites"));
     assert_eq!(mehrfach["einzahl"], json!("Site"));
     let felder = mehrfach["felder"].as_array().unwrap();
-    assert_eq!(felder.len(), 5, "{mehrfach}");
+    assert_eq!(felder.len(), 7, "{mehrfach}");
     let namen: Vec<&str> = felder
         .iter()
         .map(|feld| feld["name"].as_str().unwrap())
         .collect();
-    assert_eq!(namen, vec!["url", "email", "api_token", "nur", "schreiben"]);
+    assert_eq!(
+        namen,
+        vec![
+            "url",
+            "email",
+            "api_token",
+            "nur",
+            "unverschluesselt_erlauben",
+            "ca_zertifikat",
+            "schreiben"
+        ]
+    );
 
     assert_eq!(felder[0]["quelle"], json!("client"));
     assert_eq!(felder[0]["pflicht"], json!(true));
@@ -444,12 +455,18 @@ fn eintrag_enthaelt_mehrfach_mit_fuenf_feldern_und_token_link() {
     assert_eq!(felder[3]["name"], json!("nur"));
     assert_eq!(felder[3]["art"], json!("text"));
     assert_eq!(felder[3]["pflicht"], json!(false));
-    // Der Schalter „schreiben“ steht am Ende und ist im Zweifel aus.
-    assert_eq!(felder[4]["name"], json!("schreiben"));
+    // Die Härtung: Adresse ohne TLS nur mit Schalter, eigenes CA-Zertifikat.
+    assert_eq!(felder[4]["name"], json!("unverschluesselt_erlauben"));
     assert_eq!(felder[4]["art"], json!("schalter"));
     assert_eq!(felder[4]["standard"], json!("aus"));
-    assert_eq!(felder[4]["pflicht"], json!(false));
-    assert!(felder[4]["beschreibung"]
+    assert_eq!(felder[5]["name"], json!("ca_zertifikat"));
+    assert_eq!(felder[5]["art"], json!("text"));
+    // Der Schalter „schreiben“ steht am Ende und ist im Zweifel aus.
+    assert_eq!(felder[6]["name"], json!("schreiben"));
+    assert_eq!(felder[6]["art"], json!("schalter"));
+    assert_eq!(felder[6]["standard"], json!("aus"));
+    assert_eq!(felder[6]["pflicht"], json!(false));
+    assert!(felder[6]["beschreibung"]
         .as_str()
         .unwrap()
         .contains("Kommentar"));

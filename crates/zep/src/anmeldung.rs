@@ -271,12 +271,10 @@ impl std::fmt::Debug for Anmeldung {
 impl Anmeldung {
     /// Eine Anmeldung über einer Konfiguration.
     pub fn neu(konfig: ZepKonfig, tresor: Arc<dyn Tresor>, browser: Arc<dyn Browser>) -> Anmeldung {
-        let http = reqwest::Client::builder()
-            // Weiterleitungen selbst verfolgen – die Rückleitung an den
-            // Loopback darf uns nicht entgehen.
-            .redirect(reqwest::redirect::Policy::none())
+        // Keine Weiterleitung, feste Frist (kern::net): die Rückleitung an den
+        // Loopback wird selbst beurteilt, nie verfolgt.
+        let http = quiver_tools_kern::net::bauen(concat!("quiver-zep/", env!("CARGO_PKG_VERSION")))
             .timeout(ZEITLIMIT)
-            .user_agent(concat!("quiver-zep/", env!("CARGO_PKG_VERSION")))
             .build()
             .expect("reqwest-Client baut");
         let sperre = Sperre::im_ordner(&konfig.zustand);
@@ -651,7 +649,12 @@ impl Anmeldung {
                 "Der Anmeldedienst meldet: {fehler}"
             )));
         }
-        if zurueck_state.as_deref() != Some(state.as_str()) {
+        // Konstantzeit-Vergleich: der Zustand ist ein Geheimnis zwischen
+        // Anmeldung und Rückleitung (wie in m365-anmeldung).
+        let state_passt = zurueck_state
+            .as_deref()
+            .is_some_and(|rueck| gleich_konstant(rueck.as_bytes(), state.as_bytes()));
+        if !state_passt {
             return Err(AnmeldeFehler::Fehlgeschlagen(
                 "Der state der Rückleitung passt nicht – der Vorgang wird verworfen.".to_string(),
             ));
@@ -880,6 +883,18 @@ fn kurz(url: &Url) -> String {
 }
 
 /// `code`, `state` und `error` aus der Rückleitung.
+/// Zwei Bytefolgen ohne Rücksicht auf die erste Abweichung vergleichen.
+fn gleich_konstant(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut unterschied = 0u8;
+    for (x, y) in a.iter().zip(b) {
+        unterschied |= x ^ y;
+    }
+    unterschied == 0
+}
+
 fn aus_query(url: &Url) -> (Option<String>, Option<String>, Option<String>) {
     let mut code = None;
     let mut state = None;
@@ -1026,5 +1041,13 @@ mod tests {
             wartezeit: Duration::from_secs(5),
             pause: Duration::from_millis(50),
         }
+    }
+
+    #[test]
+    fn der_state_vergleich_ist_konstant() {
+        assert!(gleich_konstant(b"abc", b"abc"));
+        assert!(!gleich_konstant(b"abc", b"abd"));
+        assert!(!gleich_konstant(b"abc", b"ab"));
+        assert!(gleich_konstant(b"", b""));
     }
 }

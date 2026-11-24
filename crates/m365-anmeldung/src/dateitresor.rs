@@ -116,6 +116,18 @@ impl DateiTresor {
                 .try_into()
                 .map_err(|_| anyhow::anyhow!("{} ist beschädigt", pfad.display())),
             Err(fehler) if fehler.kind() == std::io::ErrorKind::NotFound => {
+                // Ein Tresor **ohne** Schlüssel wird nie stillschweigend mit
+                // einem neuen Schlüssel überschrieben: die Werte wären sonst
+                // endgültig verloren, ohne dass es jemand merkt (Härtung
+                // Paket 4, wie mcp-quiver). Beide Dateien bleiben unberührt.
+                if self.ordner.join("tresor.json").exists() {
+                    return Err(anyhow::anyhow!(
+                        "Der Schlüssel des Tresors fehlt ({}). Die Tresor-Datei bleibt unberührt \
+                         – bitte im quiver-Fenster unter Tools den Eintrag erneut anmelden oder \
+                         die Datei tresor.schluessel aus einer Sicherung zurückspielen.",
+                        pfad.display()
+                    ));
+                }
                 let mut neu = [0u8; 32];
                 rand::rng().fill_bytes(&mut neu);
                 schreiben_atomar(&pfad, &neu)?;
@@ -256,6 +268,28 @@ mod tests {
                 & 0o777;
             assert_eq!(modus, soll, "{datei}");
         }
+    }
+
+    #[test]
+    fn ein_fehlender_schluessel_wird_gemeldet_und_nichts_angelegt() {
+        let ordner = tempfile::tempdir().unwrap();
+        let tresor = DateiTresor::im_ordner(ordner.path());
+        tresor.schreiben("a", "streng-geheim-4711").unwrap();
+
+        // Der Schlüssel verschwindet (Sicherung zurückgespielt, Platte getauscht).
+        let schluessel = ordner.path().join("tresor.schluessel");
+        fs::remove_file(&schluessel).unwrap();
+        let daten = fs::read(ordner.path().join("tresor.json")).unwrap();
+
+        let fehler = tresor.lesen("a").unwrap_err().to_string();
+        assert!(fehler.contains("Schlüssel"), "{fehler}");
+        assert!(fehler.contains("unberührt"), "{fehler}");
+        assert!(fehler.contains("quiver-Fenster"), "{fehler}");
+        assert!(!fehler.contains("streng-geheim-4711"));
+
+        // Nie ein neuer Schlüssel, nie eine geänderte Datei.
+        assert!(!schluessel.exists(), "es wurde ein neuer Schlüssel erzeugt");
+        assert_eq!(fs::read(ordner.path().join("tresor.json")).unwrap(), daten);
     }
 
     #[test]

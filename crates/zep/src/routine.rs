@@ -415,13 +415,14 @@ impl<'a> Routine<'a> {
             )));
         }
 
-        let text = antwort.text().await.map_err(|fehler| {
-            RoutineFehler::Netz(format!(
-                "Die Antwort von {} ist nicht lesbar: {}",
-                kurz(ziel),
-                fehler.without_url()
-            ))
-        })?;
+        let text = quiver_tools_kern::net::text_begrenzt(antwort)
+            .await
+            .map_err(|fehler| {
+                RoutineFehler::Netz(format!(
+                    "Die Antwort von {} ist nicht lesbar: {fehler}",
+                    kurz(ziel)
+                ))
+            })?;
         Ok(Antwort::Seite(text))
     }
 

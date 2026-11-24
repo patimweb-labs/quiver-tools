@@ -13,7 +13,7 @@ use quiver_tools_kern::{hinweis_zugang, Feld, FeldArt, Profil, Werkzeug};
 
 use crate::client::{Anfrage, Client};
 use crate::daten;
-use crate::sites::{Sammlung, EMAIL, NUR, SCHREIBEN, TOKEN, URL};
+use crate::sites::{Sammlung, CA_ZERTIFIKAT, EMAIL, NUR, SCHREIBEN, TOKEN, UNVERSCHLUESSELT, URL};
 
 /// Kurzname: Teil der Werkzeugnamen (`jira_status`) und des Programms.
 pub const NAME: &str = "jira";
@@ -90,6 +90,27 @@ impl Werkzeug for Jira {
                 link: None,
             },
             Feld {
+                name: UNVERSCHLUESSELT,
+                titel: quiver_tools_kern::net::TITEL_UNVERSCHLUESSELT,
+                art: FeldArt::Schalter,
+                pflicht: false,
+                standard: Some("aus"),
+                hilfe:
+                    "Nur nötig, wenn die Site über http:// erreichbar ist. Ohne diesen Schalter \
+                        sind nur 127.0.0.1, localhost und [::1] per http erlaubt.",
+                link: None,
+            },
+            Feld {
+                name: CA_ZERTIFIKAT,
+                titel: quiver_tools_kern::net::TITEL_CA_ZERTIFIKAT,
+                art: FeldArt::Text,
+                pflicht: false,
+                standard: None,
+                hilfe: "Pfad einer PEM-Datei für ein eigenes CA-Zertifikat; leer heißt: Prüfung \
+                        gegen den Zertifikatsspeicher des Systems.",
+                link: None,
+            },
+            Feld {
                 name: SCHREIBEN,
                 titel: "Schreiben erlauben",
                 art: FeldArt::Schalter,
@@ -148,7 +169,15 @@ mod tests {
         let felder = werkzeug.felder();
         assert_eq!(
             felder.iter().map(|feld| feld.name).collect::<Vec<_>>(),
-            vec!["url", "email", "api_token", "nur", "schreiben"]
+            vec![
+                "url",
+                "email",
+                "api_token",
+                "nur",
+                "unverschluesselt_erlauben",
+                "ca_zertifikat",
+                "schreiben"
+            ]
         );
         assert_eq!(felder[0].art, FeldArt::Url);
         assert!(felder[0].pflicht);
@@ -160,7 +189,10 @@ mod tests {
         assert!(!felder[3].pflicht);
         assert_eq!(felder[4].art, FeldArt::Schalter);
         assert_eq!(felder[4].standard, Some("aus"));
-        assert!(!felder[4].pflicht);
+        assert_eq!(felder[5].art, FeldArt::Text);
+        assert_eq!(felder[6].art, FeldArt::Schalter);
+        assert_eq!(felder[6].standard, Some("aus"));
+        assert!(!felder[6].pflicht);
         // Alle Hilfe-Texte erklären das Feld, keiner ist leer.
         assert!(felder.iter().all(|feld| !feld.hilfe.is_empty()));
     }

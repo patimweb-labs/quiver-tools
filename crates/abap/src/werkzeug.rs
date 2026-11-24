@@ -14,7 +14,8 @@ use quiver_tools_kern::{hinweis_zugang, Feld, FeldArt, Profil, Werkzeug};
 use crate::adt::client::{Anfrage, Client};
 use crate::adt::daten;
 use crate::systeme::{
-    Sammlung, BENUTZER, MANDANT, PASSWORT, SCHREIBEN, SPRACHE, URL, ZERTIFIKAT_PRUEFEN,
+    Sammlung, BENUTZER, CA_ZERTIFIKAT, MANDANT, PASSWORT, SCHREIBEN, SPRACHE, UNVERSCHLUESSELT,
+    URL, ZERTIFIKAT_PRUEFEN,
 };
 
 /// Kurzname: Teil der Werkzeugnamen (`abap_search`) und des Programms.
@@ -100,8 +101,29 @@ impl Werkzeug for Abap {
                 pflicht: false,
                 standard: Some("an"),
                 hilfe:
-                    "Firmen-CAs erkennt der Client über den Zertifikatsspeicher des Systems. Nur \
-                        abschalten, wenn das nicht reicht.",
+                    "Firmen-CAs erkennt der Client über den Zertifikatsspeicher des Systems. \
+                        Abschalten gilt nur für 127.0.0.1, localhost und [::1]; für andere Hosts \
+                        stattdessen das CA-Zertifikat eintragen.",
+                link: None,
+            },
+            Feld {
+                name: CA_ZERTIFIKAT,
+                titel: quiver_tools_kern::net::TITEL_CA_ZERTIFIKAT,
+                art: FeldArt::Text,
+                pflicht: false,
+                standard: None,
+                hilfe: "Pfad einer PEM-Datei für ein eigenes CA-Zertifikat; leer heißt: Prüfung \
+                        gegen den Zertifikatsspeicher des Systems.",
+                link: None,
+            },
+            Feld {
+                name: UNVERSCHLUESSELT,
+                titel: quiver_tools_kern::net::TITEL_UNVERSCHLUESSELT,
+                art: FeldArt::Schalter,
+                pflicht: false,
+                standard: Some("aus"),
+                hilfe: "Nur nötig, wenn das System über http:// erreichbar ist. Ohne diesen Schalter \
+                        sind nur 127.0.0.1, localhost und [::1] per http erlaubt.",
                 link: None,
             },
             Feld {
@@ -175,6 +197,8 @@ mod tests {
                 "sprache",
                 "passwort",
                 "zertifikat_pruefen",
+                "ca_zertifikat",
+                "unverschluesselt_erlauben",
                 "schreiben"
             ]
         );
@@ -194,12 +218,16 @@ mod tests {
         assert!(!felder[5].pflicht);
         assert_eq!(felder[5].standard, Some("an"));
         assert!(felder[5].hilfe.contains("Zertifikatsspeicher"));
+        // Härtung: eigenes CA-Zertifikat, http nur mit Schalter.
+        assert_eq!(felder[6].art, FeldArt::Text);
+        assert_eq!(felder[7].art, FeldArt::Schalter);
+        assert_eq!(felder[7].standard, Some("aus"));
         // Der Schalter „schreiben“ kommt ans Ende und ist im Zweifel aus.
-        assert_eq!(felder[6].art, FeldArt::Schalter);
-        assert!(!felder[6].pflicht);
-        assert_eq!(felder[6].standard, Some("aus"));
-        assert!(felder[6].hilfe.contains("abap_write"));
-        assert!(felder[6].hilfe.contains("Produktivsysteme"));
+        assert_eq!(felder[8].art, FeldArt::Schalter);
+        assert!(!felder[8].pflicht);
+        assert_eq!(felder[8].standard, Some("aus"));
+        assert!(felder[8].hilfe.contains("abap_write"));
+        assert!(felder[8].hilfe.contains("Produktivsysteme"));
         // Alle Hilfe-Texte erklären das Feld, keiner ist leer.
         assert!(felder.iter().all(|feld| !feld.hilfe.is_empty()));
     }

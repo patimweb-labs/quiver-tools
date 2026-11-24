@@ -494,6 +494,7 @@ mod tests {
             token: "token-4711".into(),
             nur: vec!["ENG".into()],
             schreiben: false,
+            ca_zertifikat: None,
         }
     }
 

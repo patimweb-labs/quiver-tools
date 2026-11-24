@@ -98,8 +98,14 @@ pub fn farbe_aus_hex(hex: &str) -> Option<Farbe> {
 }
 
 /// `#rrggbb` oder `#rgb` als Zahlen.
+///
+/// Geprüft wird über Bytes: ein Wert wie `😀ab` hat sechs Bytes, aber keine
+/// sechs Zeichen – ein Schnitt an Zeichengrenzen würde das Programm beenden.
 fn rgb(hex: &str) -> Option<(u32, u32, u32)> {
     let wert = hex.trim_start_matches('#');
+    if !wert.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return None;
+    }
     let teile: Vec<u32> = match wert.len() {
         3 => wert
             .chars()
@@ -131,6 +137,21 @@ pub fn umbrechen(text: &str, groesse: f64, breite: f64) -> Vec<String> {
 /// Die Breite einer Zeile in der eingebetteten Schrift.
 pub fn textbreite(text: &str, groesse: f64) -> f64 {
     f64::from(schrift::breite(text, groesse as f32))
+}
+
+#[cfg(test)]
+mod mehrbyte_tests {
+    use super::*;
+
+    #[test]
+    fn farbwerte_mit_mehrbyte_zeichen_paniken_nicht() {
+        assert_eq!(farbe_aus_hex("😀ab"), None);
+        assert_eq!(farbe_aus_hex("#€"), None);
+        assert_eq!(farbe_aus_hex("#äöü"), None);
+        // Ein Ton aus der Palette bleibt erkennbar.
+        let ton = toene(Farbe::ALLE[0]).fuellung;
+        assert_eq!(farbe_aus_hex(ton), Some(Farbe::ALLE[0]));
+    }
 }
 
 #[cfg(test)]

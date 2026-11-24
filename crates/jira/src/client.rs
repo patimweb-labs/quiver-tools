@@ -28,7 +28,6 @@
 use std::time::Duration;
 
 use reqwest::header::{HeaderMap, ACCEPT, CONTENT_TYPE, RETRY_AFTER, USER_AGENT};
-use reqwest::redirect::Policy;
 use reqwest::Method;
 use url::Url;
 
@@ -165,12 +164,28 @@ impl Client {
     /// Wie [`Client::neu`], aber mit eigenem Zeitlimit (für die Tests: eine
     /// Zeitüberschreitung darf nicht 60 s dauern).
     fn mit_zeitlimit(site: &Site, limit: Duration) -> Result<Client, JiraFehler> {
-        let http = reqwest::Client::builder()
-            .timeout(limit)
-            // Der Token geht nur an den eingetragenen Host: keine Weiterleitung.
-            .redirect(Policy::none())
-            .user_agent(concat!("quiver-jira/", env!("CARGO_PKG_VERSION")))
-            .build()
+        // Keine Weiterleitung, feste Frist (kern::net); ein eigenes
+        // CA-Zertifikat ersetzt den Systemspeicher, sonst bleibt die Prüfung an.
+        let host = site
+            .url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .split(['/', ':'])
+            .next()
+            .unwrap_or(&site.url);
+        let (regel, _warnung) =
+            quiver_tools_kern::net::zertifikat(true, host, site.ca_zertifikat.as_deref());
+        let http = regel
+            .anwenden(quiver_tools_kern::net::bauen(concat!(
+                "quiver-jira/",
+                env!("CARGO_PKG_VERSION")
+            )))
+            .and_then(|bauer| {
+                bauer
+                    .timeout(limit)
+                    .build()
+                    .map_err(|fehler| quiver_tools_kern::net::NetFehler::Client(fehler.to_string()))
+            })
             .map_err(|fehler| JiraFehler::Netz {
                 text: fehler.to_string(),
             })?;
@@ -263,7 +278,7 @@ impl Client {
             let status = antwort.status().as_u16();
             let wartezeit = wartezeit(antwort.headers());
             // Der Rumpf gehört zum Ergebnis: ein Lesefehler ist nie „leer“.
-            let rumpf = match antwort.text().await {
+            let rumpf = match begrenzt(antwort).await {
                 Ok(text) => text,
                 Err(fehler) => {
                     if (200..300).contains(&status) {
@@ -437,6 +452,11 @@ pub fn lesen(text: &str) -> Result<serde_json::Value, JiraFehler> {
     serde_json::from_str(text).map_err(|fehler| JiraFehler::Json {
         text: format!("{} ({})", fehler, kurz(text)),
     })
+}
+
+/// Eine Antwort lesen – höchstens 8 MB, sonst Abbruch als Fehler.
+async fn begrenzt(antwort: reqwest::Response) -> Result<String, quiver_tools_kern::net::NetFehler> {
+    quiver_tools_kern::net::text_begrenzt(antwort).await
 }
 
 /// Ein Pfadsegment kodieren (`PI Agent` → `PI%20Agent`, `..` → `%2E%2E`).

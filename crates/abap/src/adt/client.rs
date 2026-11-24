@@ -183,19 +183,29 @@ impl Client {
     }
 
     fn bauen(system: &System, stateful: bool) -> Result<Client, AdtFehler> {
-        let mut bauen = reqwest::Client::builder()
+        // Keine Weiterleitung, feste Frist (kern::net). Das Zertifikat ist im
+        // System schon nach der Regel des Kerns entschieden: abschalten nur auf
+        // dem Loopback, sonst Prüfung oder eigenes CA-Zertifikat.
+        let host = system.host().to_string();
+        let (regel, _warnung) = quiver_tools_kern::net::zertifikat(
+            !system.zertifikat_ungeprueft(),
+            &host,
+            system.ca_zertifikat.as_deref(),
+        );
+        let bauen = regel
+            .anwenden(quiver_tools_kern::net::bauen(concat!(
+                "quiver-abap/",
+                env!("CARGO_PKG_VERSION")
+            )))
+            .map_err(|fehler| AdtFehler::Netz {
+                text: fehler.to_string(),
+            })?;
+        let http = bauen
             .timeout(ZEITLIMIT)
-            // Benutzer und Passwort gehen nur an das eingetragene System: eine
-            // Weiterleitung wird gemeldet, nie verfolgt.
-            .redirect(reqwest::redirect::Policy::none())
-            .user_agent(concat!("quiver-abap/", env!("CARGO_PKG_VERSION")));
-        if system.zertifikat_ungeprueft() {
-            // Nur wenn der User es im quiver-Fenster abschaltet.
-            bauen = bauen.danger_accept_invalid_certs(true);
-        }
-        let http = bauen.build().map_err(|fehler| AdtFehler::Netz {
-            text: fehler.to_string(),
-        })?;
+            .build()
+            .map_err(|fehler| AdtFehler::Netz {
+                text: fehler.to_string(),
+            })?;
         Ok(Client {
             system: system.clone(),
             http,
@@ -237,7 +247,9 @@ impl Client {
                     .and_then(|wert| wert.to_str().ok())
                     .map(|wert| wert.eq_ignore_ascii_case("required"))
                     .unwrap_or(false);
-            let rumpf = antwort.text().await.unwrap_or_default();
+            let rumpf = quiver_tools_kern::net::text_begrenzt(antwort)
+                .await
+                .unwrap_or_default();
 
             if (200..300).contains(&status) {
                 return Ok(Antwort {
@@ -306,7 +318,9 @@ impl Client {
             .and_then(|wert| wert.to_str().ok())
             .map(str::to_string)
             .filter(|token| !token.is_empty());
-        let rumpf = antwort.text().await.unwrap_or_default();
+        let rumpf = quiver_tools_kern::net::text_begrenzt(antwort)
+            .await
+            .unwrap_or_default();
 
         if status == 401 {
             return Err(AdtFehler::Anmeldung {
@@ -447,6 +461,7 @@ mod tests {
             passwort: "geheim-4711".into(),
             zertifikat_pruefen: true,
             schreiben: true,
+            ca_zertifikat: None,
         }
     }
 

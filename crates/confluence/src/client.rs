@@ -194,13 +194,28 @@ impl std::fmt::Debug for Client {
 impl Client {
     /// Ein Client für diese Site. Token und E-Mail bleiben im Speicher.
     pub fn neu(site: &Site) -> Result<Client, Fehler> {
-        let http = reqwest::Client::builder()
-            .timeout(ZEITLIMIT)
-            .user_agent(concat!("quiver-confluence/", env!("CARGO_PKG_VERSION")))
-            // Keine Weiterleitung: die Kopfzeile geht nur an den eingetragenen
-            // Host (Aufgabe 12, Sicherheit 2).
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
+        // Keine Weiterleitung, feste Frist (kern::net); ein eigenes
+        // CA-Zertifikat ersetzt den Systemspeicher, sonst bleibt die Prüfung an.
+        let host = site
+            .url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .split(['/', ':'])
+            .next()
+            .unwrap_or(&site.url);
+        let (regel, _warnung) =
+            quiver_tools_kern::net::zertifikat(true, host, site.ca_zertifikat.as_deref());
+        let http = regel
+            .anwenden(quiver_tools_kern::net::bauen(concat!(
+                "quiver-confluence/",
+                env!("CARGO_PKG_VERSION")
+            )))
+            .and_then(|bauer| {
+                bauer
+                    .timeout(ZEITLIMIT)
+                    .build()
+                    .map_err(|fehler| quiver_tools_kern::net::NetFehler::Client(fehler.to_string()))
+            })
             .map_err(|fehler| Fehler::Netz {
                 text: fehler.to_string(),
             })?;
@@ -289,16 +304,20 @@ impl Client {
             }
 
             // Den Rumpf erst nach den Statusregeln lesen: ein Fehlschlag ist
-            // ein Fehler, nie „leer“ (Korrekturen 3).
-            let rumpf = antwort.text().await;
+            // ein Fehler, nie „leer“ (Korrekturen 3). Höchstens 8 MB.
+            let rumpf = begrenzt(antwort).await;
             if !(200..300).contains(&status) {
                 let text = rumpf.unwrap_or_else(|fehler| format!("Rumpf nicht lesbar: {fehler}"));
                 return Err(Fehler::aus_antwort(status, &text));
             }
             return match rumpf {
                 Ok(text) => Ok(Antwort { status, text }),
-                Err(fehler) if anfrage.ist_lesend() => Err(Fehler::unlesbar(&fehler)),
-                Err(fehler) => Err(Fehler::ausgefuehrt(&fehler)),
+                Err(fehler) if anfrage.ist_lesend() => Err(Fehler::Unlesbar {
+                    text: fehler.to_string(),
+                }),
+                Err(fehler) => Err(Fehler::Ausgefuehrt {
+                    text: fehler.to_string(),
+                }),
             };
         }
     }
@@ -473,6 +492,11 @@ impl Client {
     }
 }
 
+/// Eine Antwort lesen – höchstens 8 MB, sonst Abbruch als Fehler.
+async fn begrenzt(antwort: reqwest::Response) -> Result<String, quiver_tools_kern::net::NetFehler> {
+    quiver_tools_kern::net::text_begrenzt(antwort).await
+}
+
 /// Wie viele Segmente hat ein selbst gebauter Pfad?
 fn pfad_teile(pfad: &str) -> usize {
     pfad.split('/').filter(|teil| !teil.is_empty()).count()
@@ -537,6 +561,7 @@ mod tests {
             token: "token-4711".into(),
             nur: Vec::new(),
             schreiben: true,
+            ca_zertifikat: None,
         }
     }
 

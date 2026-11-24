@@ -138,18 +138,22 @@ impl Vermittler {
 
     /// Die Werkzeugliste von ZEP – 1:1, wie ZEP sie meldet.
     pub async fn werkzeuge(&self) -> Result<Vec<Tool>, VermittlerFehler> {
-        self.mit_wiederholung(|peer| async move { peer.list_all_tools().await })
+        self.mit_wiederholung(true, |peer| async move { peer.list_all_tools().await })
             .await
     }
 
     /// Ein Werkzeug bei ZEP aufrufen – Namen, Argumente und Antwort unverändert.
+    ///
+    /// `wiederholen` ist nur für **lesende** Werkzeuge `true`: ein zweiter
+    /// Aufruf nach einem Anmeldefehler könnte sonst doppelt buchen.
     pub async fn aufrufen(
         &self,
         params: CallToolRequestParams,
+        wiederholen: bool,
     ) -> Result<CallToolResult, VermittlerFehler> {
         let name = params.name.to_string();
         let ergebnis = self
-            .mit_wiederholung(move |peer| {
+            .mit_wiederholung(wiederholen, move |peer| {
                 let params = params.clone();
                 async move { peer.call_tool(params).await }
             })
@@ -174,7 +178,11 @@ impl Vermittler {
 
     /// Einen Aufruf mit einem Dienst versuchen; bei einem Anmeldefehler das
     /// Token erneuern und **einmal** wiederholen.
-    async fn mit_wiederholung<T, F, Fut>(&self, aufruf: F) -> Result<T, VermittlerFehler>
+    async fn mit_wiederholung<T, F, Fut>(
+        &self,
+        wiederholen: bool,
+        aufruf: F,
+    ) -> Result<T, VermittlerFehler>
     where
         F: Fn(Peer<RoleClient>) -> Fut,
         Fut: std::future::Future<Output = Result<T, ServiceError>>,
@@ -182,7 +190,7 @@ impl Vermittler {
         let peer = self.peer().await?;
         match aufruf(peer).await {
             Ok(wert) => Ok(wert),
-            Err(fehler) if ist_anmeldefehler(&fehler) => {
+            Err(fehler) if wiederholen && ist_anmeldefehler(&fehler) => {
                 tracing::info!("ZEP lehnt das Access-Token ab – erneuern und einmal wiederholen");
                 self.inner.anmeldung.verwerfen();
                 self.schliessen().await;

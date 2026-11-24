@@ -1473,3 +1473,33 @@ async fn keine_antwort_enthaelt_ein_token() {
         assert!(!aufruf.rumpf.contains(TOKEN_A));
     }
 }
+
+#[tokio::test]
+async fn nur_beschraenkt_auch_das_lesen() {
+    let attrappe = Attrappe::starte().await;
+    // Erlaubt ist nur QA.
+    let server = server(vec![eintrag(
+        "kunde",
+        &attrappe.basis_url(),
+        Some(PROJEKT),
+        Some("qa"),
+        TOKEN_A,
+        true,
+    )]);
+
+    // Lesen im gesperrten Projekt: Hinweis, keine Anfrage an Zephyr.
+    let text = antwort(
+        &server,
+        "zephyr_testfaelle",
+        json!({ "projekt": PROJEKT_2 }),
+    )
+    .await;
+    assert!(text.contains("beschränkt"), "{text}");
+    assert!(text.contains(PROJEKT_2), "{text}");
+    assert_eq!(attrappe.aufzeichnung.anzahl("testcases"), 0);
+
+    // Im freigegebenen Projekt wird gelesen.
+    let text = antwort(&server, "zephyr_testfaelle", json!({})).await;
+    assert!(text.contains("Testfall"), "{text}");
+    assert_eq!(attrappe.aufzeichnung.anzahl("testcases"), 1);
+}

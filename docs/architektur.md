@@ -7,13 +7,17 @@
 
 ```
 crates/kern        Werkzeug-Trait, Zugang aus der Umgebung, Bibliothekseintrag, MCP-Hilfen, Gerüst
+                   net (ein HTTP-Client, Adress- und Zertifikatsregel), schutz (Schreibschutz),
+                   ablage (Dateien nur im Arbeitsordner)
 crates/<tool>      ein Programm quiver-<tool> je Tool
 assets/            tokens.css und Schriften (Kopie aus mcp-quiver, nicht von Hand ändern)
 ```
 
 `kern ← <tool>`: ein Tool kennt den Kern, der Kern kennt kein Tool. Alles, was ein
 Tool dem Kern über sich sagt, steht in `Werkzeug`: Name, Titel, Beschreibung, Felder,
-`testen`.
+`testen`. Eine Ausnahme gibt es nur im Test: `crates/kern/tests/alle_programme.rs`
+bindet die Werkzeug-Crates als **Dev**-Abhängigkeit ein, um den Schreibschutz über alle
+Programme zu prüfen (siehe [adr/0014-haertung-paket-4.md](adr/0014-haertung-paket-4.md)).
 
 Die Oberfläche ist **quiver**. Dieses Repo liefert keine Seite und keinen Browser-Code
 mehr; `assets/` bleibt als Vorlage für quiver und wird hier von keinem Programm
@@ -26,6 +30,9 @@ eingebunden.
 | `umgebung` | `Zugang`: Felder aus `<NAME>_<FELD>` lesen, Pflichtfelder prüfen, `Profil` bauen | Umgebung des Prozesses |
 | `profil` | `Profil { name, werte, geheim }`, `ProfilFehler`; `Debug` zeigt Geheimnisse nie | keiner |
 | `eintrag` | `quiver_domain::Eintrag` als JSON: id, version, titel, beschreibung, laufzeit, felder | keiner |
+| `net` | ein HTTP-Client (keine Weiterleitung, Frist, 8 MB), Adress- und Zertifikatsregel | keiner |
+| `schutz` | Schreibschutz aus der Werkzeugliste: was nicht `read_only_hint` ist, braucht `schreiben` | keiner |
+| `ablage` | Dateien nur im Arbeitsordner: relative Namen, keine Symlinks, kein Überschreiben | Dateisystem |
 | `mcp` | `zugang`, `profile_tool`, `profile_antwort`, `server_info`, `kuerzen` | keiner |
 | `start` | `starten`, `aufruf_aus_args`, `Aufruf` (MCP, eintrag, testen, version, hilfe) | Prozess |
 | `zugaenge` | `Zugang { name, werte }`, `zugaenge()`, `mit_umgebung()` aus `QUIVER_ZUGAENGE` | Umgebungsvariable |

@@ -13,6 +13,7 @@
 //! | [`adt::daten`] | reine Leser: XML → Daten | keiner |
 //! | [`adt::fehler`] | ADT-Ausnahme, HTTP, 401, abgelaufene Sitzung | keiner |
 //! | [`schreiben`] | Schutzregeln und Rümpfe der schreibenden Werkzeuge | keiner |
+//! | [`sql`] | „nur ein SELECT“ für die Datenvorschau | keiner |
 //! | [`format`] | reine Funktionen: Daten → Text | keiner |
 //! | [`server`] | die 25 MCP-Werkzeuge | Systeme aus der Umgebung, Sitzungen |
 //!
@@ -24,6 +25,7 @@ pub mod adt;
 pub mod format;
 pub mod schreiben;
 pub mod server;
+pub mod sql;
 pub mod systeme;
 pub mod werkzeug;
 

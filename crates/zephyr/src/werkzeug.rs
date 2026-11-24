@@ -13,7 +13,10 @@ use quiver_tools_kern::{hinweis_zugang, Feld, FeldArt, Profil, Werkzeug};
 
 use crate::client::{Anfrage, Client};
 use crate::format;
-use crate::zugaenge::{Sammlung, BASIS_URL, NUR, PROJEKT, SCHREIBEN, STANDARD_BASIS_URL, TOKEN};
+use crate::zugaenge::{
+    Sammlung, BASIS_URL, CA_ZERTIFIKAT, NUR, PROJEKT, SCHREIBEN, STANDARD_BASIS_URL, TOKEN,
+    UNVERSCHLUESSELT,
+};
 
 /// Kurzname: Teil der Werkzeugnamen (`zephyr_status`) und des Programms.
 pub const NAME: &str = "zephyr";
@@ -81,8 +84,28 @@ impl Werkzeug for Zephyr {
                 art: FeldArt::Text,
                 pflicht: false,
                 standard: None,
-                hilfe: "Kommagetrennte Projektschlüssel, in denen geschrieben werden darf. Leer \
-                        heißt: alle. Gelesen wird immer alles.",
+                hilfe: "Kommagetrennte Projektschlüssel. Leer heißt: alle. Gilt fürs Lesen \
+                        und fürs Schreiben.",
+                link: None,
+            },
+            Feld {
+                name: UNVERSCHLUESSELT,
+                titel: quiver_tools_kern::net::TITEL_UNVERSCHLUESSELT,
+                art: FeldArt::Schalter,
+                pflicht: false,
+                standard: Some("aus"),
+                hilfe: "Nur nötig, wenn die Basisadresse über http:// erreichbar ist. Ohne diesen \
+                        Schalter sind nur 127.0.0.1, localhost und [::1] per http erlaubt.",
+                link: None,
+            },
+            Feld {
+                name: CA_ZERTIFIKAT,
+                titel: quiver_tools_kern::net::TITEL_CA_ZERTIFIKAT,
+                art: FeldArt::Text,
+                pflicht: false,
+                standard: None,
+                hilfe: "Pfad einer PEM-Datei für ein eigenes CA-Zertifikat; leer heißt: Prüfung \
+                        gegen den Zertifikatsspeicher des Systems.",
                 link: None,
             },
             Feld {
@@ -146,7 +169,15 @@ mod tests {
         let felder = werkzeug.felder();
         assert_eq!(
             felder.iter().map(|feld| feld.name).collect::<Vec<_>>(),
-            vec!["basis_url", "api_token", "projekt", "nur", "schreiben"]
+            vec![
+                "basis_url",
+                "api_token",
+                "projekt",
+                "nur",
+                "unverschluesselt_erlauben",
+                "ca_zertifikat",
+                "schreiben"
+            ]
         );
         // Reihenfolge und Art wie in der Aufgabe vorgegeben.
         assert_eq!(felder[0].art, FeldArt::Url);
@@ -162,7 +193,10 @@ mod tests {
         assert!(felder[3].hilfe.contains("Projektschlüssel"));
         assert_eq!(felder[4].art, FeldArt::Schalter);
         assert_eq!(felder[4].standard, Some("aus"));
-        assert!(felder[4].hilfe.contains("Ergebnisse"));
+        assert_eq!(felder[5].art, FeldArt::Text);
+        assert_eq!(felder[6].art, FeldArt::Schalter);
+        assert_eq!(felder[6].standard, Some("aus"));
+        assert!(felder[6].hilfe.contains("Ergebnisse"));
         // Alle Hilfe-Texte erklären das Feld, keiner ist leer.
         assert!(felder.iter().all(|feld| !feld.hilfe.is_empty()));
     }

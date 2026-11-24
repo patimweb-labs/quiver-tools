@@ -15,7 +15,7 @@
 //! | Regel | Wirkung |
 //! |---|---|
 //! | `schreiben` je Zugang (Standard aus) | verändernde Werkzeuge antworten ohne Anfrage |
-//! | `nur` (Projektschlüssel) | Schreiben außerhalb wird abgelehnt, ohne verändernde Anfrage |
+//! | `nur` (Projektschlüssel) | Lesen und Schreiben außerhalb wird abgelehnt, ohne Anfrage |
 //! | Projekt vom Server | der Schlüssel kommt aus `GET /projects/{id}`, nicht vom Agenten |
 //!
 //! Zwei Regeln gelten für **jedes** gelesene Feld: es steht in der OpenAPI-Datei
@@ -257,13 +257,18 @@ impl ZephyrServer {
     }
 
     /// Das Projekt: aus dem Aufruf, sonst aus dem Zugang, sonst ein Hinweis.
+    ///
+    /// `nur` gilt hier auch fürs **Lesen**: es ist eine Datenschutzgrenze, kein
+    /// Schreibschutz (Härtung Paket 4).
     fn projekt(&self, zugang: &Zugang, genannt: Option<&str>) -> Result<String, OhneProfil> {
-        zugang
+        let projekt = zugang
             .projekt(genannt)
-            .ok_or_else(|| OhneProfil::Hinweis(antwort(format::projekt_fehlt(&zugang.name))))
+            .ok_or_else(|| OhneProfil::Hinweis(antwort(format::projekt_fehlt(&zugang.name))))?;
+        self.nur_pruefen(zugang, &projekt)?;
+        Ok(projekt)
     }
 
-    /// `nur`: darf in diesem Projekt geschrieben werden?
+    /// `nur`: ist dieses Projekt überhaupt freigegeben (lesend wie schreibend)?
     fn nur_pruefen(&self, zugang: &Zugang, projekt: &str) -> Result<(), OhneProfil> {
         if zugang.projekt_erlaubt(projekt) {
             return Ok(());
@@ -1471,6 +1476,7 @@ impl ServerHandler for ZephyrServer {
                  Zyklus zuordnen und ein Ergebnis eintragen – aber nur, wenn der Schalter \
                  „schreiben“ für den Zugang an ist (Standard: aus). Ist er aus, antworten die \
                  verändernden Werkzeuge mit dem Hinweis und ohne Anfrage an Zephyr. Ist `nur` \
+                 gesetzt, gilt es auch fürs Lesen. \
                  gesetzt, wird außerhalb dieser Projekte nicht geschrieben; den Projektschlüssel \
                  liest das Werkzeug vom Server, nicht aus dem Aufruf. Die {MEHRFACH_TITEL} \
                  (ein Element heißt {MEHRFACH_EINZAHL}) legt der User im quiver-Fenster unter \

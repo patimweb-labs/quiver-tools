@@ -328,6 +328,14 @@ impl Sitzung {
         Ok(inhalt.len() as u64)
     }
 
+    /// Eine entfernte Datei als Bytes holen (die Ablage schreibt sie).
+    pub async fn herunterladen_bytes(&self, entfernt: &str) -> Result<Vec<u8>, anyhow::Error> {
+        let sftp = self.sftp().await?;
+        let inhalt = sftp.read(entfernt).await?;
+        sftp.close().await.ok();
+        Ok(inhalt)
+    }
+
     /// Eine entfernte Datei lokal ablegen; gibt die Bytezahl zurück.
     pub async fn herunterladen(&self, entfernt: &str, lokal: &Path) -> Result<u64, anyhow::Error> {
         let sftp = self.sftp().await?;

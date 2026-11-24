@@ -379,19 +379,27 @@ fn eintrag_enthaelt_mehrfach_mit_fuenf_feldern() {
         "{eintrag}"
     );
 
-    // … sondern eine Liste von Zugängen mit fünf Feldern.
+    // … sondern eine Liste von Zugängen mit sieben Feldern.
     let mehrfach = &eintrag["mehrfach"];
     assert_eq!(mehrfach["titel"], json!("Zugänge"));
     assert_eq!(mehrfach["einzahl"], json!("Zugang"));
     let felder = mehrfach["felder"].as_array().unwrap();
-    assert_eq!(felder.len(), 5, "{mehrfach}");
+    assert_eq!(felder.len(), 7, "{mehrfach}");
     let namen: Vec<&str> = felder
         .iter()
         .map(|feld| feld["name"].as_str().unwrap())
         .collect();
     assert_eq!(
         namen,
-        vec!["basis_url", "api_token", "projekt", "nur", "schreiben"]
+        vec![
+            "basis_url",
+            "api_token",
+            "projekt",
+            "nur",
+            "unverschluesselt_erlauben",
+            "ca_zertifikat",
+            "schreiben"
+        ]
     );
 
     // Die Basisadresse hat einen Standard und darf leer bleiben.
@@ -417,11 +425,17 @@ fn eintrag_enthaelt_mehrfach_mit_fuenf_feldern() {
     assert_eq!(felder[3]["name"], json!("nur"));
     assert_eq!(felder[3]["art"], json!("text"));
     assert_eq!(felder[3]["pflicht"], json!(false));
-    // Der Schalter „schreiben“ steht am Ende und ist im Zweifel aus.
-    assert_eq!(felder[4]["name"], json!("schreiben"));
+    // Härtung: http nur mit Schalter, eigenes CA-Zertifikat.
+    assert_eq!(felder[4]["name"], json!("unverschluesselt_erlauben"));
     assert_eq!(felder[4]["art"], json!("schalter"));
     assert_eq!(felder[4]["standard"], json!("aus"));
-    assert_eq!(felder[4]["pflicht"], json!(false));
+    assert_eq!(felder[5]["name"], json!("ca_zertifikat"));
+    assert_eq!(felder[5]["art"], json!("text"));
+    // Der Schalter „schreiben“ steht am Ende und ist im Zweifel aus.
+    assert_eq!(felder[6]["name"], json!("schreiben"));
+    assert_eq!(felder[6]["art"], json!("schalter"));
+    assert_eq!(felder[6]["standard"], json!("aus"));
+    assert_eq!(felder[6]["pflicht"], json!(false));
 }
 
 #[test]

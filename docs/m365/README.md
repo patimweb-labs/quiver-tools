@@ -95,6 +95,12 @@ Admin-Zustimmung für neoimpulse.de erteilt – siehe [docs/entra-app.md](docs/e
   „Missing scope“), antwortet das Tool mit: „Für Teams fehlt die Zustimmung – im quiver-Fenster unter
   Tools → Microsoft 365 erneut auf ‚Anmelden‘ klicken.“ Es öffnet **keinen** Browser und löscht das
   Refresh-Token **nicht**.
+- **Reaktionen** nimmt `reaktion` als Wort (`like`, `love`, `laugh`, `surprised`, `sad`, `angry`) oder
+  als Emoji (👍 ❤️ 😆 😮 😢 😡); gesendet wird immer das Emoji, denn Graph akzeptiert als
+  `reactionType` nur Unicode (`Unicode 'heart' in the payload is not supported`). Ein unbekannter
+  Wert ergibt eine Meldung mit den erlaubten Emojis und **keine** Anfrage.
+- **Ein Chat mit sich selbst** lässt sich nicht anlegen: der eigene User ist immer Teilnehmer und
+  wird nie doppelt gebunden – bleibt niemand anderes übrig, sagt das Tool das und legt nichts an.
 - **Eigenheiten von Graph** (aus dem Live-Test, `docs/aufgaben/07-fehler-aus-dem-livetest.md`):
   `$top` ist auf `/me/joinedTeams` und `/teams/{id}/channels` **nicht** erlaubt – die Tools begrenzen
   clientseitig. `markChatReadForUser` braucht den Mandanten des Users im Rumpf (`tid` aus dem Token).
@@ -175,8 +181,9 @@ neoimpulse.de erteilt): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.Rea
 Bei `onenote_seite_anlegen` werden Titel und Text **HTML-escaped** eingesetzt: ein `<b>` im Text
 bleibt Text und wird nicht zu Markup.
 
-OneNote kennt bei Notizbüchern und Abschnitten **kein** `webUrl` (Graph antwortet mit 400); der Link
-steht unter `links.oneNoteWebUrl.href` und wird von dort gelesen. `/me/todo/lists` verträgt weder
+OneNote kennt bei Notizbüchern, Abschnitten **und Seiten** **kein** `webUrl` (Graph antwortet mit
+400); der Link steht unter `links.oneNoteWebUrl.href` und wird von dort gelesen.
+`/me/todo/lists` verträgt weder
 `$top` noch `$select` – begrenzt wird clientseitig, geblättert über `@odata.nextLink`; To-Do-Aufgaben
 kommen ohne `$select`, `$top` ist dort erlaubt (`docs/aufgaben/07-fehler-aus-dem-livetest.md`).
 

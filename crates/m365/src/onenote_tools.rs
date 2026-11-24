@@ -34,6 +34,9 @@ const HOECHSTENS_LISTE: usize = 200;
 /// Aufgabe 07). Der Link kommt aus `links.oneNoteWebUrl.href`.
 const NOTEBOOK_FELDER: &str = "id,displayName,createdDateTime,lastModifiedDateTime";
 
+/// `$select` für Seiten (Aufgabe 08: auch Seiten kennen kein `webUrl`).
+const PAGE_FELDER: &str = "id,title,createdDateTime,lastModifiedDateTime";
+
 // ---------------------------------------------------------------------------
 // Parameter der Tools
 // ---------------------------------------------------------------------------
@@ -261,10 +264,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             .get_seiten::<Seite>(
                 &format!("/me/onenote/sections/{}/pages", kodieren(&abschnitt.id)),
                 &[
-                    (
-                        "$select",
-                        "id,title,webUrl,createdDateTime,lastModifiedDateTime".to_string(),
-                    ),
+                    ("$select", PAGE_FELDER.to_string()),
                     ("$top", anzahl.to_string()),
                 ],
                 anzahl as usize,
@@ -289,10 +289,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             .graph
             .get(
                 &format!("/me/onenote/pages/{}", kodieren(seite)),
-                &[(
-                    "$select",
-                    "id,title,webUrl,createdDateTime,lastModifiedDateTime".to_string(),
-                )],
+                &[("$select", PAGE_FELDER.to_string())],
             )
             .await?;
         let html = self

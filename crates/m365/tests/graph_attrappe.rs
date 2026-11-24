@@ -625,7 +625,7 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
             json!({
                 "id": "1-page-neu-0001",
                 "title": titel,
-                "webUrl": "https://example/onenote/1-page-neu-0001",
+                "links": {"oneNoteWebUrl": {"href": "https://example/onenote/1-page-neu-0001"}},
                 "createdDateTime": "2026-11-27T10:00:00Z",
                 "lastModifiedDateTime": "2026-11-27T10:00:00Z",
             })
@@ -689,6 +689,41 @@ fn graph_regeln(
         ));
     }
 
+    // Auch Seiten kennen kein `webUrl` (Aufgabe 08).
+    if methode == "GET" && ist_onenote_seite(pfad) && select_enthaelt(abfrage, "webUrl") {
+        return Some(graph_antwort(
+            400,
+            "BadRequest",
+            "Could not find a property named 'webUrl' on type 'microsoft.graph.onenotePage'.",
+        ));
+    }
+
+    // `reactionType` muss das Unicode-Emoji sein (`Unicode 'heart' in the
+    // payload is not supported`, Aufgabe 08).
+    if methode == "POST" && (pfad.ends_with("/setReaction") || pfad.ends_with("/unsetReaction")) {
+        match body
+            .as_ref()
+            .and_then(|body| body.get("reactionType"))
+            .and_then(Value::as_str)
+        {
+            Some(reaktion) if ist_emoji(reaktion) => {}
+            Some(reaktion) => {
+                return Some(graph_antwort(
+                    400,
+                    "BadRequest",
+                    format!("Unicode '{reaktion}' in the payload is not supported."),
+                ))
+            }
+            None => {
+                return Some(graph_antwort(
+                    400,
+                    "BadRequest",
+                    "reactionType is missing in the payload.",
+                ))
+            }
+        }
+    }
+
     // `markChatReadForUser` braucht den Mandanten des Users im Rumpf.
     if methode == "POST"
         && (pfad.ends_with("/markChatReadForUser") || pfad.ends_with("/markChatUnreadForUser"))
@@ -715,6 +750,7 @@ fn graph_regeln(
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        let mut gesehen: Vec<String> = Vec::with_capacity(mitglieder.len());
         for mitglied in &mitglieder {
             match mitglied.get("user@odata.bind").and_then(Value::as_str) {
                 Some(bindung) if bindung.trim().ends_with("/me") => {
@@ -724,7 +760,14 @@ fn graph_regeln(
                         "'user@odata.bind' must reference the user by id, not by '/me'.",
                     ))
                 }
-                Some(bindung) if !bindung.trim().is_empty() => {}
+                Some(bindung) if !bindung.trim().is_empty() => {
+                    // Ein Mitglied nur einmal (Aufgabe 08: „Duplicate chat members“).
+                    let bindung = bindung.trim().to_lowercase();
+                    if gesehen.contains(&bindung) {
+                        return Some(graph_antwort(400, "BadRequest", "Duplicate chat members."));
+                    }
+                    gesehen.push(bindung);
+                }
                 _ => {
                     return Some(graph_antwort(
                         400,
@@ -778,6 +821,30 @@ fn ist_onenote_sammlung(pfad: &str) -> bool {
         && (pfad.ends_with("/notebooks")
             || pfad.ends_with("/sections")
             || pfad == "/me/onenote/sections")
+}
+
+/// `GET …/sections/{id}/pages`, `GET /me/onenote/pages/{id}` – nicht `/content`.
+fn ist_onenote_seite(pfad: &str) -> bool {
+    pfad.starts_with("/me/onenote/")
+        && !pfad.ends_with("/content")
+        && (pfad.ends_with("/pages") || pfad.starts_with("/me/onenote/pages/"))
+}
+
+/// Ist das ein Emoji? Nur die Bildzeichen-Blöcke, aus denen Reaktionen kommen.
+fn ist_emoji(text: &str) -> bool {
+    let text = text.trim();
+    !text.is_empty()
+        && text.chars().all(|zeichen| {
+            matches!(
+                zeichen as u32,
+                0x2190..=0x21FF
+                    | 0x2600..=0x27BF
+                    | 0x2B00..=0x2BFF
+                    | 0x1F000..=0x1FAFF
+                    | 0xFE00..=0xFE0F
+                    | 0x200D
+            )
+        })
 }
 
 /// `GET /me/todo/lists/{id}/tasks`.
@@ -1215,10 +1282,12 @@ fn abschnitte() -> Vec<Value> {
 
 fn onenote_seiten() -> Vec<Value> {
     vec![
+        // Kein `webUrl` bei OneNote-Seiten – der Link steht in `links`
+        // (Aufgabe 08).
         json!({
             "id": ONENOTE_SEITE,
             "title": "Jour fixe",
-            "webUrl": "https://example/onenote/jour-fixe",
+            "links": {"oneNoteWebUrl": {"href": "https://example/onenote/jour-fixe"}},
             "lastModifiedDateTime": "2026-11-27T09:00:00Z",
         }),
         json!({
@@ -1232,7 +1301,7 @@ fn onenote_seite(id: &str) -> Value {
     json!({
         "id": id,
         "title": "Jour fixe",
-        "webUrl": "https://example/onenote/jour-fixe",
+        "links": {"oneNoteWebUrl": {"href": "https://example/onenote/jour-fixe"}},
         "createdDateTime": "2026-11-27T08:00:00Z",
         "lastModifiedDateTime": "2026-11-27T09:00:00Z",
     })

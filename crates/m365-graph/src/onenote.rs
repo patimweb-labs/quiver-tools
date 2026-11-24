@@ -7,8 +7,9 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Der Link eines Notizbuchs oder Abschnitts (Aufgabe 07: `webUrl` gibt es
-/// hier **nicht**, der Link steht unter `links.oneNoteWebUrl.href`).
+/// Der Link eines Notizbuchs, Abschnitts oder einer Seite (Aufgabe 07/08:
+/// `webUrl` gibt es hier **nicht**, der Link steht unter
+/// `links.oneNoteWebUrl.href`).
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct OneNoteLink {
@@ -103,9 +104,23 @@ pub struct Seite {
     #[serde(default)]
     pub web_url: Option<String>,
     #[serde(default)]
+    pub links: Option<OneNoteLinks>,
+    #[serde(default)]
     pub created_date_time: Option<String>,
     #[serde(default)]
     pub last_modified_date_time: Option<String>,
+}
+
+impl Seite {
+    /// Der Web-Link – aus `links.oneNoteWebUrl.href` (Aufgabe 08: auch Seiten
+    /// kennen kein `webUrl`).
+    pub fn link(&self) -> Option<&str> {
+        self.links
+            .as_ref()
+            .and_then(|links| links.one_note_web_url.as_ref())
+            .and_then(OneNoteLink::href)
+            .or(self.web_url.as_deref())
+    }
 }
 
 #[cfg(test)]
@@ -136,13 +151,16 @@ mod tests {
             serde_json::from_value(serde_json::json!({"id": "nb-2"})).expect("Modell passt");
         assert!(ohne.link().is_none());
 
+        // Auch Seiten kennen kein `webUrl` (Aufgabe 08) – der Link steht in `links`.
         let seite: Seite = serde_json::from_value(serde_json::json!({
             "id": "page-1",
             "title": "Jour fixe 27.11.",
+            "links": {"oneNoteWebUrl": {"href": "https://example/onenote/page-1"}},
             "lastModifiedDateTime": "2026-11-27T09:00:00Z",
         }))
         .expect("Modell passt");
         assert_eq!(seite.title.as_deref(), Some("Jour fixe 27.11."));
+        assert_eq!(seite.link(), Some("https://example/onenote/page-1"));
         assert!(seite.web_url.is_none());
     }
 }

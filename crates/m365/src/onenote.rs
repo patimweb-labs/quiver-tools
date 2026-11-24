@@ -109,7 +109,7 @@ pub fn seite_json(seite: &Seite) -> Value {
     json!({
         "id": seite.id,
         "titel": seite.title,
-        "link": seite.web_url,
+        "link": seite.link(),
         "geaendert": seite.last_modified_date_time,
     })
 }

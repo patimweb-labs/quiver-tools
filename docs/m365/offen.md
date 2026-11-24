@@ -31,8 +31,9 @@ Aus dem ersten echten Test gegen den Tenant von neoimpulse.de (2026-11-23, nur l
       - `teams_eingang` liest die Lesemarke `viewpoint.lastMessageReadDateTime` aus der Chatliste.
         Graph dokumentiert `viewpoint` am einzelnen Chat; liefert die Liste sie nicht mit, gilt ein
         Chat mit Vorschau als ungelesen (lieber einmal zu viel zeigen als etwas verpassen).
-      - Die Reaktionsnamen sind auf `like/heart/laugh/surprised/sad/angry` und die üblichen Emojis
-        abgebildet; weitere Tenant-Reaktionen gehen unverändert durch.
+      - Die Reaktionsnamen sind auf die Wörter `like/love/laugh/surprised/sad/angry` und die
+        üblichen Emojis abgebildet (Wort → Emoji, denn Graph will als `reactionType` das Unicode-Emoji);
+        andere Emojis gehen unverändert durch, alles Übrige wird mit einer Meldung abgelehnt.
 - [ ] **Aufgabe 06 – bewusste Abkürzungen:**
       - **Office-/PDF-Text:** `datei_lesen` kann Office-Dateien nur als PDF anfordern
         (`?format=pdf`) und **nicht** in Text wandeln; PDF und Binäres liefern nur Metadaten.

@@ -222,8 +222,8 @@ pub struct TeamsReagierenAnfrage {
     pub kanal: Option<String>,
     /// Id der Nachricht, auf die reagiert wird.
     pub nachricht: String,
-    /// Die Reaktion: `like`, `heart`, `laugh`, `surprised`, `sad`, `angry` –
-    /// oder das Emoji (👍 ❤️ 😂 😮 😢 😡).
+    /// Die Reaktion als Wort (`like`, `love`, `laugh`, `surprised`, `sad`,
+    /// `angry`) oder direkt als Emoji (👍 ❤️ 😆 😮 😢 😡).
     pub reaktion: String,
     /// `true`: die Reaktion wieder entfernen (Standard `false`).
     #[serde(default)]
@@ -1263,11 +1263,6 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             personen.push(self.person_finden(referenz).await?);
         }
 
-        let art = if personen.len() == 1 {
-            "oneOnOne"
-        } else {
-            "group"
-        };
         // Der User selbst gehört immer dazu (Graph erwartet ihn ausdrücklich) –
         // aber als **eigene Id**, nicht als `/me`: `user@odata.bind` verlangt eine
         // Bindung an die Ressource (Aufgabe 07: „'user@odata.bind' field is
@@ -1276,6 +1271,31 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         let ich_id = ich_id.ok_or_else(|| {
             ungueltig_tool("Die eigene Benutzer-Id fehlt in der Antwort von Graph (/me).")
         })?;
+
+        // Der eigene User wird nie doppelt gebunden, und ein Mitglied steht nur
+        // einmal im Rumpf (Aufgabe 08: „Duplicate chat members“). Bleibt niemand
+        // übrig, gibt es keinen Chat mit sich selbst.
+        let mut gesehen: Vec<String> = vec![ich_id.to_lowercase()];
+        personen.retain(|person| {
+            let id = person.id.to_lowercase();
+            if gesehen.contains(&id) {
+                false
+            } else {
+                gesehen.push(id);
+                true
+            }
+        });
+        if personen.is_empty() {
+            return Err(ungueltig_tool(
+                "Du kannst keinen Chat nur mit dir selbst anlegen – nenne mindestens eine andere Person.",
+            ));
+        }
+
+        let art = if personen.len() == 1 {
+            "oneOnOne"
+        } else {
+            "group"
+        };
         let mut mitglieder = vec![json!({
             "@odata.type": "#microsoft.graph.aadUserConversationMember",
             "roles": ["owner"],
@@ -1332,10 +1352,15 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         if nachricht.is_empty() {
             return Err(ungueltig_tool("nachricht fehlt"));
         }
-        let reaktion = reaktion_normalisieren(&anfrage.reaktion);
-        if reaktion.is_empty() {
-            return Err(ungueltig_tool("reaktion fehlt"));
-        }
+        let roh = anfrage.reaktion.trim();
+        let reaktion = reaktion_normalisieren(roh).ok_or_else(|| {
+            let erlaubt = "erlaubt sind die Wörter like, love, laugh, surprised, sad, angry oder das Emoji (👍 ❤️ 😆 😮 😢 😡)";
+            if roh.is_empty() {
+                ungueltig_tool(format!("reaktion fehlt – {erlaubt}."))
+            } else {
+                ungueltig_tool(format!("reaktion {roh:?} ist unbekannt – {erlaubt}."))
+            }
+        })?;
 
         let basis = match anfrage
             .chat
@@ -1484,18 +1509,46 @@ fn text_zu_html(text: &str) -> String {
     raus
 }
 
-/// Emoji oder deutscher Name → Reaktionstyp von Graph.
-fn reaktion_normalisieren(roh: &str) -> String {
-    match roh.trim() {
-        "👍" | "like" | "gefällt mir" => "like",
-        "❤️" | "❤" | "heart" | "herz" => "heart",
-        "😂" | "laugh" | "lachen" => "laugh",
-        "😮" | "surprised" | "überrascht" => "surprised",
-        "😢" | "sad" | "traurig" => "sad",
-        "😡" | "angry" | "wütend" => "angry",
-        anderes => anderes,
+/// Emoji oder Wort → das **Unicode-Emoji**, das Graph als `reactionType` will
+/// (Aufgabe 08: „Unicode 'heart' in the payload is not supported“).
+///
+/// `None` für alles Unbekannte und für leeren Text – dann geht keine Anfrage
+/// an Graph.
+fn reaktion_normalisieren(roh: &str) -> Option<String> {
+    let roh = roh.trim();
+    let wort = match roh {
+        "like" => Some("👍"),
+        "heart" | "love" | "herz" => Some("❤️"),
+        "laugh" | "lachen" => Some("😆"),
+        "surprised" | "überrascht" => Some("😮"),
+        "sad" | "traurig" => Some("😢"),
+        "angry" | "wütend" => Some("😡"),
+        _ => None,
+    };
+    if let Some(emoji) = wort {
+        return Some(emoji.to_string());
     }
-    .to_string()
+    // Ein Emoji bleibt, wie es ist.
+    if ist_emoji(roh) {
+        return Some(roh.to_string());
+    }
+    None
+}
+
+/// Ist der Text ein Emoji? Nur die Bildzeichen- und Emoji-Blöcke zählen.
+fn ist_emoji(text: &str) -> bool {
+    !text.is_empty()
+        && text.chars().all(|zeichen| {
+            matches!(
+                zeichen as u32,
+                0x2190..=0x21FF
+                    | 0x2600..=0x27BF
+                    | 0x2B00..=0x2BFF
+                    | 0x1F000..=0x1FAFF
+                    | 0xFE00..=0xFE0F
+                    | 0x200D
+            )
+        })
 }
 
 #[cfg(test)]
@@ -1530,12 +1583,18 @@ mod tests {
     }
 
     #[test]
-    fn reaktionen_werden_uebersetzt() {
-        assert_eq!(reaktion_normalisieren("👍"), "like");
-        assert_eq!(reaktion_normalisieren(" ❤️ "), "heart");
-        assert_eq!(reaktion_normalisieren("laugh"), "laugh");
-        assert_eq!(reaktion_normalisieren("😡"), "angry");
-        assert_eq!(reaktion_normalisieren("unbekannt"), "unbekannt");
+    fn reaktionen_werden_zu_emoji() {
+        assert_eq!(reaktion_normalisieren("like"), Some("👍".to_string()));
+        assert_eq!(reaktion_normalisieren(" heart "), Some("❤️".to_string()));
+        assert_eq!(reaktion_normalisieren("love"), Some("❤️".to_string()));
+        assert_eq!(reaktion_normalisieren("laugh"), Some("😆".to_string()));
+        assert_eq!(reaktion_normalisieren("angry"), Some("😡".to_string()));
+        // Ein Emoji bleibt, wie es ist.
+        assert_eq!(reaktion_normalisieren("👍"), Some("👍".to_string()));
+        assert_eq!(reaktion_normalisieren("😡"), Some("😡".to_string()));
+        // Unbekannt und leer: keine Anfrage, klare Meldung.
+        assert_eq!(reaktion_normalisieren("unbekannt"), None);
+        assert_eq!(reaktion_normalisieren("   "), None);
     }
 
     #[test]

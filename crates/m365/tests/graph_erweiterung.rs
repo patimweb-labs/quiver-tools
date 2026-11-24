@@ -966,6 +966,11 @@ async fn onenote_notizbuecher_abschnitte_und_seiten() {
     );
     assert_eq!(wert["seiten"][0]["id"], graph_attrappe::ONENOTE_SEITE);
     assert_eq!(wert["seiten"][0]["titel"], "Jour fixe");
+    // Auch bei Seiten kommt der Link aus `links.oneNoteWebUrl.href` (Aufgabe 08).
+    assert_eq!(
+        wert["seiten"][0]["link"],
+        "https://example/onenote/jour-fixe"
+    );
 
     let pfade: Vec<String> = graph
         .aufzeichnungen()
@@ -994,11 +999,13 @@ async fn onenote_notizbuecher_abschnitte_und_seiten() {
         .aufzeichnungen()
         .into_iter()
         .filter(|anfrage| {
-            anfrage.pfad == "/v1.0/me/onenote/notebooks" || anfrage.pfad.ends_with("/sections")
+            anfrage.pfad == "/v1.0/me/onenote/notebooks"
+                || anfrage.pfad.ends_with("/sections")
+                || anfrage.pfad.ends_with("/pages")
         })
         .filter_map(|anfrage| anfrage.query("$select").map(str::to_string))
         .collect();
-    assert_eq!(selects.len(), 4, "vier Listenabfragen mit $select");
+    assert_eq!(selects.len(), 5, "fünf Listenabfragen mit $select");
     for select in &selects {
         assert!(
             !select.contains("webUrl"),
@@ -1009,7 +1016,7 @@ async fn onenote_notizbuecher_abschnitte_und_seiten() {
 
 #[tokio::test]
 async fn onenote_seite_lesen_wandelt_html_und_kuerzt() {
-    let (_anmelde, _graph, server, _tresor) = aufbau().await;
+    let (_anmelde, graph, server, _tresor) = aufbau().await;
 
     let wert = json(
         &server
@@ -1022,6 +1029,15 @@ async fn onenote_seite_lesen_wandelt_html_und_kuerzt() {
     );
     assert_eq!(wert["titel"], "Jour fixe");
     assert_eq!(wert["text"], "Erste Zeile\nZweite Zeile");
+    // Der Link der Seite kommt aus `links.oneNoteWebUrl.href` (Aufgabe 08).
+    assert_eq!(wert["link"], "https://example/onenote/jour-fixe");
+
+    let kopf = graph.aufzeichnungen().remove(0);
+    let select = kopf.query("$select").expect("$select");
+    assert!(
+        !select.contains("webUrl"),
+        "kein webUrl in $select: {select}"
+    );
 
     let wert = json(
         &server
@@ -1197,6 +1213,30 @@ async fn die_attrappe_haelt_die_onenote_und_todo_regeln_ein() {
             .await,
     );
     assert_eq!(status_code, 400, "kein webUrl bei Abschnitten");
+
+    // Auch Seiten kennen kein `webUrl` (Aufgabe 08).
+    let (status_code, text) = match client
+        .get::<Value>(
+            &format!("/me/onenote/sections/{}/pages", graph_attrappe::ABSCHNITT),
+            &[("$select", "id,title,webUrl".to_string())],
+        )
+        .await
+    {
+        Err(m365_graph::GraphFehler::Graph { status, text, .. }) => (status, text),
+        anderes => panic!("400 erwartet, kam: {anderes:?}"),
+    };
+    assert_eq!(status_code, 400, "kein webUrl bei Seiten");
+    assert!(text.contains("microsoft.graph.onenotePage"), "{text}");
+
+    let (status_code, _) = status(
+        client
+            .get(
+                &format!("/me/onenote/pages/{}", graph_attrappe::ONENOTE_SEITE),
+                &[("$select", "id,title,webUrl".to_string())],
+            )
+            .await,
+    );
+    assert_eq!(status_code, 400, "kein webUrl bei einer Seite");
 
     for (name, wert) in [("$top", "10"), ("$select", "id,displayName")] {
         let (status_code, code) = status(

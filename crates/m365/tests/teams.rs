@@ -571,7 +571,7 @@ async fn reagieren_setzt_und_entfernt_die_reaktion() {
             .await
             .expect("reagiert"),
     );
-    assert_eq!(wert["reaktion"], "like");
+    assert_eq!(wert["reaktion"], "👍");
     assert_eq!(wert["reagiert"], true);
 
     let post = graph.einzige();
@@ -582,7 +582,11 @@ async fn reagieren_setzt_und_entfernt_die_reaktion() {
             graph_attrappe::CHAT_PROJEKT
         )
     );
-    assert_eq!(post.body()["reactionType"], "like");
+    assert_eq!(
+        post.body()["reactionType"],
+        "👍",
+        "reactionType ist das Emoji (Aufgabe 08)"
+    );
 }
 
 #[tokio::test]
@@ -611,7 +615,68 @@ async fn reagieren_im_kanal_nimmt_team_und_kanal() {
             graph_attrappe::KANAL_ALLGEMEIN
         )
     );
-    assert_eq!(post.body()["reactionType"], "heart");
+    assert_eq!(
+        post.body()["reactionType"],
+        "❤️",
+        "auch beim Entfernen das Emoji (Aufgabe 08)"
+    );
+}
+
+#[tokio::test]
+async fn reagieren_mit_unbekannter_reaktion_fragt_graph_nicht() {
+    // `reactionType` muss das Emoji sein; ein unbekanntes Wort erzeugt bei Graph
+    // nur einen 400. Deshalb: klare Meldung, keine Anfrage (Aufgabe 08).
+    let (_anmelde, graph, server, _tresor) = aufbau().await;
+
+    let fehler = server
+        .teams_reagieren(Parameters(TeamsReagierenAnfrage {
+            chat: Some(graph_attrappe::CHAT_PROJEKT.to_string()),
+            team: None,
+            kanal: None,
+            nachricht: "c1".to_string(),
+            reaktion: "begeistert".to_string(),
+            entfernen: None,
+        }))
+        .await
+        .expect_err("unbekannte Reaktion");
+    let text = fehlertext(fehler);
+    assert!(text.contains("unbekannt"), "{text}");
+    assert!(
+        text.contains('👍'),
+        "die Meldung nennt die erlaubten Emojis: {text}"
+    );
+
+    assert!(
+        graph.aufzeichnungen().is_empty(),
+        "ohne bekannte Reaktion geht keine Anfrage an Graph"
+    );
+}
+
+#[tokio::test]
+async fn reagieren_ohne_reaktion_fragt_graph_nicht() {
+    let (_anmelde, graph, server, _tresor) = aufbau().await;
+
+    let fehler = server
+        .teams_reagieren(Parameters(TeamsReagierenAnfrage {
+            chat: Some(graph_attrappe::CHAT_PROJEKT.to_string()),
+            team: None,
+            kanal: None,
+            nachricht: "c1".to_string(),
+            reaktion: "   ".to_string(),
+            entfernen: None,
+        }))
+        .await
+        .expect_err("leere Reaktion");
+    let text = fehlertext(fehler);
+    assert!(text.contains("reaktion fehlt"), "{text}");
+    assert!(
+        text.contains('👍'),
+        "die Meldung nennt die erlaubten Emojis: {text}"
+    );
+    assert!(
+        graph.aufzeichnungen().is_empty(),
+        "ohne Reaktion geht keine Anfrage an Graph"
+    );
 }
 
 #[tokio::test]
@@ -1044,4 +1109,135 @@ async fn die_attrappe_haelt_die_teams_regeln_von_graph_ein() {
             .await,
     );
     assert_eq!(status_code, 400, "'user@odata.bind' fehlt");
+}
+
+// ---------------------------------------------------------------------------
+// Regeln aus dem Live-Test, Runde 2 (docs/m365/aufgaben/08-livetest-runde-2.md)
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn chat_nur_mit_sich_selbst_wird_abgelehnt() {
+    // Der eigene User ist immer Teilnehmer; nennt man nur ihn, antwortet Graph
+    // mit „Duplicate chat members“. Also: klare Meldung, kein POST (Aufgabe 08).
+    let (_anmelde, graph, server, _tresor) = aufbau().await;
+
+    let fehler = server
+        .teams_chat_anlegen(Parameters(TeamsChatAnlegenAnfrage {
+            teilnehmer: vec!["anna@firma.de".to_string()],
+            thema: None,
+            nachricht: Some("Nur für mich".to_string()),
+        }))
+        .await
+        .expect_err("kein Chat mit sich selbst");
+    let text = fehlertext(fehler);
+    assert!(
+        text.contains("keinen Chat nur mit dir selbst anlegen"),
+        "{text}"
+    );
+    assert!(text.contains("mindestens eine andere Person"), "{text}");
+
+    assert!(
+        !graph
+            .aufzeichnungen()
+            .iter()
+            .any(|anfrage| anfrage.methode == "POST"),
+        "es wurde nichts angelegt"
+    );
+}
+
+#[tokio::test]
+async fn eigener_user_wird_nie_doppelt_gebunden() {
+    // Nennt man sich selbst und jemand anderen, bleibt genau eine Bindung an
+    // die eigene Id – sonst antwortet Graph mit 400 (Aufgabe 08).
+    let (_anmelde, graph, server, _tresor) = aufbau().await;
+
+    let wert = json(
+        &server
+            .teams_chat_anlegen(Parameters(TeamsChatAnlegenAnfrage {
+                teilnehmer: vec!["anna@firma.de".to_string(), "bert@firma.de".to_string()],
+                thema: None,
+                nachricht: None,
+            }))
+            .await
+            .expect("angelegt"),
+    );
+    assert_eq!(wert["art"], "oneOnOne", "eine andere Person: 1:1");
+    assert_eq!(wert["teilnehmer"], json!(["Bert Beispiel"]));
+
+    let alle = graph.aufzeichnungen();
+    let angelegt = alle
+        .iter()
+        .find(|anfrage| anfrage.methode == "POST" && anfrage.pfad == "/v1.0/chats")
+        .expect("POST /chats");
+    let bindungen: Vec<&str> = angelegt.body()["members"]
+        .as_array()
+        .expect("Mitglieder")
+        .iter()
+        .filter_map(|mitglied| mitglied["user@odata.bind"].as_str())
+        .collect();
+    assert_eq!(
+        bindungen,
+        vec![
+            "https://graph.microsoft.com/v1.0/users('u-anna')",
+            "https://graph.microsoft.com/v1.0/users/u-bert",
+        ],
+        "die eigene Id genau einmal"
+    );
+}
+
+#[tokio::test]
+async fn die_attrappe_haelt_die_regeln_der_zweiten_runde_ein() {
+    // Ohne diese 400er der Attrappe würden die Tests oben nicht greifen
+    // (Aufgabe 08).
+    let anmelde = Attrappe::starten().await;
+    let graph = GraphAttrappe::starten().await;
+    let anmeldung = EntraAnmeldung::mit_festem_token(
+        attrappe::konfig(&anmelde),
+        SpeicherTresor::neu(),
+        AttrappenBrowser::neu(),
+        Some(graph_attrappe::access_token()),
+    )
+    .expect("Anmeldung baut");
+    let client = GraphClient::neu(graph.adresse.clone(), anmeldung).expect("Graph-Client baut");
+
+    let status = |ergebnis: Result<Value, m365_graph::GraphFehler>| match ergebnis {
+        Err(m365_graph::GraphFehler::Graph { status, text, .. }) => {
+            assert_eq!(status, 400);
+            text
+        }
+        anderes => panic!("400 erwartet, kam: {anderes:?}"),
+    };
+
+    let meldung = status(
+        client
+            .post::<Value>(
+                &format!(
+                    "/chats/{}/messages/c1/setReaction",
+                    graph_attrappe::CHAT_PROJEKT
+                ),
+                &json!({"reactionType": "heart"}),
+            )
+            .await,
+    );
+    assert!(
+        meldung.contains("Unicode 'heart' in the payload is not supported"),
+        "{meldung}"
+    );
+
+    let meldung = status(
+        client
+            .post::<Value>(
+                "/chats",
+                &json!({"chatType": "group", "members": [
+                    {"@odata.type": "#microsoft.graph.aadUserConversationMember",
+                     "roles": ["owner"],
+                     "user@odata.bind": "https://graph.microsoft.com/v1.0/users('u-anna')"},
+                    {"@odata.type": "#microsoft.graph.aadUserConversationMember",
+                     "roles": ["owner"],
+                     "user@odata.bind": "https://graph.microsoft.com/v1.0/users('u-anna')"},
+                ]}),
+            )
+            .await,
+    );
+    assert!(meldung.contains("Duplicate chat members"), "{meldung}");
 }

@@ -10,27 +10,17 @@ use std::sync::Mutex;
 
 use crate::Tresor;
 
-/// Name des Dienstes im alten Schlüsselbund (nur noch für den Umzug). Schlüssel ist `<tenant>/<client_id>`.
-pub const DIENST: &str = "quiver-m365";
-
 pub use crate::dateitresor::DateiTresor;
 
 impl DateiTresor {
     /// Der Tresor in `<Datenordner>/quiver-m365/tresor` (macOS: `~/Library/Application Support`, Linux: `~/.local/share`, Windows: `%APPDATA%`).
-    ///
-    /// Unter macOS wird ein Wert, der noch nicht in der Datei steht, einmal
-    /// im alten Schlüsselbund (Dienst [`DIENST`]) gesucht und übernommen.
     pub fn standard() -> Self {
-        let tresor = DateiTresor::im_ordner(
+        DateiTresor::im_ordner(
             dirs::data_dir()
                 .unwrap_or_else(std::env::temp_dir)
                 .join("quiver-m365")
                 .join("tresor"),
-        );
-        match altbestand() {
-            Some(altbestand) => tresor.mit_altbestand(altbestand),
-            None => tresor,
-        }
+        )
     }
 }
 
@@ -44,22 +34,6 @@ impl Tresor for DateiTresor {
     fn loeschen(&self, schluessel: &str) -> anyhow::Result<()> {
         DateiTresor::loeschen(self, schluessel)
     }
-}
-
-/// Der alte Schlüsselbund als Altbestand – nur unter macOS.
-#[cfg(target_os = "macos")]
-fn altbestand() -> Option<crate::dateitresor::Altbestand> {
-    Some(Box::new(|schluessel: &str| {
-        keyring::Entry::new(DIENST, schluessel)
-            .ok()?
-            .get_password()
-            .ok()
-    }))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn altbestand() -> Option<crate::dateitresor::Altbestand> {
-    None
 }
 
 /// Refresh-Token nur im Arbeitsspeicher (Tests, Entwicklung, `M365_TRESOR=speicher`).

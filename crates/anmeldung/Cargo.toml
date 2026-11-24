@@ -23,9 +23,6 @@ open = "5"
 rand = "0.9"
 url = "2"
 
-# Nur für den einmaligen Umzug aus dem alten Schlüsselbund (macOS).
-[target.'cfg(target_os = "macos")'.dependencies]
-keyring = "4"
 
 [dev-dependencies]
 tempfile = "3"

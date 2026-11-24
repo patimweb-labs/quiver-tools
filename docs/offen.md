@@ -12,4 +12,4 @@ Aus dem ersten echten Test gegen den Tenant von neoimpulse.de (2026-11-23, nur l
       nur mit Datum und `ganztags: true`.
 - [ ] Noch nicht echt getestet: `mail_senden`, `termin_anlegen`, `abmelden` (verändernd, bewusst ausgelassen).
 
-- [ ] Tresor-Datei (ADR mcp-quiver 0001): Umzug aus dem macOS-Schlüsselbund entfernen, sobald alle Geräte umgezogen sind; optional Hauptpasswort (Argon2) beim Start.
+- [ ] Tresor-Datei (ADR mcp-quiver 0001): optional Hauptpasswort (Argon2) beim Start.

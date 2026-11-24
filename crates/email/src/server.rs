@@ -495,13 +495,15 @@ impl<F: Fabrik> EmailServer<F> {
             .unwrap_or_default()
             .iter()
             .map(|f| imap_flag(f))
-            .collect();
+            .collect::<Result<_, _>>()
+            .map_err(|text| McpError::invalid_params(text, None))?;
         let weg: Vec<String> = p
             .remove
             .unwrap_or_default()
             .iter()
             .map(|f| imap_flag(f))
-            .collect();
+            .collect::<Result<_, _>>()
+            .map_err(|text| McpError::invalid_params(text, None))?;
         let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),

@@ -168,6 +168,9 @@ impl std::fmt::Debug for Client {
     }
 }
 
+/// Nur unter diesem Pfad ruft das Werkzeug das System auf.
+const ADT_WURZEL: &str = "/sap/bc/adt/";
+
 impl Client {
     /// Ein Client für dieses System. Das Passwort steht nur im Speicher.
     pub fn neu(system: &System) -> Result<Client, AdtFehler> {
@@ -182,6 +185,9 @@ impl Client {
     fn bauen(system: &System, stateful: bool) -> Result<Client, AdtFehler> {
         let mut bauen = reqwest::Client::builder()
             .timeout(ZEITLIMIT)
+            // Benutzer und Passwort gehen nur an das eingetragene System: eine
+            // Weiterleitung wird gemeldet, nie verfolgt.
+            .redirect(reqwest::redirect::Policy::none())
             .user_agent(concat!("quiver-abap/", env!("CARGO_PKG_VERSION")));
         if system.zertifikat_ungeprueft() {
             // Nur wenn der User es im quiver-Fenster abschaltet.
@@ -329,7 +335,7 @@ impl Client {
     ) -> Result<reqwest::Response, AdtFehler> {
         let mut ziel = self
             .http
-            .request(anfrage.methode.reqwest(), self.url(&anfrage.pfad));
+            .request(anfrage.methode.reqwest(), self.url(&anfrage.pfad)?);
         ziel = ziel
             .query(&[("sap-client", self.system.mandant.as_str())])
             .query(&[("sap-language", self.system.sprache.as_str())]);
@@ -363,14 +369,41 @@ impl Client {
         ziel.send().await.map_err(|fehler| AdtFehler::netz(&fehler))
     }
 
-    /// Die Adresse eines Aufrufs: eigene Adresse oder vollständige Adresse.
-    fn url(&self, pfad: &str) -> String {
-        if pfad.starts_with("http://") || pfad.starts_with("https://") {
+    /// Die Adresse eines Aufrufs – immer auf dem **eingetragenen** System.
+    ///
+    /// Jeder Aufruf trägt Benutzer und Passwort. Ein Pfad (auch aus einer
+    /// Antwort) darf deshalb nie auf ein anderes System zeigen: Schema, Host und
+    /// Port müssen genau passen.
+    fn url(&self, pfad: &str) -> Result<reqwest::Url, AdtFehler> {
+        let fremd = || AdtFehler::FremdesSystem {
+            system: self.system.name.clone(),
+        };
+        let pfad = pfad.trim();
+        if pfad.chars().any(|zeichen| zeichen.is_control()) {
+            return Err(fremd());
+        }
+        let basis = reqwest::Url::parse(&self.system.url).map_err(|_| fremd())?;
+        let absolut = pfad.to_ascii_lowercase();
+        let adresse = if absolut.starts_with("http:") || absolut.starts_with("https:") {
             pfad.to_string()
         } else if pfad.starts_with('/') {
-            format!("{}{}", self.system.url, pfad)
+            format!("{}{}", self.system.url.trim_end_matches('/'), pfad)
         } else {
-            format!("{}/{}", self.system.url, pfad)
+            format!("{}/{}", self.system.url.trim_end_matches('/'), pfad)
+        };
+        let adresse = reqwest::Url::parse(&adresse).map_err(|_| fremd())?;
+        let gleich = adresse.scheme() == basis.scheme()
+            && adresse.host_str() == basis.host_str()
+            && adresse.port_or_known_default() == basis.port_or_known_default()
+            && adresse.username().is_empty()
+            && adresse.password().is_none()
+            // `Url` hat `..` schon aufgelöst; kodierte Punkte lehnen wir ab.
+            && adresse.path().starts_with(ADT_WURZEL)
+            && !adresse.path().to_ascii_lowercase().contains("%2e%2e");
+        if gleich {
+            Ok(adresse)
+        } else {
+            Err(fremd())
         }
     }
 
@@ -418,16 +451,91 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn die_adresse_wird_aus_dem_system_gebaut() {
+    async fn die_adresse_bleibt_auf_dem_eingetragenen_system() {
         let client = Client::neu(&system()).unwrap();
-        assert_eq!(
-            client.url("/sap/bc/adt/x"),
-            "https://sap.example.test:44300/sap/bc/adt/x"
-        );
-        assert_eq!(
-            client.url("https://andere.example.test/y"),
-            "https://andere.example.test/y"
-        );
+        for (pfad, soll) in [
+            ("/sap/bc/adt/x", "/sap/bc/adt/x"),
+            ("sap/bc/adt/x", "/sap/bc/adt/x"),
+            (
+                "https://sap.example.test:44300/sap/bc/adt/x",
+                "/sap/bc/adt/x",
+            ),
+            (
+                "/sap/bc/adt/oo/classes/%2fneo%2fcl/source",
+                "/sap/bc/adt/oo/classes/%2fneo%2fcl/source",
+            ),
+        ] {
+            assert_eq!(
+                client.url(pfad).unwrap().as_str(),
+                format!("https://sap.example.test:44300{soll}")
+            );
+        }
+        for boese in [
+            "https://andere.example.test/sap/bc/adt/y",
+            "HTTPS://andere.example.test/sap/bc/adt/y",
+            "https:andere.example.test/sap/bc/adt/y",
+            "https:\\\\andere.example.test/sap/bc/adt/y",
+            "http://sap.example.test:44300/sap/bc/adt/y",
+            "https://sap.example.test/sap/bc/adt/y",
+            "https://sap.example.test:44300@andere.example.test/sap/bc/adt/y",
+            "https://x:y@sap.example.test:44300/sap/bc/adt/y",
+            "//andere.example.test/sap/bc/adt/y",
+            "@andere.example.test/sap/bc/adt/y",
+            "/sap/bc/adt/../../public/ping",
+            "/sap/bc/adt/%2e%2e/%2E%2E/x",
+            "/sap/bc/gui/x",
+            "/sap/bc/adt/x\r\nHost: andere",
+            "",
+        ] {
+            assert!(
+                matches!(client.url(boese), Err(AdtFehler::FremdesSystem { .. })),
+                "{boese:?} -> {:?}",
+                client.url(boese)
+            );
+        }
+    }
+
+    /// Ein Aufruf mit fremder Adresse verlässt den Rechner gar nicht erst –
+    /// auch nicht für das CSRF-Token – und eine Weiterleitung wird nicht verfolgt.
+    #[tokio::test]
+    async fn zugangsdaten_gehen_nie_an_ein_fremdes_system() {
+        use std::io::{Read, Write};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Arc;
+        let fremd = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let fremd_url = format!("http://{}", fremd.local_addr().unwrap());
+        let treffer = Arc::new(AtomicUsize::new(0));
+        let zaehler = treffer.clone();
+        std::thread::spawn(move || {
+            for strom in fremd.incoming().flatten() {
+                zaehler.fetch_add(1, Ordering::SeqCst);
+                drop(strom);
+            }
+        });
+        let eigen = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let eigen_url = format!("http://{}", eigen.local_addr().unwrap());
+        let ziel = fremd_url.clone();
+        std::thread::spawn(move || {
+            for mut strom in eigen.incoming().flatten() {
+                let mut puffer = [0u8; 4096];
+                let _ = strom.read(&mut puffer);
+                let _ = write!(
+                    strom,
+                    "HTTP/1.1 307 Temporary Redirect\r\nLocation: {ziel}/sap/bc/adt/x\r\n\
+                     x-csrf-token: t\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+            }
+        });
+        let mut system = system();
+        system.url = eigen_url;
+        let client = Client::neu(&system).unwrap();
+        for pfad in [
+            format!("{fremd_url}/sap/bc/adt/x"),
+            "/sap/bc/adt/x".to_string(),
+        ] {
+            assert!(client.holen(&Anfrage::holen(&pfad)).await.is_err());
+        }
+        assert_eq!(treffer.load(Ordering::SeqCst), 0);
     }
 
     #[test]

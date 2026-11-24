@@ -356,15 +356,16 @@ known_hosts                              0600
 
 ## quiver-abap (ABAP over SAP ADT)
 
-`quiver-abap` reads ABAP objects, table contents, syntax messages, unit tests, ATC
-findings, dumps, traces and transports from a SAP system over the ADT REST service –
-**read only** in this part; the writing tools (lock/write/activate/create) come later.
+`quiver-abap` works with ABAP objects over the SAP ADT REST service: it reads objects,
+table contents, syntax messages, unit tests, ATC findings, dumps, traces and transports,
+and it writes source code, activates, creates objects and maintains text elements.
 
 Setup (once per system, in quiver): **Tools → ABAP → Systeme** → add a system with the
 SAP user, the ADT address (e.g. `https://sap-dev.example.com:44300`), the client
-(mandant), the logon language (default `DE`) and the SAP password. quiver keeps the
-password in the encrypted vault file and passes every system to the tool as JSON in
-`QUIVER_ZUGAENGE`, exactly like `quiver-ssh`.
+(mandant), the logon language (default `DE`), the SAP password and – only for a system
+you really want to change – the `schreiben` switch. quiver keeps the password in the
+encrypted vault file and passes every system to the tool as JSON in `QUIVER_ZUGAENGE`,
+exactly like `quiver-ssh`.
 
 ### Multiple systems, one list
 
@@ -386,7 +387,8 @@ The entry uses `mehrfach`, so it has no `felder` and no `umgebung` of its own:
       { "name": "mandant", "quelle": "client", "pflicht": true },
       { "name": "sprache", "quelle": "client", "pflicht": false, "standard": "DE" },
       { "name": "passwort", "quelle": "geheim", "pflicht": true },
-      { "name": "zertifikat_pruefen", "quelle": "client", "pflicht": false, "standard": "an" }
+      { "name": "zertifikat_pruefen", "quelle": "client", "pflicht": false, "standard": "an" },
+      { "name": "schreiben", "quelle": "client", "pflicht": false, "standard": "aus" }
     ]
   }
 }
@@ -405,6 +407,8 @@ reports how many ADT areas the system announces.
   parameters, plus a cookie jar per system (`SAP_SESSIONID_*`).
 - **CSRF** as ADT wants it: the first call fetches a token with `x-csrf-token: fetch`;
   a `403` with `x-csrf-token: Required` fetches a new token and repeats the call **once**.
+  In a writing session the token is refreshed **inside** that session, so the lock stays
+  valid.
 - **401 is final.** A rejected password is reported as such and never retried – SAP
   locks users after too many failed logons.
 - **ADT exceptions** (`exc:exception`) reach the agent as type plus message, never as a
@@ -412,8 +416,9 @@ reports how many ADT areas the system announces.
 
 ### Tools
 
-All nineteen tools are read-only (`read_only_hint`), including syntax check, unit tests
-and ATC: they compute, they change nothing.
+Nineteen tools are read-only (`read_only_hint`), including syntax check, unit tests and
+ATC: they compute, they change nothing. `abap_lock` and `abap_unlock` are neither
+read-only nor destructive, the other four writing tools carry `destructive_hint`.
 
 | Tool | What it does |
 |---|---|
@@ -436,12 +441,42 @@ and ATC: they compute, they change nothing.
 | `abap_transports` | Transport requests of a user, grouped by target |
 | `abap_transport_details` | One request with status, owner, tasks and objects (`transportNumber`) |
 | `abap_text_elements` | Text symbols, selection texts or headings (`category` `symbols`/`selections`/`headings`) |
+| `abap_lock` | Lock an object and return the lock handle (`accessMode` default `MODIFY`) |
+| `abap_unlock` | Release a lock again (`lockHandle`) |
+| `abap_write` | Save the full source (`source`, `transport`, optional `lockHandle`) |
+| `abap_activate` | Activate an object and show the messages (`preauditRequested` default true) |
+| `abap_create_object` | Create `CLAS/OC`, `INTF/OI`, `PROG/P`, `PROG/I`, `FUGR/F`, `TABL/DT`, `DTEL/DE`, `DOMA/DD` or `DDLS/DF` in a package |
+| `abap_set_text_elements` | Write text elements (`category`, `elements` with `id`, `text`, `maxLength`) |
+| `abap_profile` | The systems of the entry, without passwords (the core's profile tool; a single profile exists only without `mehrfach`) |
 
 Parameter names follow the template (`query`, `objectType`, `objectUrl`, `parentType`,
-`traceId`, `transportNumber`, `category`); only `max_zeichen` and `max_zeilen` are German,
+`traceId`, `transportNumber`, `category`, `lockHandle`, `accessMode`, `preauditRequested`);
+`type` is accepted as an alias for `typ`. Only `max_zeichen` and `max_zeilen` are German,
 as the task requires.
 
-Decision record: [docs/adr/0005-adt-client-in-rust.md](docs/adr/0005-adt-client-in-rust.md).
+### Writing: three guards before any request
+
+1. **`schreiben` per system, default off.** If it is off, every writing tool answers
+   „Schreiben ist für <system> aus – im quiver-Fenster unter Tools → ABAP → Systeme →
+   <system> ‚schreiben‘ einschalten.“ and **no request goes to SAP**. Nothing is written
+   to a production system by accident.
+2. **Customer namespace only.** Writing, locking and creating only touch objects named
+   `Z*`, `Y*` or `/namespace/name`; for `abap_create_object` the package must be `$TMP`
+   or a customer package as well. Everything else is rejected without a request.
+3. **`source` up to 2 MB**, otherwise an error without a request.
+
+Locks live in **one stateful session per system** inside the process
+(`X-sap-adt-sessiontype: stateful` plus `SAP_SESSIONID_*`): a lock handle is only valid
+in the session that obtained it. `abap_write` without `lockHandle` locks, writes and
+unlocks (always, even when the write fails); with a `lockHandle` that did not come from
+this session it answers „Lock-Handle unbekannt – erst abap_lock aufrufen“ without asking
+SAP. If the session times out, the session and its lock table are dropped and the answer
+says „Sitzung abgelaufen, Locks verloren – erneut abap_lock“ – a write is **never**
+retried silently. When the process ends (stdin closed or SIGTERM) all known locks are
+released, at most 5 s, errors only to the log.
+
+Decision record: [docs/adr/0005-adt-client-in-rust.md](docs/adr/0005-adt-client-in-rust.md)
+and [docs/adr/0006-abap-schreiben.md](docs/adr/0006-abap-schreiben.md).
 
 ## Entwickeln
 
@@ -462,7 +497,9 @@ cargo run -p quiver-tools-kern --example demo
 
 Tests laufen nur gegen Attrappen – bei Outline ein axum-Server auf `127.0.0.1`, bei
 E-Mail die Traits `Postfach`/`Versand`, bei ZEP eine axum-Attrappe mit Metadaten, DCR,
-Anmelde- und Zustimmungsseite, Token-Endpunkt und einem Mini-MCP-Server hinter Bearer –
+Anmelde- und Zustimmungsseite, Token-Endpunkt und einem Mini-MCP-Server hinter Bearer,
+bei ABAP eine ADT-Attrappe mit CSRF, Cookies, Sperren (nur die Sitzung, die gesperrt
+hat, darf schreiben), Quelltext-PUT, Aktivierung und Anlegen –
 und setzen die Umgebung als Paare im Speicher;
 kein Test spricht mit einem echten Dienst, kein Test braucht eine Tresor-Datei. Der
 SMTP-Teil wird zusätzlich gegen `lettre`s Stub-Transport geprüft (Kopfzeilen, Threading,

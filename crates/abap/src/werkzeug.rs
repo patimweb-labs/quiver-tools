@@ -13,7 +13,9 @@ use quiver_tools_kern::{hinweis_zugang, Feld, FeldArt, Profil, Werkzeug};
 
 use crate::adt::client::{Anfrage, Client};
 use crate::adt::daten;
-use crate::systeme::{Sammlung, BENUTZER, MANDANT, PASSWORT, SPRACHE, URL, ZERTIFIKAT_PRUEFEN};
+use crate::systeme::{
+    Sammlung, BENUTZER, MANDANT, PASSWORT, SCHREIBEN, SPRACHE, URL, ZERTIFIKAT_PRUEFEN,
+};
 
 /// Kurzname: Teil der Werkzeugnamen (`abap_search`) und des Programms.
 pub const NAME: &str = "abap";
@@ -39,7 +41,9 @@ impl Werkzeug for Abap {
 
     fn beschreibung(&self) -> &'static str {
         "ABAP über SAP ADT: Objekte suchen und lesen, Tabellen abfragen, Syntax, Unit-Tests, ATC, \
-         Dumps, Traces und Transporte ansehen."
+         Dumps, Traces und Transporte ansehen. Schreibende Werkzeuge (Sperren, Quelltext \
+         schreiben, Aktivieren, Anlegen, Textelemente) nur, wenn der Schalter „schreiben“ im \
+         quiver-Fenster für das System an ist."
     }
 
     fn felder(&self) -> Vec<Feld> {
@@ -100,6 +104,18 @@ impl Werkzeug for Abap {
                         abschalten, wenn das nicht reicht.",
                 link: None,
             },
+            Feld {
+                name: SCHREIBEN,
+                titel: "Schreiben erlauben",
+                art: FeldArt::Schalter,
+                pflicht: false,
+                standard: Some("aus"),
+                hilfe:
+                    "Erlaubt abap_write, abap_activate, abap_create_object, \
+                        abap_set_text_elements und Locks auf diesem System. Für Produktivsysteme aus \
+                        lassen.",
+                link: None,
+            },
         ]
     }
 
@@ -158,7 +174,8 @@ mod tests {
                 "mandant",
                 "sprache",
                 "passwort",
-                "zertifikat_pruefen"
+                "zertifikat_pruefen",
+                "schreiben"
             ]
         );
         // Reihenfolge und Art wie in der Aufgabe vorgegeben.
@@ -177,6 +194,12 @@ mod tests {
         assert!(!felder[5].pflicht);
         assert_eq!(felder[5].standard, Some("an"));
         assert!(felder[5].hilfe.contains("Zertifikatsspeicher"));
+        // Der Schalter „schreiben“ kommt ans Ende und ist im Zweifel aus.
+        assert_eq!(felder[6].art, FeldArt::Schalter);
+        assert!(!felder[6].pflicht);
+        assert_eq!(felder[6].standard, Some("aus"));
+        assert!(felder[6].hilfe.contains("abap_write"));
+        assert!(felder[6].hilfe.contains("Produktivsysteme"));
         // Alle Hilfe-Texte erklären das Feld, keiner ist leer.
         assert!(felder.iter().all(|feld| !feld.hilfe.is_empty()));
     }

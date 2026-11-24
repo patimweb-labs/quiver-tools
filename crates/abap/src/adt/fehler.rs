@@ -26,6 +26,16 @@ pub enum AdtFehler {
     #[error("Das CSRF-Token von {system} ließ sich nicht holen – bitte Zugang im quiver-Fenster prüfen.")]
     Csrf { system: String },
 
+    /// Die zustandsbehaftete Sitzung ist beim SAP abgelaufen (Aufgabe 08).
+    ///
+    /// Damit sind auch alle Locks dieser Sitzung weg. Ein Schreibvorgang wird
+    /// **nicht** stillschweigend wiederholt: der Agent sperrt neu.
+    #[error(
+        "Die Sitzung an {system} ist abgelaufen, damit sind alle Locks verloren – bitte \
+         erneut abap_lock aufrufen (und den Quelltext neu schreiben)."
+    )]
+    SitzungAbgelaufen { system: String },
+
     /// ADT-Ausnahme: Typ und Nachricht aus `exc:exception`.
     #[error("{typ}: {nachricht}")]
     Ausnahme { typ: String, nachricht: String },
@@ -55,6 +65,31 @@ impl AdtFehler {
         AdtFehler::Netz {
             text: fehler.to_string(),
         }
+    }
+
+    /// Ist das die Meldung eines abgelaufenen Sitzungskontexts?
+    ///
+    /// SAP antwortet dann mit `400` oder `401` und einem Text wie
+    /// „Session timed out“; oft steht die Erklärung im Rumpf oder in der
+    /// ADT-Ausnahme. Erkannt wird nur, was wirklich nach Sitzung klingt – ein
+    /// gewöhnlicher Fehler bleibt ein gewöhnlicher Fehler.
+    pub fn ist_sitzungsablauf(status: u16, text: &str) -> bool {
+        if !matches!(status, 400 | 401) {
+            return false;
+        }
+        let text = text.to_ascii_lowercase();
+        [
+            "session timed out",
+            "session timeout",
+            "sessiontimedout",
+            "session expired",
+            "session is no longer",
+            "session no longer",
+            "icm_http_session_timeout",
+            "sitzung abgelaufen",
+        ]
+        .iter()
+        .any(|muster| text.contains(muster))
     }
 
     /// Aus einer Fehlerantwort eine ADT-Ausnahme lesen, sonst ein HTTP-Fehler.
@@ -150,5 +185,30 @@ mod tests {
         let text = fehler.to_string();
         assert!(text.contains("dev-100"), "{text}");
         assert!(text.contains("abgelehnt"), "{text}");
+    }
+
+    #[test]
+    fn ein_sitzungsablauf_wird_erkannt_und_bleibt_verstaendlich() {
+        assert!(AdtFehler::ist_sitzungsablauf(400, "Session timed out"));
+        assert!(AdtFehler::ist_sitzungsablauf(
+            401,
+            "ICM_HTTP_SESSION_TIMEOUT"
+        ));
+        assert!(AdtFehler::ist_sitzungsablauf(
+            400,
+            "<exc:message>Session expired, please log on again</exc:message>"
+        ));
+        // Alles andere ist kein Sitzungsablauf.
+        assert!(!AdtFehler::ist_sitzungsablauf(400, "Ungültiger Quelltext"));
+        assert!(!AdtFehler::ist_sitzungsablauf(403, "Session timed out"));
+        assert!(!AdtFehler::ist_sitzungsablauf(500, "Session timed out"));
+
+        let fehler = AdtFehler::SitzungAbgelaufen {
+            system: "dev-100".into(),
+        };
+        let text = fehler.to_string();
+        assert!(text.contains("abgelaufen"), "{text}");
+        assert!(text.contains("abap_lock"), "{text}");
+        assert!(text.contains("dev-100"), "{text}");
     }
 }

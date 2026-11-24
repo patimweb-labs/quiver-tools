@@ -5,7 +5,7 @@
 //!
 //! quiver übergibt **alle** Systeme als JSON in `QUIVER_ZUGAENGE`
 //! (`quiver_domain::Mehrfach`): Name plus Werte der Felder `benutzer`, `url`,
-//! `mandant`, `sprache`, `passwort`, `zertifikat_pruefen`. Dieses Modul macht
+//! `mandant`, `sprache`, `passwort`, `zertifikat_pruefen`, `schreiben`. Dieses Modul macht
 //! daraus geprüfte [`System`]e und wählt das richtige aus. Das Passwort bleibt
 //! im Speicher und erscheint in keiner Antwort – `Debug` zeigt nur, *ob* eines
 //! gesetzt ist.
@@ -26,6 +26,8 @@ pub const SPRACHE: &str = "sprache";
 pub const PASSWORT: &str = "passwort";
 /// Feldname des Schalters „Serverzertifikat prüfen“ (Standard an).
 pub const ZERTIFIKAT_PRUEFEN: &str = "zertifikat_pruefen";
+/// Feldname des Schalters „Schreiben erlauben“ (Standard **aus**, Aufgabe 08).
+pub const SCHREIBEN: &str = "schreiben";
 
 /// Anmeldesprache, wenn keine eingetragen ist.
 pub const STANDARD_SPRACHE: &str = "DE";
@@ -44,6 +46,8 @@ pub struct System {
     pub passwort: String,
     /// Serverzertifikat gegen den System-Zertifikatsspeicher prüfen.
     pub zertifikat_pruefen: bool,
+    /// Erlaubt die schreibenden Werkzeuge. Standard **aus**.
+    pub schreiben: bool,
 }
 
 impl std::fmt::Debug for System {
@@ -56,6 +60,7 @@ impl std::fmt::Debug for System {
             .field("sprache", &self.sprache)
             .field("passwort", &(!self.passwort.is_empty()))
             .field("zertifikat_pruefen", &self.zertifikat_pruefen)
+            .field("schreiben", &self.schreiben)
             .finish()
     }
 }
@@ -105,18 +110,25 @@ impl System {
             sprache,
             passwort,
             zertifikat_pruefen: schalter(zugang.wert(ZERTIFIKAT_PRUEFEN)),
+            schreiben: schalter_aus(zugang.wert(SCHREIBEN)),
         })
     }
 
-    /// `name · benutzer@host:port · Mandant 100 · DE` – ohne Passwort.
+    /// `Schreiben` – ob die schreibenden Werkzeuge auf diesem System dürfen.
+    pub fn schreiben_erlaubt(&self) -> bool {
+        self.schreiben
+    }
+
+    /// `name · benutzer@host:port · Mandant 100 · DE · Schreiben aus` – ohne Passwort.
     pub fn beschreibung(&self) -> String {
         format!(
-            "{} · {}@{} · Mandant {} · {}",
+            "{} · {}@{} · Mandant {} · {} · Schreiben {}",
             self.name,
             self.benutzer,
             self.host(),
             self.mandant,
-            self.sprache
+            self.sprache,
+            if self.schreiben { "an" } else { "aus" }
         )
     }
 
@@ -151,6 +163,21 @@ pub fn schalter(wert: Option<&str>) -> bool {
         Some(wert) => !matches!(
             wert.to_ascii_lowercase().as_str(),
             "aus" | "nein" | "0" | "false" | "off"
+        ),
+    }
+}
+
+/// Ein Schalter, der im Zweifel **aus** ist (Feld `schreiben`, Aufgabe 08).
+///
+/// Nur ein ausdrückliches Einschalten (`an`, `ja`, `1`, `true`, `ein`, `on`)
+/// gilt; ein fehlendes Feld und jede andere Schreibweise bleiben aus. Für ein
+/// Produktivsystem ist „nichts gesagt“ die sichere Antwort.
+pub fn schalter_aus(wert: Option<&str>) -> bool {
+    match wert.map(str::trim) {
+        None | Some("") => false,
+        Some(wert) => matches!(
+            wert.to_ascii_lowercase().as_str(),
+            "an" | "ja" | "1" | "true" | "ein" | "on"
         ),
     }
 }
@@ -308,12 +335,39 @@ mod tests {
         assert_eq!(system.mandant, "100");
         assert_eq!(system.sprache, "DE");
         assert!(system.zertifikat_pruefen);
+        // Ohne Feld ist das Schreiben aus – der sichere Zustand.
+        assert!(!system.schreiben);
+        assert!(!system.schreiben_erlaubt());
         assert_eq!(system.host(), "sap-dev.example.test:44300");
         assert_eq!(
             system.beschreibung(),
-            "dev-100 · DEVELOPER@sap-dev.example.test:44300 · Mandant 100 · DE"
+            "dev-100 · DEVELOPER@sap-dev.example.test:44300 · Mandant 100 · DE · Schreiben aus"
         );
         assert_eq!(system.anmeldung(), "DEVELOPER@sap-dev.example.test:44300");
+    }
+
+    #[test]
+    fn schreiben_ist_nur_ausdruecklich_an() {
+        let mit = |wert: &str| {
+            let alle = vec![
+                ("benutzer", "DEVELOPER"),
+                ("url", "https://sap.example.test"),
+                ("mandant", "100"),
+                ("passwort", "x"),
+                ("schreiben", wert),
+            ];
+            System::aus_zugang(&zugang("dev", &alle)).unwrap().schreiben
+        };
+
+        for an in ["an", "AN", "ja", "1", "true", "ein", "on"] {
+            assert!(mit(an), "{an} sollte an sein");
+        }
+        for aus in ["aus", "nein", "0", "false", "off", "quatsch", "  "] {
+            assert!(!mit(aus), "{aus} sollte aus sein");
+        }
+        // Ohne Feld und mit leerem Wert bleibt es aus.
+        assert!(!schalter_aus(None));
+        assert!(!schalter_aus(Some("")));
     }
 
     #[test]

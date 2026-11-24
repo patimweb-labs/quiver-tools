@@ -82,8 +82,8 @@ impl Kind {
         }
     }
 
-    /// Handschlag und `tools/list`; gibt die Werkzeugnamen zurück.
-    fn begruessen(&mut self) -> Vec<String> {
+    /// Handschlag und `tools/list`; gibt die Werkzeuge zurück.
+    fn begruessen(&mut self) -> Vec<Value> {
         self.sende(json!({
             "jsonrpc": "2.0",
             "id": 1,
@@ -116,9 +116,7 @@ impl Kind {
         liste["result"]["tools"]
             .as_array()
             .expect("tools fehlt")
-            .iter()
-            .map(|werkzeug| werkzeug["name"].as_str().unwrap().to_string())
-            .collect()
+            .clone()
     }
 
     /// Ein Werkzeug aufrufen und den Text zurückgeben.
@@ -151,8 +149,21 @@ impl Kind {
     }
 }
 
+/// Die Namen der Werkzeuge aus `tools/list`.
+fn namen(werkzeuge: &[Value]) -> Vec<String> {
+    werkzeuge
+        .iter()
+        .map(|werkzeug| werkzeug["name"].as_str().unwrap().to_string())
+        .collect()
+}
+
 /// Die Zugangsliste, die quiver setzen würde.
 fn zugaenge(adresse: &str) -> Value {
+    zugaenge_mit(adresse, true)
+}
+
+/// Dasselbe mit gewähltem Schalter `schreiben`.
+fn zugaenge_mit(adresse: &str, schreiben: bool) -> Value {
     json!([{
         "name": "dev-100",
         "werte": {
@@ -161,6 +172,7 @@ fn zugaenge(adresse: &str) -> Value {
             "mandant": "100",
             "sprache": "DE",
             "passwort": attrappe::PASSWORT,
+            "schreiben": if schreiben { "an" } else { "aus" },
         }
     }])
 }
@@ -173,8 +185,9 @@ fn kindprozess_listet_werkzeuge_und_liest_ein_objekt() {
         let umgebung = [("QUIVER_ZUGAENGE", zugaenge(&server.adresse).to_string())];
 
         let mut kind = Kind::starte(&umgebung);
-        let namen = kind.begruessen();
-        assert_eq!(namen.len(), 19, "unerwartete Werkzeuge: {namen:?}");
+        let werkzeuge = kind.begruessen();
+        let namen = namen(&werkzeuge);
+        assert_eq!(namen.len(), 26, "unerwartete Werkzeuge: {namen:?}");
         for erwartet in [
             "abap_status",
             "abap_test_connection",
@@ -195,14 +208,52 @@ fn kindprozess_listet_werkzeuge_und_liest_ein_objekt() {
             "abap_transports",
             "abap_transport_details",
             "abap_text_elements",
+            "abap_lock",
+            "abap_unlock",
+            "abap_write",
+            "abap_activate",
+            "abap_create_object",
+            "abap_set_text_elements",
+            "abap_profile",
         ] {
             assert!(namen.contains(&erwartet.to_string()), "{erwartet} fehlt");
+        }
+
+        // Die Annotationen stimmen: lesend, schreibend oder nur ändernd.
+        for werkzeug in &werkzeuge {
+            let name = werkzeug["name"].as_str().unwrap();
+            let hinweise = &werkzeug["annotations"];
+            let (lesend, destruktiv) = match name {
+                "abap_write"
+                | "abap_activate"
+                | "abap_create_object"
+                | "abap_set_text_elements" => (false, true),
+                "abap_lock" | "abap_unlock" => (false, false),
+                _ => (true, false),
+            };
+            assert_eq!(
+                hinweise["readOnlyHint"].as_bool(),
+                Some(lesend),
+                "{name}: {hinweise}"
+            );
+            assert_eq!(
+                hinweise["destructiveHint"].as_bool(),
+                Some(destruktiv),
+                "{name}: {hinweise}"
+            );
         }
 
         let (status, fehler) = kind.aufrufen(3, "abap_status", json!({}));
         assert!(!fehler, "{status}");
         assert!(status.contains("dev-100"), "{status}");
         assert!(!status.contains(attrappe::PASSWORT), "{status}");
+
+        // `abap_profile` kommt aus dem Kern und nennt bei einer Systemliste die
+        // Systeme – ohne Passwort.
+        let (profil, fehler) = kind.aufrufen(30, "abap_profile", json!({}));
+        assert!(!fehler, "{profil}");
+        assert!(profil.contains("dev-100"), "{profil}");
+        assert!(!profil.contains(attrappe::PASSWORT), "{profil}");
 
         let (text, fehler) = kind.aufrufen(4, "abap_read", json!({ "name": "ZCL_DEMO" }));
         assert!(!fehler, "{text}");
@@ -222,10 +273,116 @@ fn kindprozess_listet_werkzeuge_und_liest_ein_objekt() {
 }
 
 #[test]
+fn kindprozess_sperrt_schreibt_aktiviert_und_gibt_frei() {
+    let laufzeit = tokio::runtime::Runtime::new().unwrap();
+    laufzeit.block_on(async {
+        let server = attrappe::Attrappe::starte().await;
+        let umgebung = [("QUIVER_ZUGAENGE", zugaenge(&server.adresse).to_string())];
+
+        let mut kind = Kind::starte(&umgebung);
+        kind.begruessen();
+
+        let (text, fehler) = kind.aufrufen(3, "abap_lock", json!({ "name": "ZCL_DEMO" }));
+        assert!(!fehler, "{text}");
+        assert!(text.contains("Lock-Handle: LH1"), "{text}");
+        assert_eq!(server.offene_locks(), 1);
+
+        let (text, fehler) = kind.aufrufen(
+            4,
+            "abap_write",
+            json!({
+                "name": "ZCL_DEMO",
+                "source": "CLASS zcl_demo DEFINITION PUBLIC FINAL CREATE PUBLIC.\nENDCLASS.",
+                "lockHandle": "LH1"
+            }),
+        );
+        assert!(!fehler, "{text}");
+        assert!(text.contains("Quelltext geschrieben"), "{text}");
+        assert!(text.contains("Lock bleibt"), "{text}");
+
+        let (text, fehler) = kind.aufrufen(5, "abap_activate", json!({ "name": "ZCL_DEMO" }));
+        assert!(!fehler, "{text}");
+        assert!(text.contains("[E] Zeile 3"), "{text}");
+
+        let (text, fehler) = kind.aufrufen(
+            6,
+            "abap_create_object",
+            json!({
+                "objectType": "PROG/P",
+                "name": "ZREPORT",
+                "parentName": "$TMP",
+                "description": "Neuer Report"
+            }),
+        );
+        assert!(!fehler, "{text}");
+        assert!(text.contains("PROG/P ZREPORT in $TMP angelegt"), "{text}");
+
+        let (text, fehler) = kind.aufrufen(
+            7,
+            "abap_unlock",
+            json!({ "name": "ZCL_DEMO", "lockHandle": "LH1" }),
+        );
+        assert!(!fehler, "{text}");
+        assert!(text.contains("freigegeben"), "{text}");
+        assert_eq!(server.offene_locks(), 0);
+
+        let stderr = kind.beenden();
+        assert!(
+            !stderr.contains(attrappe::PASSWORT),
+            "Passwort auf stderr: {stderr}"
+        );
+    });
+}
+
+#[test]
+fn ohne_schreiben_antwortet_der_kindprozess_ohne_anfrage() {
+    let laufzeit = tokio::runtime::Runtime::new().unwrap();
+    laufzeit.block_on(async {
+        let server = attrappe::Attrappe::starte().await;
+        let umgebung = [(
+            "QUIVER_ZUGAENGE",
+            zugaenge_mit(&server.adresse, false).to_string(),
+        )];
+
+        let mut kind = Kind::starte(&umgebung);
+        kind.begruessen();
+
+        let (text, fehler) = kind.aufrufen(3, "abap_lock", json!({ "name": "ZCL_DEMO" }));
+        assert!(!fehler, "{text}");
+        assert!(text.contains("Schreiben ist für dev-100 aus"), "{text}");
+        assert!(server.aufzeichnung.alle().is_empty());
+
+        kind.beenden();
+    });
+}
+
+#[test]
+fn beenden_gibt_offene_locks_frei() {
+    let laufzeit = tokio::runtime::Runtime::new().unwrap();
+    laufzeit.block_on(async {
+        let server = attrappe::Attrappe::starte().await;
+        let umgebung = [("QUIVER_ZUGAENGE", zugaenge(&server.adresse).to_string())];
+
+        let mut kind = Kind::starte(&umgebung);
+        kind.begruessen();
+
+        let (text, fehler) = kind.aufrufen(3, "abap_lock", json!({ "name": "ZCL_DEMO" }));
+        assert!(!fehler, "{text}");
+        assert_eq!(server.offene_locks(), 1);
+
+        // stdin zu heißt: das Programm endet – und gibt seine Locks frei.
+        kind.beenden();
+        assert_eq!(server.offene_locks(), 0, "Lock blieb beim Beenden stehen");
+        assert_eq!(server.unlocks(), 1);
+    });
+}
+
+#[test]
 fn ohne_zugaenge_kommt_der_hinweis_und_kein_fehler() {
     let mut kind = Kind::starte(&[]);
 
-    kind.begruessen();
+    let werkzeuge = kind.begruessen();
+    assert_eq!(namen(&werkzeuge).len(), 26);
     let (text, fehler) = kind.aufrufen(3, "abap_read", json!({ "name": "ZCL_DEMO" }));
     assert!(!fehler, "{text}");
     assert!(text.contains("Zugang fehlt"), "{text}");
@@ -239,7 +396,7 @@ fn ohne_zugaenge_kommt_der_hinweis_und_kein_fehler() {
 }
 
 #[test]
-fn eintrag_enthaelt_mehrfach_mit_sechs_feldern() {
+fn eintrag_enthaelt_mehrfach_mit_sieben_feldern() {
     let ausgabe = Command::new(env!("CARGO_BIN_EXE_quiver-abap"))
         .args(["eintrag", "--befehl", "/pfad/quiver-abap"])
         .output()
@@ -271,7 +428,7 @@ fn eintrag_enthaelt_mehrfach_mit_sechs_feldern() {
     assert_eq!(mehrfach["titel"], json!("Systeme"));
     assert_eq!(mehrfach["einzahl"], json!("System"));
     let felder = mehrfach["felder"].as_array().unwrap();
-    assert_eq!(felder.len(), 6, "{mehrfach}");
+    assert_eq!(felder.len(), 7, "{mehrfach}");
     let namen: Vec<&str> = felder
         .iter()
         .map(|feld| feld["name"].as_str().unwrap())
@@ -284,7 +441,8 @@ fn eintrag_enthaelt_mehrfach_mit_sechs_feldern() {
             "mandant",
             "sprache",
             "passwort",
-            "zertifikat_pruefen"
+            "zertifikat_pruefen",
+            "schreiben"
         ]
     );
     assert_eq!(felder[0]["quelle"], json!("client"));
@@ -302,6 +460,14 @@ fn eintrag_enthaelt_mehrfach_mit_sechs_feldern() {
         .as_str()
         .unwrap()
         .contains("Zertifikatsspeicher"));
+    // Der Schalter „schreiben“ steht am Ende und ist im Zweifel aus.
+    assert_eq!(felder[6]["name"], json!("schreiben"));
+    assert_eq!(felder[6]["standard"], json!("aus"));
+    assert_eq!(felder[6]["pflicht"], json!(false));
+    assert!(felder[6]["beschreibung"]
+        .as_str()
+        .unwrap()
+        .contains("Produktivsysteme aus lassen"));
 }
 
 #[test]

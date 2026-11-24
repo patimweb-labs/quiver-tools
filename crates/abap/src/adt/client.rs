@@ -16,8 +16,14 @@
 //! - **401** heißt „Anmeldung abgelehnt“ und wird **nicht** wiederholt: SAP
 //!   sperrt Benutzer nach zu vielen Fehlversuchen.
 //!
-//! Teil 1 arbeitet zustandslos; Teil 2 (Schreiben) braucht zusätzlich
-//! `X-sap-adt-sessiontype: stateful` – dann kommt hier eine Sitzung dazu.
+//! Zwei Betriebsarten teilen sich diesen Client:
+//!
+//! - **Ohne Sitzung** (Teil 1, alle lesenden Werkzeuge): kein
+//!   `X-sap-adt-sessiontype`, Cookies nur innerhalb eines Aufrufs.
+//! - **Mit Sitzung** (Teil 2, [`crate::adt::sitzung`]): der Kopf
+//!   `X-sap-adt-sessiontype: stateful` hängt an jedem Aufruf, damit SAP alle
+//!   Aufrufe **einer** Sitzung zuordnet – nur dort gilt ein Lock-Handle.
+//!   In dieser Betriebsart entscheidet die Sitzung, was ein `401` bedeutet.
 
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -34,6 +40,9 @@ const ZEITLIMIT: Duration = Duration::from_secs(120);
 
 /// Der Kopf, mit dem ADT das CSRF-Token führt.
 const CSRF: &str = "x-csrf-token";
+
+/// Der Kopf, der die Betriebsart der Sitzung festlegt.
+const SITZUNGSART: &str = "X-sap-adt-sessiontype";
 
 /// Was ein Aufruf vom Server will.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,6 +103,18 @@ impl Anfrage {
         }
     }
 
+    /// Ein Aufruf ohne Rumpf – etwa `POST <objekt-url>?_action=LOCK`.
+    pub fn ohne_inhalt(methode: Methode, pfad: impl Into<String>) -> Anfrage {
+        Anfrage {
+            methode,
+            pfad: pfad.into(),
+            abfrage: Vec::new(),
+            annahme: None,
+            inhalt: None,
+            kopfzeilen: Vec::new(),
+        }
+    }
+
     /// Ein Abfrageparameter.
     pub fn mit_abfrage(mut self, name: impl Into<String>, wert: impl Into<String>) -> Anfrage {
         self.abfrage.push((name.into(), wert.into()));
@@ -118,6 +139,8 @@ impl Anfrage {
 pub struct Antwort {
     pub status: u16,
     pub text: String,
+    /// Der `Location`-Kopf, falls der Server einen schickt (neue Objekte).
+    pub ort: Option<String>,
 }
 
 /// Der Client eines Systems.
@@ -128,12 +151,15 @@ pub struct Client {
     token: Mutex<Option<String>>,
     /// `SAP_SESSIONID_*` und was der Server sonst setzt (Name → Wert).
     kekse: Mutex<BTreeMap<String, String>>,
+    /// `true` heißt: jeder Aufruf trägt `X-sap-adt-sessiontype: stateful`.
+    stateful: bool,
 }
 
 impl std::fmt::Debug for Client {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Client")
             .field("system", &self.system.name)
+            .field("stateful", &self.stateful)
             .field(
                 "token",
                 &self.token.lock().map(|t| t.is_some()).unwrap_or(false),
@@ -145,6 +171,15 @@ impl std::fmt::Debug for Client {
 impl Client {
     /// Ein Client für dieses System. Das Passwort steht nur im Speicher.
     pub fn neu(system: &System) -> Result<Client, AdtFehler> {
+        Client::bauen(system, false)
+    }
+
+    /// Ein Client, dessen Aufrufe **eine** Sitzung bilden (Teil 2).
+    pub fn neu_stateful(system: &System) -> Result<Client, AdtFehler> {
+        Client::bauen(system, true)
+    }
+
+    fn bauen(system: &System, stateful: bool) -> Result<Client, AdtFehler> {
         let mut bauen = reqwest::Client::builder()
             .timeout(ZEITLIMIT)
             .user_agent(concat!("quiver-abap/", env!("CARGO_PKG_VERSION")));
@@ -160,7 +195,13 @@ impl Client {
             http,
             token: Mutex::new(None),
             kekse: Mutex::new(BTreeMap::new()),
+            stateful,
         })
+    }
+
+    /// Bilden die Aufrufe dieses Clients eine Sitzung?
+    pub fn ist_stateful(&self) -> bool {
+        self.stateful
     }
 
     /// Das System, mit dem dieser Client spricht.
@@ -177,6 +218,12 @@ impl Client {
             self.kekse_merken(antwort.headers());
 
             let status = antwort.status().as_u16();
+            let ort = antwort
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|wert| wert.to_str().ok())
+                .map(|wert| wert.trim().to_string())
+                .filter(|wert| !wert.is_empty());
             let csrf_erneuern = status == 403
                 && antwort
                     .headers()
@@ -190,9 +237,10 @@ impl Client {
                 return Ok(Antwort {
                     status,
                     text: rumpf,
+                    ort,
                 });
             }
-            if status == 401 {
+            if status == 401 && !self.stateful {
                 // Kein Wiederholen: das kostet dem Benutzer den Zugang.
                 return Err(AdtFehler::Anmeldung {
                     system: self.system.name.clone(),
@@ -293,13 +341,24 @@ impl Client {
             .header(CSRF, token)
             .header(COOKIE, self.kekse_string())
             .basic_auth(&self.system.benutzer, Some(&self.system.passwort));
+        if self.stateful {
+            // Nur so gilt ein Lock-Handle in dieser Sitzung.
+            ziel = ziel.header(SITZUNGSART, "stateful");
+        }
         for (name, wert) in &anfrage.kopfzeilen {
             ziel = ziel.header(name.as_str(), wert.as_str());
         }
         if let Some(inhalt) = &anfrage.inhalt {
-            ziel = ziel
-                .header(CONTENT_TYPE, "text/plain; charset=utf-8")
-                .body(inhalt.clone());
+            // Ein vom Aufrufer gesetzter `Content-Type` gilt (z. B. `application/*`
+            // für XML-Rümpfe oder der Textelemente-Typ); sonst Klartext.
+            let gesetzt = anfrage
+                .kopfzeilen
+                .iter()
+                .any(|(name, _)| name.eq_ignore_ascii_case("content-type"));
+            if !gesetzt {
+                ziel = ziel.header(CONTENT_TYPE, "text/plain; charset=utf-8");
+            }
+            ziel = ziel.body(inhalt.clone());
         }
         ziel.send().await.map_err(|fehler| AdtFehler::netz(&fehler))
     }
@@ -354,6 +413,7 @@ mod tests {
             sprache: "DE".into(),
             passwort: "geheim-4711".into(),
             zertifikat_pruefen: true,
+            schreiben: true,
         }
     }
 
@@ -389,5 +449,20 @@ mod tests {
         assert_eq!(anfrage.abfrage, vec![("rowNumber".into(), "10".into())]);
         assert_eq!(anfrage.annahme.as_deref(), Some("application/*"));
         assert_eq!(anfrage.kopfzeilen.len(), 1);
+
+        // Ohne Rumpf (Sperren, Entsperren).
+        let ohne = Anfrage::ohne_inhalt(Methode::Post, "/sap/bc/adt/oo/classes/zcl_demo");
+        assert_eq!(ohne.methode, Methode::Post);
+        assert!(ohne.inhalt.is_none());
+    }
+
+    #[test]
+    fn nur_die_sitzung_schaltet_den_sitzungskopf() {
+        let system = system();
+        assert!(!Client::neu(&system).unwrap().ist_stateful());
+        let sitzung = Client::neu_stateful(&system).unwrap();
+        assert!(sitzung.ist_stateful());
+        // Auch im Debug steht kein Passwort.
+        assert!(!format!("{sitzung:?}").contains("geheim-4711"));
     }
 }

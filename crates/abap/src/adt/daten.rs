@@ -198,6 +198,40 @@ pub struct Textelement {
     pub max_laenge: Option<usize>,
 }
 
+/// Ein Sperrvermerk auf einem Objekt (Aufgabe 08).
+///
+/// `POST <objekt-url>?_action=LOCK` antwortet mit einem `asx`-Dokument, dessen
+/// `DATA` den Handle, den Transportauftrag und die Ortsmarke trägt
+/// (`abap-adt-api/build/api/objectcontents.js`, `lock`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Sperre {
+    /// Der Handle, den jedes Schreiben in dieser Sitzung mitgeben muss.
+    pub handle: String,
+    /// Der Transportauftrag (`CORRNR`), leer bei lokalen Objekten.
+    pub auftrag: String,
+    /// `X` heißt: lokales Objekt (`$TMP`), kein Transport nötig.
+    pub lokal: bool,
+}
+
+/// Eine Meldung der Aktivierung.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Aktivierungsmeldung {
+    /// `E` (Fehler), `W` (Warnung), `I` (Information), `S` (Erfolg), `A`/`X` (Abbruch).
+    pub art: String,
+    pub zeile: Option<u32>,
+    pub text: String,
+}
+
+/// Das Ergebnis einer Aktivierung (`/sap/bc/adt/activation`).
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Aktivierung {
+    /// `false`, sobald eine Meldung ein Fehler ist oder Objekte inaktiv blieben.
+    pub erfolg: bool,
+    pub meldungen: Vec<Aktivierungsmeldung>,
+    /// Wie viele Objekte nach der Aktivierung inaktiv blieben.
+    pub inaktiv: usize,
+}
+
 // -------------------------------------------------------------- Zugriff
 
 /// `text` in einen Baum lesen.
@@ -802,6 +836,79 @@ pub fn textelemente_url(typ: &str, name: &str) -> String {
     format!("/sap/bc/adt/textelements/{art}/{kodiert}")
 }
 
+// --------------------------------------------------------- Sperren (Teil 2)
+
+/// Ein Sperrvermerk aus der Antwort von `?_action=LOCK`.
+pub fn sperre(xml: &str) -> Result<Sperre, AdtFehler> {
+    let baum = baum(xml)?;
+    let daten = baum
+        .alle("DATA")
+        .into_iter()
+        .next()
+        .ok_or_else(|| AdtFehler::Antwort {
+            text: "Die Sperre kam ohne Handle zurück.".to_string(),
+        })?;
+    let handle = text(daten, "LOCK_HANDLE");
+    if handle.is_empty() {
+        return Err(AdtFehler::Antwort {
+            text: "Die Sperre kam ohne LOCK_HANDLE zurück.".to_string(),
+        });
+    }
+    Ok(Sperre {
+        handle,
+        auftrag: text(daten, "CORRNR"),
+        lokal: matches!(text(daten, "IS_LOCAL").as_str(), "X" | "x" | "true"),
+    })
+}
+
+// ----------------------------------------------------- Aktivieren (Teil 2)
+
+/// Das Ergebnis einer Aktivierung.
+///
+/// Meldungen stehen als `chkl:msg` mit `type`, `line` und einem `shortText`
+/// (darunter `txt`) in der Antwort; inaktive Objekte als `ioc:entry` unter
+/// `ioc:inactiveObjects` (`abap-adt-api/build/api/activate.js`).
+pub fn aktivierung(xml: &str) -> Result<Aktivierung, AdtFehler> {
+    let baum = baum(xml)?;
+    let meldungen: Vec<Aktivierungsmeldung> = baum
+        .alle("msg")
+        .into_iter()
+        .map(|meldung| {
+            let text = {
+                let als_attribut = attr(meldung, "shortText");
+                if als_attribut.is_empty() {
+                    meldung
+                        .alle("txt")
+                        .first()
+                        .map(|txt| txt.text.trim().to_string())
+                        .unwrap_or_default()
+                } else {
+                    als_attribut
+                }
+            };
+            Aktivierungsmeldung {
+                art: attr(meldung, "type"),
+                zeile: attr(meldung, "line").parse().ok(),
+                text,
+            }
+        })
+        .collect();
+    let inaktiv = baum
+        .alle("inactiveObjects")
+        .into_iter()
+        .map(|liste| liste.kinder_mit("entry").count())
+        .sum();
+    let fehler = meldungen.iter().any(|meldung| {
+        let art = meldung.art.to_ascii_uppercase();
+        art.starts_with('E') || art.starts_with('A') || art.starts_with('X')
+    });
+    Ok(Aktivierung {
+        erfolg: !fehler && inaktiv == 0,
+        meldungen,
+        inaktiv,
+    })
+}
+
 /// Die Titel der Bereiche aus der Core-Discovery (`/core/discovery`).
 pub fn discovery_titel(xml: &str) -> Result<Vec<String>, AdtFehler> {
     let baum = baum(xml)?;
@@ -1210,5 +1317,74 @@ mod tests {
             transportdetails("<tm:root xmlns:tm=\"t\"/>"),
             Err(AdtFehler::Antwort { .. })
         ));
+    }
+
+    #[test]
+    fn eine_sperre_traegt_handle_auftrag_und_ort() {
+        let lokal = r#"<?xml version="1.0" encoding="utf-8"?>
+        <asx:abap xmlns:asx="http://www.sap.com/abapxml" version="1.0">
+          <asx:values>
+            <DATA>
+              <LOCK_HANDLE>LH4711</LOCK_HANDLE>
+              <IS_LOCAL>X</IS_LOCAL>
+            </DATA>
+          </asx:values>
+        </asx:abap>"#;
+        let eigene = sperre(lokal).unwrap();
+        assert_eq!(eigene.handle, "LH4711");
+        assert!(eigene.lokal);
+        assert_eq!(eigene.auftrag, "");
+
+        // Ein Objekt mit Transport nennt den Auftrag statt der Ortsmarke.
+        let mit_auftrag = r#"<asx:abap xmlns:asx="a"><asx:values><DATA>
+          <LOCK_HANDLE>LH0815</LOCK_HANDLE><CORRNR>DEVK900123</CORRNR>
+        </DATA></asx:values></asx:abap>"#;
+        let mit_transport = sperre(mit_auftrag).unwrap();
+        assert_eq!(mit_transport.handle, "LH0815");
+        assert_eq!(mit_transport.auftrag, "DEVK900123");
+        assert!(!mit_transport.lokal);
+
+        // Ohne Handle ist die Antwort wertlos.
+        let ohne = r#"<asx:abap xmlns:asx="a"><asx:values><DATA/></asx:values></asx:abap>"#;
+        assert!(matches!(sperre(ohne), Err(AdtFehler::Antwort { .. })));
+        assert!(matches!(
+            sperre("<asx:abap/>"),
+            Err(AdtFehler::Antwort { .. })
+        ));
+    }
+
+    #[test]
+    fn eine_aktivierung_liest_meldungen_und_inaktive_objekte() {
+        let mit_fehler = r#"<?xml version="1.0" encoding="utf-8"?>
+        <chkl:checkMessages xmlns:chkl="http://www.sap.com/adt/checkrun">
+          <chkl:messages>
+            <chkl:msg type="W" line="1" id="W01">
+              <chkl:shortText><chkl:txt>Der Parameter wird nie gelesen.</chkl:txt></chkl:shortText>
+            </chkl:msg>
+            <chkl:msg type="E" line="3" id="E01">
+              <chkl:shortText><chkl:txt>WRITE ist hier nicht erlaubt.</chkl:txt></chkl:shortText>
+            </chkl:msg>
+          </chkl:messages>
+        </chkl:checkMessages>"#;
+        let ergebnis = aktivierung(mit_fehler).unwrap();
+        assert!(!ergebnis.erfolg);
+        assert_eq!(ergebnis.meldungen.len(), 2);
+        assert_eq!(ergebnis.meldungen[1].art, "E");
+        assert_eq!(ergebnis.meldungen[1].zeile, Some(3));
+        assert_eq!(ergebnis.meldungen[1].text, "WRITE ist hier nicht erlaubt.");
+        assert_eq!(ergebnis.inaktiv, 0);
+
+        // Eine Warnung allein ist Erfolg; ein leeres Dokument auch.
+        let nur_warnung = mit_fehler.replace("type=\"E\"", "type=\"W\"");
+        assert!(aktivierung(&nur_warnung).unwrap().erfolg);
+        assert!(aktivierung("").unwrap().erfolg);
+
+        // Bleibt ein Objekt inaktiv, gilt die Aktivierung als nicht erfolgreich.
+        let inaktiv = r#"<ioc:inactiveObjects xmlns:ioc="i">
+          <ioc:entry><ioc:object ioc:name="ZCL_DEMO"/></ioc:entry>
+        </ioc:inactiveObjects>"#;
+        let ergebnis = aktivierung(inaktiv).unwrap();
+        assert!(!ergebnis.erfolg);
+        assert_eq!(ergebnis.inaktiv, 1);
     }
 }

@@ -9,6 +9,12 @@
 //! ein echter ADT-Server – und kann das Token auf Wunsch entwerten, damit der
 //! Wiederholungsweg (`403 Required` → neues Token → einmal wiederholen)
 //! geprüft werden kann. Das Passwort ist erfunden.
+//!
+//! Für Teil 2 kommt die Sitzung dazu: **jeder** Token-Abruf legt eine eigene
+//! Sitzung an (eigener Keks, eigenes Token). Gesperrt, geschrieben und
+//! entsperrt wird nur mit dem Keks der Sitzung, die gesperrt hat – eine andere
+//! Sitzung bekommt `423`. Auf Wunsch scheitert ein `PUT` mit `500`, oder die
+//! nächste stateful Anfrage meldet „Session timed out“.
 
 #![allow(dead_code)]
 
@@ -43,12 +49,19 @@ pub struct Aufruf {
     pub cookie: Option<String>,
     /// Der `x-csrf-token`-Kopf.
     pub csrf: Option<String>,
+    /// Der `X-sap-adt-sessiontype`-Kopf (`stateful` nur bei Teil 2).
+    pub sessiontype: Option<String>,
 }
 
 impl Aufruf {
     /// Der Wert eines Abfrageparameters.
     pub fn feld(&self, name: &str) -> Option<&str> {
         self.abfrage.get(name).map(String::as_str)
+    }
+
+    /// War der Aufruf Teil einer stateful Sitzung?
+    pub fn ist_stateful(&self) -> bool {
+        self.sessiontype.as_deref() == Some("stateful")
     }
 }
 
@@ -78,6 +91,19 @@ impl Aufzeichnung {
         self.zu(teil).len()
     }
 
+    /// Alle Aufrufe auf einen Pfadteil **mit** dieser Methode.
+    pub fn zu_mit(&self, teil: &str, methode: &str) -> Vec<Aufruf> {
+        self.zu(teil)
+            .into_iter()
+            .filter(|aufruf| aufruf.methode.eq_ignore_ascii_case(methode))
+            .collect()
+    }
+
+    /// Wie viele Aufrufe mit dieser Methode auf den Pfadteil gingen.
+    pub fn anzahl_mit(&self, teil: &str, methode: &str) -> usize {
+        self.zu_mit(teil, methode).len()
+    }
+
     pub fn erster(&self, teil: &str) -> Option<Aufruf> {
         self.zu(teil).into_iter().next()
     }
@@ -87,15 +113,33 @@ impl Aufzeichnung {
     }
 }
 
+/// Eine Sperre in der Attrappe.
+#[derive(Debug, Clone)]
+pub struct Gesperrt {
+    pub handle: String,
+    /// Die Sitzung, die gesperrt hat (ihr Keksinhalt).
+    pub sitzung: String,
+    /// Der Transportauftrag; leer bei lokalen Objekten.
+    pub auftrag: String,
+}
+
 /// Der veränderliche Teil der Attrappe.
 #[derive(Debug, Default)]
 pub struct Lage {
-    /// Das aktuell gültige CSRF-Token.
+    /// Das zuletzt ausgegebene CSRF-Token.
     pub token: String,
-    /// Wie oft ein Token geholt wurde.
+    /// Wie oft ein Token geholt wurde (und damit eine Sitzung entstand).
     pub token_holt: u32,
-    /// Der Wert des Sitzungskekses.
+    /// Der zuletzt ausgegebene Keks (`SAP_SESSIONID_DEV_100=…`).
     pub sitzung: String,
+    /// Sitzungskennung → gültiges Token.
+    pub token_je_sitzung: BTreeMap<String, String>,
+    /// Objekt-URL → Sperre.
+    pub locks: BTreeMap<String, Gesperrt>,
+    /// Wie viele Sperren ausgegeben wurden.
+    pub lock_zaehler: u32,
+    /// Wie viele Sperren freigegeben wurden.
+    pub unlocks: u32,
 }
 
 struct Zustand {
@@ -103,6 +147,12 @@ struct Zustand {
     lage: Mutex<Lage>,
     /// Beim nächsten Aufruf das Token entwerten (prüft den Wiederholungsweg).
     csrf_erneuern: AtomicBool,
+    /// Dasselbe, aber nur für stateful Aufrufe (Sitzung, Teil 2).
+    csrf_erneuern_in_sitzung: AtomicBool,
+    /// Der nächste `PUT` auf einen Quelltext scheitert mit `500`.
+    put_scheitert: AtomicBool,
+    /// Die nächste stateful Anfrage meldet „Session timed out“.
+    sitzung_ablaufen: AtomicBool,
 }
 
 /// Eine laufende Attrappe.
@@ -126,12 +176,11 @@ impl Attrappe {
         let aufzeichnung = Arc::new(Aufzeichnung::default());
         let zustand = Arc::new(Zustand {
             aufzeichnung: aufzeichnung.clone(),
-            lage: Mutex::new(Lage {
-                token: "start".to_string(),
-                token_holt: 0,
-                sitzung: "SAP_SESSIONID_DEV_100=kein-echter-keks".to_string(),
-            }),
+            lage: Mutex::new(Lage::default()),
             csrf_erneuern: AtomicBool::new(false),
+            csrf_erneuern_in_sitzung: AtomicBool::new(false),
+            put_scheitert: AtomicBool::new(false),
+            sitzung_ablaufen: AtomicBool::new(false),
         });
 
         let app = Router::new().fallback(adt).with_state(zustand.clone());
@@ -159,14 +208,52 @@ impl Attrappe {
         self.zustand.csrf_erneuern.store(true, Ordering::SeqCst);
     }
 
-    /// Wie oft ein CSRF-Token geholt wurde.
+    /// Dasselbe, aber nur für die nächste stateful Anfrage (Teil 2) – so lässt
+    /// sich der Wiederholungsweg **in der Sitzung** prüfen, ohne dass die
+    /// zustandslosen Aufrufe dazwischen ihn verbrauchen.
+    pub fn csrf_erneuern_in_sitzung(&self) {
+        self.zustand
+            .csrf_erneuern_in_sitzung
+            .store(true, Ordering::SeqCst);
+    }
+
+    /// Der nächste `PUT` auf einen Quelltext scheitert mit `500` – prüft, ob
+    /// der Client trotzdem entsperrt.
+    pub fn put_scheitert(&self) {
+        self.zustand.put_scheitert.store(true, Ordering::SeqCst);
+    }
+
+    /// Die nächste stateful Anfrage meldet „Session timed out“.
+    pub fn sitzung_ablaufen(&self) {
+        self.zustand.sitzung_ablaufen.store(true, Ordering::SeqCst);
+    }
+
+    /// Wie oft ein CSRF-Token (und damit eine Sitzung) geholt wurde.
     pub fn token_holt(&self) -> u32 {
         griff(&self.zustand.lage).token_holt
     }
 
-    /// Das aktuell gültige Token (für Erwartungen im Test).
+    /// Das zuletzt ausgegebene Token (für Erwartungen im Test).
     pub fn token(&self) -> String {
         griff(&self.zustand.lage).token.clone()
+    }
+
+    /// Wie viele Sperren freigegeben wurden.
+    pub fn unlocks(&self) -> u32 {
+        griff(&self.zustand.lage).unlocks
+    }
+
+    /// Wie viele Objekte gerade gesperrt sind.
+    pub fn offene_locks(&self) -> usize {
+        griff(&self.zustand.lage).locks.len()
+    }
+
+    /// Der Handle, mit dem dieses Objekt gerade gesperrt ist.
+    pub fn lock_handle(&self, objekt_url: &str) -> Option<String> {
+        griff(&self.zustand.lage)
+            .locks
+            .get(objekt_url)
+            .map(|sperre| sperre.handle.clone())
     }
 }
 
@@ -185,6 +272,8 @@ async fn adt(State(zustand): State<Arc<Zustand>>, anfrage: Request) -> Response 
     let anmeldung = kopf_zeile(&kopf, "authorization");
     let cookie = kopf_zeile(&kopf, "cookie");
     let csrf = kopf_zeile(&kopf, "x-csrf-token");
+    let sessiontype = kopf_zeile(&kopf, "x-sap-adt-sessiontype");
+    let stateful = sessiontype.as_deref() == Some("stateful");
 
     zustand.aufzeichnung.merken(Aufruf {
         pfad: pfad.clone(),
@@ -194,6 +283,7 @@ async fn adt(State(zustand): State<Arc<Zustand>>, anfrage: Request) -> Response 
         anmeldung: anmeldung.clone(),
         cookie: cookie.clone(),
         csrf: csrf.clone(),
+        sessiontype: sessiontype.clone(),
     });
 
     // 1) Anmeldung: ohne richtige Basic-Auth gibt es nichts.
@@ -201,12 +291,27 @@ async fn adt(State(zustand): State<Arc<Zustand>>, anfrage: Request) -> Response 
         return antwort(StatusCode::UNAUTHORIZED, "Anmeldung fehlt oder ist falsch.");
     }
 
-    // 2) Ein Token holen ist immer erlaubt – auch ohne Keks.
+    // 2) Ein Token holen ist immer erlaubt – und legt eine neue Sitzung an,
+    //    wenn noch keine dabei ist. Innerhalb einer Sitzung bleibt der Keks
+    //    gleich, nur das Token ist neu.
     if csrf.as_deref() == Some("fetch") {
+        let vorhandene = cookie
+            .as_deref()
+            .map(sitzungs_id)
+            .filter(|kennung| !kennung.is_empty());
         let (token, sitzung) = {
             let mut lage = griff(&zustand.lage);
             lage.token_holt += 1;
-            (lage.token.clone(), lage.sitzung.clone())
+            let token = format!("token-{}", lage.token_holt);
+            let kennung =
+                match vorhandene.filter(|kennung| lage.token_je_sitzung.contains_key(kennung)) {
+                    Some(kennung) => kennung,
+                    None => format!("sitzung-{}", lage.token_holt),
+                };
+            lage.token_je_sitzung.insert(kennung.clone(), token.clone());
+            lage.token = token.clone();
+            lage.sitzung = format!("SAP_SESSIONID_DEV_100={kennung}");
+            (token, lage.sitzung.clone())
         };
         return mit_kopfzeilen(
             StatusCode::OK,
@@ -216,23 +321,37 @@ async fn adt(State(zustand): State<Arc<Zustand>>, anfrage: Request) -> Response 
     }
 
     // 3) Ohne Keks keine Sitzung.
-    match cookie.as_deref() {
-        Some(cookie) if cookie.contains("SAP_SESSIONID") => {}
-        _ => return antwort(StatusCode::UNAUTHORIZED, "Keine Sitzung."),
-    }
+    let sitzung = match cookie
+        .as_deref()
+        .filter(|keks| keks.contains("SAP_SESSIONID"))
+    {
+        Some(keks) => sitzungs_id(keks),
+        None => return antwort(StatusCode::UNAUTHORIZED, "Keine Sitzung."),
+    };
 
     // 4) Das Token entwerten, falls der Test das verlangt.
-    if zustand.csrf_erneuern.swap(false, Ordering::SeqCst) {
-        let neues = neues_token(&zustand);
+    let erneuern = zustand.csrf_erneuern_in_sitzung.load(Ordering::SeqCst) && stateful;
+    if erneuern {
+        zustand
+            .csrf_erneuern_in_sitzung
+            .store(false, Ordering::SeqCst);
+    }
+    if erneuern || zustand.csrf_erneuern.swap(false, Ordering::SeqCst) {
         return mit_kopfzeilen(
             StatusCode::FORBIDDEN,
             vec![("x-csrf-token", "Required".to_string())],
-            &format!("Das Token {neues} ist noch nicht gültig."),
+            "Bitte ein neues Token holen.",
         );
     }
-    // 5) Und sonst muss das Token stimmen.
-    let gueltig = griff(&zustand.lage).token.clone();
-    if csrf.as_deref() != Some(gueltig.as_str()) {
+
+    // 5) Eine abgelaufene Sitzung: nur im stateful Betrieb, wie bei SAP.
+    if stateful && zustand.sitzung_ablaufen.swap(false, Ordering::SeqCst) {
+        return antwort(StatusCode::BAD_REQUEST, "Session timed out");
+    }
+
+    // 6) Und sonst muss das Token zu **dieser** Sitzung passen.
+    let erwartet = griff(&zustand.lage).token_je_sitzung.get(&sitzung).cloned();
+    if erwartet.as_deref() != csrf.as_deref() {
         return mit_kopfzeilen(
             StatusCode::FORBIDDEN,
             vec![("x-csrf-token", "Required".to_string())],
@@ -240,8 +359,36 @@ async fn adt(State(zustand): State<Arc<Zustand>>, anfrage: Request) -> Response 
         );
     }
 
-    // 6) Der eigentliche Endpunkt.
+    // 7) Sperren und Entsperren: `POST <objekt-url>?_action=…`.
+    match abfrage.get("_action").map(String::as_str) {
+        Some("LOCK") => return lock_aufnehmen(&zustand, &pfad, &sitzung),
+        Some("UNLOCK") => return lock_freigeben(&zustand, &pfad, &abfrage, &sitzung),
+        Some(sonst) => {
+            return antwort(
+                StatusCode::BAD_REQUEST,
+                &format!("Unbekannte Aktion {sonst}."),
+            )
+        }
+        None => {}
+    }
+
+    // 8) Schreiben: Quelltext (Hauptinclude) und Textelemente.
+    if methode == "PUT" {
+        return schreiben(&zustand, &pfad, &abfrage, &sitzung);
+    }
+
+    // 9) Anlegen: `POST` auf einen Anlegepfad, `Location` zurück.
+    if methode == "POST" && ANLEGEPFADE.contains(&pfad.as_str()) {
+        return anlegen(&pfad, &rumpf);
+    }
+
+    // 10) Der eigentliche Endpunkt.
     match pfad.as_str() {
+        "/sap/bc/adt/activation" => mit_kopfzeilen(
+            StatusCode::OK,
+            vec![("content-type", "application/xml".to_string())],
+            AKTIVIERUNG,
+        ),
         "/sap/bc/adt/core/discovery" => mit_kopfzeilen(
             StatusCode::OK,
             vec![("content-type", "application/xml".to_string())],
@@ -361,10 +508,170 @@ async fn adt(State(zustand): State<Arc<Zustand>>, anfrage: Request) -> Response 
     }
 }
 
-fn neues_token(zustand: &Zustand) -> String {
+/// Die Sitzungskennung aus dem Keks der Attrappe.
+fn sitzungs_id(cookie: &str) -> String {
+    cookie
+        .split(';')
+        .filter_map(|teil| teil.trim().split_once('='))
+        .find(|(name, _)| name.trim().eq_ignore_ascii_case("SAP_SESSIONID_DEV_100"))
+        .map(|(_, wert)| wert.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// Die Anlegepfade, die die Attrappe kennt (`api/objectcreator.js`).
+const ANLEGEPFADE: [&str; 9] = [
+    "/sap/bc/adt/oo/classes",
+    "/sap/bc/adt/oo/interfaces",
+    "/sap/bc/adt/programs/programs",
+    "/sap/bc/adt/programs/includes",
+    "/sap/bc/adt/functions/groups",
+    "/sap/bc/adt/ddic/tables",
+    "/sap/bc/adt/ddic/dataelements",
+    "/sap/bc/adt/ddic/domains",
+    "/sap/bc/adt/ddic/ddl/sources",
+];
+
+/// Ein Objekt sperren: nur diese Sitzung darf es danach schreiben.
+fn lock_aufnehmen(zustand: &Zustand, objekt_url: &str, sitzung: &str) -> Response {
     let mut lage = griff(&zustand.lage);
-    lage.token = format!("token-{}", lage.token_holt + 1);
-    lage.token.clone()
+    if lage.locks.contains_key(objekt_url) {
+        return antwort(StatusCode::CONFLICT, "Das Objekt ist schon gesperrt.");
+    }
+    lage.lock_zaehler += 1;
+    let handle = format!("LH{}", lage.lock_zaehler);
+    // ZCL_DEMO liegt in $TMP und braucht keinen Transport; alles andere schon.
+    let lokal = objekt_url.ends_with("zcl_demo");
+    let auftrag = if lokal {
+        String::new()
+    } else {
+        "DEVK900123".to_string()
+    };
+    lage.locks.insert(
+        objekt_url.to_string(),
+        Gesperrt {
+            handle: handle.clone(),
+            sitzung: sitzung.to_string(),
+            auftrag: auftrag.clone(),
+        },
+    );
+    let daten = if lokal {
+        format!("<asx:values><DATA><LOCK_HANDLE>{handle}</LOCK_HANDLE><IS_LOCAL>X</IS_LOCAL></DATA></asx:values>")
+    } else {
+        format!(
+            "<asx:values><DATA><LOCK_HANDLE>{handle}</LOCK_HANDLE><CORRNR>{auftrag}</CORRNR></DATA></asx:values>"
+        )
+    };
+    mit_kopfzeilen(
+        StatusCode::OK,
+        vec![("content-type", "application/xml".to_string())],
+        &format!(
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<asx:abap xmlns:asx=\"http://www.sap.com/abapxml\" version=\"1.0\">{daten}</asx:abap>"
+        ),
+    )
+}
+
+/// Ein Objekt entsperren: nur die Sitzung, die gesperrt hat, und nur mit
+/// ihrem Handle.
+fn lock_freigeben(
+    zustand: &Zustand,
+    objekt_url: &str,
+    abfrage: &BTreeMap<String, String>,
+    sitzung: &str,
+) -> Response {
+    let handle = abfrage.get("lockHandle").cloned().unwrap_or_default();
+    let mut lage = griff(&zustand.lage);
+    let bekannt = lage
+        .locks
+        .get(objekt_url)
+        .map(|sperre| (sperre.handle.clone(), sperre.sitzung.clone()));
+    match bekannt {
+        None => antwort(StatusCode::CONFLICT, "Das Objekt ist nicht gesperrt."),
+        Some((gesperrt_mit, gesperrt_von)) if gesperrt_mit != handle || gesperrt_von != sitzung => {
+            antwort(
+                StatusCode::LOCKED,
+                "Die Sperre gehört zu einer anderen Sitzung oder der Handle stimmt nicht.",
+            )
+        }
+        Some(_) => {
+            lage.locks.remove(objekt_url);
+            lage.unlocks += 1;
+            antwort(StatusCode::OK, "Entsperrt.")
+        }
+    }
+}
+
+/// Den Objektnamen aus einer Textelemente-Adresse lesen.
+fn textelement_objekt(pfad: &str) -> Option<String> {
+    for art in ["/classes/", "/programs/", "/functiongroups/"] {
+        if let Some(rest) = pfad.split(art).nth(1) {
+            return rest.split('/').next().map(str::to_string);
+        }
+    }
+    None
+}
+
+/// Die Sperre, die zu einem schreibenden Aufruf passt (gleiches Objekt).
+fn sperre_zu(lage: &Lage, pfad: &str) -> Option<Gesperrt> {
+    let name = textelement_objekt(pfad);
+    let treffer = match &name {
+        Some(name) => lage
+            .locks
+            .iter()
+            .find(|(url, _)| url.rsplit('/').next() == Some(name.as_str())),
+        None => lage
+            .locks
+            .iter()
+            .find(|(url, _)| pfad.starts_with(url.as_str())),
+    };
+    treffer.map(|(_, sperre)| sperre.clone())
+}
+
+/// Quelltext oder Textelemente schreiben (`PUT`).
+fn schreiben(
+    zustand: &Zustand,
+    pfad: &str,
+    abfrage: &BTreeMap<String, String>,
+    sitzung: &str,
+) -> Response {
+    let handle = abfrage.get("lockHandle").cloned().unwrap_or_default();
+    let lage = griff(&zustand.lage);
+    let Some(sperre) = sperre_zu(&lage, pfad) else {
+        return antwort(StatusCode::LOCKED, "Das Objekt ist nicht gesperrt.");
+    };
+    drop(lage);
+    if sperre.sitzung != sitzung || sperre.handle != handle {
+        return antwort(
+            StatusCode::LOCKED,
+            "Die Sperre gehört zu einer anderen Sitzung oder der Handle stimmt nicht.",
+        );
+    }
+    if zustand.put_scheitert.swap(false, Ordering::SeqCst) {
+        return antwort(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Der Quelltext ließ sich nicht speichern.",
+        );
+    }
+    antwort(StatusCode::OK, "Gespeichert.")
+}
+
+/// Ein Objekt anlegen: `201` mit `Location`.
+fn anlegen(pfad: &str, rumpf: &str) -> Response {
+    let name = attribut_wert(rumpf, "adtcore:name").unwrap_or_else(|| "zobjekt".to_string());
+    mit_kopfzeilen(
+        StatusCode::CREATED,
+        vec![
+            ("location", format!("{pfad}/{}", name.to_lowercase())),
+            ("content-type", "text/plain; charset=utf-8".to_string()),
+        ],
+        "",
+    )
+}
+
+/// Der erste Attributwert `name="…"` aus einem XML-Rumpf.
+fn attribut_wert(rumpf: &str, name: &str) -> Option<String> {
+    let suche = format!("{name}=\"");
+    let rest = rumpf.split(&suche).nth(1)?;
+    rest.split('"').next().map(str::to_string)
 }
 
 fn kopf_zeile(kopf: &HeaderMap, name: &str) -> Option<String> {
@@ -674,3 +981,16 @@ const TRANSPORTDETAIL: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 </tm:root>"#;
 
 const TEXTELEMENTE: &str = "@MaxLength:30\n001=Anzahl\n002=Summe\n";
+
+/// Die Antwort der Aktivierung: eine Warnung und ein Fehler in Zeile 3.
+const AKTIVIERUNG: &str = r#"<?xml version="1.0" encoding="utf-8"?>
+<chkl:checkMessages xmlns:chkl="http://www.sap.com/adt/checkrun">
+  <chkl:messages>
+    <chkl:msg type="W" line="1" id="W01">
+      <chkl:shortText><chkl:txt>Der Parameter wird nie gelesen.</chkl:txt></chkl:shortText>
+    </chkl:msg>
+    <chkl:msg type="E" line="3" id="E01">
+      <chkl:shortText><chkl:txt>Die Anweisung WRITE ist hier nicht erlaubt.</chkl:txt></chkl:shortText>
+    </chkl:msg>
+  </chkl:messages>
+</chkl:checkMessages>"#;

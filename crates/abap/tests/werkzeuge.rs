@@ -21,7 +21,15 @@ use rmcp::ErrorData as McpError;
 use serde_json::{json, Value};
 
 /// Ein System für die Attrappe; das Passwort ist erfunden.
+///
+/// Der Schalter `schreiben` steht auf `an`, damit die schreibenden Werkzeuge
+/// geprüft werden können; die lesenden Tests ändern daran nichts.
 fn eintrag(adresse: &str, name: &str, passwort: &str) -> Eintrag {
+    eintrag_mit(adresse, name, passwort, true)
+}
+
+/// Ein System mit gewähltem Schalter `schreiben`.
+fn eintrag_mit(adresse: &str, name: &str, passwort: &str, schreiben: bool) -> Eintrag {
     Eintrag {
         name: name.to_string(),
         werte: [
@@ -30,6 +38,7 @@ fn eintrag(adresse: &str, name: &str, passwort: &str) -> Eintrag {
             ("mandant", "100"),
             ("sprache", "DE"),
             ("passwort", passwort),
+            ("schreiben", if schreiben { "an" } else { "aus" }),
         ]
         .into_iter()
         .map(|(feld, wert)| (feld.to_string(), wert.to_string()))
@@ -40,6 +49,17 @@ fn eintrag(adresse: &str, name: &str, passwort: &str) -> Eintrag {
 /// Ein Server mit genau einem System.
 fn server(adresse: &str) -> AbapServer {
     server_mit_passwort(adresse, PASSWORT)
+}
+
+/// Ein Server, auf dem Schreiben **aus** ist.
+fn server_ohne_schreiben(adresse: &str) -> AbapServer {
+    AbapServer::mit(
+        Zugang::mit_umgebung(&Abap, |_| None),
+        Ok(
+            Sammlung::aus_zugaengen(vec![eintrag_mit(adresse, "dev-100", PASSWORT, false)])
+                .unwrap(),
+        ),
+    )
 }
 
 fn server_mit_passwort(adresse: &str, passwort: &str) -> AbapServer {
@@ -644,4 +664,636 @@ async fn textelemente_werden_gelesen_und_404_ist_leer() {
     .await
     .unwrap_err();
     assert!(fehler.message.contains("symbols"), "{}", fehler.message);
+}
+
+// ------------------------------------------------------------ Schreiben
+
+/// Der Quelltext, den die Tests schreiben.
+const NEUER_QUELLTEXT: &str = "CLASS zcl_demo DEFINITION PUBLIC FINAL CREATE PUBLIC.\n  PUBLIC SECTION.\n    METHODS run.\nENDCLASS.";
+
+#[tokio::test]
+async fn sperren_schreiben_und_entsperren_laufen_in_einer_sitzung() {
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+
+    // 1) Sperren.
+    let text = antwort(&server, "abap_lock", json!({ "name": "ZCL_DEMO" })).await;
+    assert!(text.contains("ZCL_DEMO ist gesperrt"), "{text}");
+    assert!(text.contains("Lock-Handle: LH1"), "{text}");
+    assert!(text.contains("nicht nötig (lokales Objekt)"), "{text}");
+    assert!(text.contains("abap_unlock"), "{text}");
+
+    let lock = attrappe
+        .aufzeichnung
+        .zu_mit("oo/classes/zcl_demo", "POST")
+        .pop()
+        .expect("kein LOCK");
+    assert_eq!(lock.methode, "POST");
+    assert_eq!(lock.feld("_action"), Some("LOCK"));
+    assert_eq!(lock.feld("accessMode"), Some("MODIFY"));
+    assert!(lock.ist_stateful(), "die Sperre braucht eine Sitzung");
+    assert_eq!(attrappe.offene_locks(), 1);
+
+    // 2) Schreiben mit dem Handle – die Sperre bleibt stehen.
+    let text = antwort(
+        &server,
+        "abap_write",
+        json!({ "name": "ZCL_DEMO", "source": NEUER_QUELLTEXT, "lockHandle": "LH1" }),
+    )
+    .await;
+    assert!(text.contains("Quelltext geschrieben"), "{text}");
+    assert!(text.contains("Lock bleibt"), "{text}");
+    assert!(text.contains("abap_activate"), "{text}");
+    assert_eq!(attrappe.offene_locks(), 1, "die Sperre bleibt stehen");
+    assert_eq!(attrappe.unlocks(), 0);
+
+    let put = attrappe
+        .aufzeichnung
+        .zu_mit("oo/classes/zcl_demo", "PUT")
+        .pop()
+        .expect("kein PUT");
+    assert_eq!(
+        put.pfad,
+        "/sap/bc/adt/oo/classes/zcl_demo/includes/implementations"
+    );
+    assert_eq!(put.feld("lockHandle"), Some("LH1"));
+    assert_eq!(put.rumpf, NEUER_QUELLTEXT);
+    assert!(put.ist_stateful(), "das Schreiben gehört zur Sitzung");
+    // Dieselbe Sitzung wie die Sperre.
+    assert_eq!(put.cookie, lock.cookie);
+
+    // 3) Freigeben.
+    let text = antwort(
+        &server,
+        "abap_unlock",
+        json!({ "name": "ZCL_DEMO", "lockHandle": "LH1" }),
+    )
+    .await;
+    assert!(text.contains("ZCL_DEMO ist freigegeben"), "{text}");
+    assert_eq!(attrappe.offene_locks(), 0);
+    assert_eq!(attrappe.unlocks(), 1);
+}
+
+#[tokio::test]
+async fn schreiben_ohne_handle_sperrt_schreibt_und_gibt_frei() {
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+
+    let text = antwort(
+        &server,
+        "abap_write",
+        json!({
+            "name": "ZCL_DEMO",
+            "source": NEUER_QUELLTEXT,
+            "transport": "DEVK900123"
+        }),
+    )
+    .await;
+    assert!(text.contains("Quelltext geschrieben"), "{text}");
+    assert!(text.contains("Lock freigegeben"), "{text}");
+    assert_eq!(attrappe.offene_locks(), 0);
+    assert_eq!(attrappe.unlocks(), 1);
+
+    let sperren = attrappe.aufzeichnung.zu_mit("zcl_demo", "POST");
+    assert_eq!(
+        sperren
+            .iter()
+            .filter(|aufruf| aufruf.feld("_action") == Some("LOCK"))
+            .count(),
+        1
+    );
+    let puts = attrappe.aufzeichnung.zu_mit("zcl_demo", "PUT");
+    assert_eq!(puts.len(), 1);
+    assert_eq!(puts[0].feld("corrNr"), Some("DEVK900123"));
+    let entsperren = attrappe.aufzeichnung.zu_mit("zcl_demo", "POST");
+    assert!(entsperren
+        .iter()
+        .any(|aufruf| aufruf.feld("_action") == Some("UNLOCK")));
+}
+
+#[tokio::test]
+async fn ein_gescheitertes_schreiben_gibt_die_sperre_trotzdem_frei() {
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+
+    attrappe.put_scheitert();
+    let fehler = aufruf(
+        &server,
+        "abap_write",
+        json!({ "name": "ZCL_DEMO", "source": NEUER_QUELLTEXT }),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        fehler.message.contains("nicht speichern"),
+        "{}",
+        fehler.message
+    );
+    assert!(!fehler.message.contains(PASSWORT), "{}", fehler.message);
+
+    // Wie `finally` in der Vorlage: entsperrt, obwohl das Schreiben scheiterte.
+    assert_eq!(attrappe.unlocks(), 1);
+    assert_eq!(attrappe.offene_locks(), 0);
+    assert_eq!(attrappe.aufzeichnung.anzahl_mit("zcl_demo", "PUT"), 1);
+}
+
+#[tokio::test]
+async fn ein_unbekannter_handle_wird_ohne_anfrage_abgelehnt() {
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+
+    let fehler = aufruf(
+        &server,
+        "abap_write",
+        json!({
+            "name": "ZCL_DEMO",
+            "source": NEUER_QUELLTEXT,
+            "lockHandle": "LH-FREMD"
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        fehler.message.contains("Lock-Handle unbekannt"),
+        "{}",
+        fehler.message
+    );
+    assert!(fehler.message.contains("abap_lock"), "{}", fehler.message);
+    // Keine einzige Anfrage an SAP.
+    assert!(attrappe.aufzeichnung.alle().is_empty());
+
+    // Auch abap_unlock lehnt einen fremden Handle ohne Anfrage ab.
+    let fehler = aufruf(
+        &server,
+        "abap_unlock",
+        json!({ "name": "ZCL_DEMO", "lockHandle": "LH-FREMD" }),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        fehler.message.contains("Lock-Handle unbekannt"),
+        "{}",
+        fehler.message
+    );
+    assert!(attrappe.aufzeichnung.alle().is_empty());
+}
+
+#[tokio::test]
+async fn ohne_schreiben_antworten_alle_schreibenden_werkzeuge_ohne_anfrage() {
+    let attrappe = Attrappe::starte().await;
+    let server = server_ohne_schreiben(&attrappe.adresse);
+
+    let faelle = [
+        ("abap_lock", json!({ "name": "ZCL_DEMO" })),
+        (
+            "abap_unlock",
+            json!({ "name": "ZCL_DEMO", "lockHandle": "LH1" }),
+        ),
+        (
+            "abap_write",
+            json!({ "name": "ZCL_DEMO", "source": NEUER_QUELLTEXT }),
+        ),
+        ("abap_activate", json!({ "name": "ZCL_DEMO" })),
+        (
+            "abap_create_object",
+            json!({
+                "objectType": "CLAS/OC",
+                "name": "ZCL_NEU",
+                "parentName": "$TMP",
+                "description": "Neu"
+            }),
+        ),
+        (
+            "abap_set_text_elements",
+            json!({
+                "name": "ZCL_DEMO",
+                "category": "symbols",
+                "elements": [{ "id": "001", "text": "Anzahl" }]
+            }),
+        ),
+    ];
+    for (name, argumente) in faelle {
+        let text = antwort(&server, name, argumente).await;
+        assert!(
+            text.contains("Schreiben ist für dev-100 aus"),
+            "{name}: {text}"
+        );
+        assert!(text.contains("Tools → ABAP"), "{name}: {text}");
+        assert!(text.contains("‚schreiben‘ einschalten"), "{name}: {text}");
+    }
+    // Kein einziger Aufruf an SAP.
+    assert!(attrappe.aufzeichnung.alle().is_empty());
+}
+
+#[tokio::test]
+async fn fremder_namensraum_wird_ohne_anfrage_abgelehnt() {
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+
+    // Ein SAP-Standardobjekt.
+    let fehler = aufruf(
+        &server,
+        "abap_write",
+        json!({ "name": "CL_ABAP_TYPEDESCR", "source": NEUER_QUELLTEXT }),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        fehler.message.contains("Kundennamensraum"),
+        "{}",
+        fehler.message
+    );
+
+    // Auch über eine Objekt-URL erkannt.
+    let fehler = aufruf(
+        &server,
+        "abap_lock",
+        json!({ "objectUrl": "/sap/bc/adt/oo/classes/cl_abap_typedescr" }),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        fehler.message.contains("Kundennamensraum"),
+        "{}",
+        fehler.message
+    );
+
+    // Ein Paket außerhalb des Namensraums.
+    let fehler = aufruf(
+        &server,
+        "abap_create_object",
+        json!({
+            "objectType": "CLAS/OC",
+            "name": "ZCL_NEU",
+            "parentName": "SAPBC",
+            "description": "Neu"
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        fehler.message.contains("nicht erlaubt"),
+        "{}",
+        fehler.message
+    );
+
+    assert!(attrappe.aufzeichnung.alle().is_empty());
+}
+
+#[tokio::test]
+async fn ein_zu_grosser_quelltext_wird_ohne_anfrage_abgelehnt() {
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+
+    let zu_gross = "x".repeat(2 * 1024 * 1024 + 1);
+    let fehler = aufruf(
+        &server,
+        "abap_write",
+        json!({ "name": "ZCL_DEMO", "source": zu_gross }),
+    )
+    .await
+    .unwrap_err();
+    assert!(fehler.message.contains("zu groß"), "{}", fehler.message);
+    assert!(attrappe.aufzeichnung.alle().is_empty());
+}
+
+#[tokio::test]
+async fn aktivieren_zeigt_die_meldungen_mit_zeile() {
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+
+    let text = antwort(&server, "abap_activate", json!({ "name": "ZCL_DEMO" })).await;
+    assert!(
+        text.contains("Aktivierung von ZCL_DEMO nicht erfolgreich"),
+        "{text}"
+    );
+    assert!(
+        text.contains("[E] Zeile 3: Die Anweisung WRITE ist hier nicht erlaubt."),
+        "{text}"
+    );
+    assert!(text.contains("[W] Zeile 1"), "{text}");
+
+    let aufruf = attrappe.aufzeichnung.erster("adt/activation").unwrap();
+    assert_eq!(aufruf.methode, "POST");
+    assert_eq!(aufruf.feld("method"), Some("activate"));
+    assert_eq!(aufruf.feld("preauditRequested"), Some("true"));
+    assert!(
+        aufruf
+            .rumpf
+            .contains("adtcore:uri=\"/sap/bc/adt/oo/classes/zcl_demo?context="),
+        "{}",
+        aufruf.rumpf
+    );
+    assert!(
+        aufruf.ist_stateful(),
+        "die Aktivierung läuft in der Sitzung"
+    );
+}
+
+#[tokio::test]
+async fn anlegen_nimmt_die_richtigen_pfade_und_rumpf() {
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+
+    let text = antwort(
+        &server,
+        "abap_create_object",
+        json!({
+            "objectType": "CLAS/OC",
+            "name": "ZCL_NEU",
+            "parentName": "$TMP",
+            "description": "Neue Klasse",
+            "transport": "DEVK900123"
+        }),
+    )
+    .await;
+    assert!(text.contains("CLAS/OC ZCL_NEU in $TMP angelegt"), "{text}");
+    assert!(text.contains("/sap/bc/adt/oo/classes/zcl_neu"), "{text}");
+
+    let klasse = attrappe.aufzeichnung.erster("oo/classes").unwrap();
+    assert_eq!(klasse.methode, "POST");
+    assert_eq!(klasse.pfad, "/sap/bc/adt/oo/classes");
+    assert_eq!(klasse.feld("corrNr"), Some("DEVK900123"));
+    assert!(
+        klasse.rumpf.contains("<class:abapClass"),
+        "{}",
+        klasse.rumpf
+    );
+    assert!(
+        klasse.rumpf.contains("adtcore:name=\"ZCL_NEU\""),
+        "{}",
+        klasse.rumpf
+    );
+    assert!(
+        klasse
+            .rumpf
+            .contains("<adtcore:packageRef adtcore:name=\"$TMP\"/>"),
+        "{}",
+        klasse.rumpf
+    );
+
+    // Ein Programm geht an den Programm-Pfad, mit eigener Wurzel.
+    let text = antwort(
+        &server,
+        "abap_create_object",
+        json!({
+            "objectType": "PROG/P",
+            "name": "ZREPORT",
+            "parentName": "Z_PAKET",
+            "description": "Report"
+        }),
+    )
+    .await;
+    assert!(
+        text.contains("PROG/P ZREPORT in Z_PAKET angelegt"),
+        "{text}"
+    );
+    let programm = attrappe
+        .aufzeichnung
+        .zu("programs/programs")
+        .into_iter()
+        .find(|aufruf| aufruf.methode == "POST")
+        .expect("kein Programm angelegt");
+    assert!(programm.rumpf.contains("<program:abapProgram"));
+    assert!(programm
+        .rumpf
+        .contains("<adtcore:packageRef adtcore:name=\"Z_PAKET\"/>"));
+}
+
+#[tokio::test]
+async fn textelemente_werden_im_format_der_vorlage_geschrieben() {
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+
+    let text = antwort(
+        &server,
+        "abap_set_text_elements",
+        json!({
+            "name": "ZCL_DEMO",
+            "category": "symbols",
+            "elements": [
+                { "id": "001", "text": "Anzahl", "maxLength": 30 },
+                { "id": "002", "text": "Summe" }
+            ]
+        }),
+    )
+    .await;
+    assert!(
+        text.contains("2 Textelement(e) der Art „symbols“ für ZCL_DEMO geschrieben"),
+        "{text}"
+    );
+    assert!(text.contains("Lock freigegeben"), "{text}");
+
+    let put = attrappe
+        .aufzeichnung
+        .zu_mit("textelements", "PUT")
+        .pop()
+        .expect("kein PUT auf Textelemente");
+    assert_eq!(
+        put.pfad,
+        "/sap/bc/adt/textelements/classes/zcl_demo/source/symbols"
+    );
+    assert_eq!(put.rumpf, "@MaxLength:30\n001=Anzahl\n\n002=Summe\n");
+    assert!(put.ist_stateful());
+    assert!(put.feld("lockHandle").is_some());
+    // Gesperrt und wieder freigegeben.
+    assert_eq!(attrappe.unlocks(), 1);
+    assert_eq!(attrappe.offene_locks(), 0);
+}
+
+#[tokio::test]
+async fn eine_abgelaufene_sitzung_meldet_sich_und_wiederholt_nichts() {
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+
+    // Sperren (Sitzung entsteht) …
+    antwort(&server, "abap_lock", json!({ "name": "ZCL_DEMO" })).await;
+    assert_eq!(attrappe.offene_locks(), 1);
+
+    // … dann läuft die Sitzung ab.
+    attrappe.sitzung_ablaufen();
+    let fehler = aufruf(
+        &server,
+        "abap_write",
+        json!({ "name": "ZCL_DEMO", "source": NEUER_QUELLTEXT, "lockHandle": "LH1" }),
+    )
+    .await
+    .unwrap_err();
+    assert!(fehler.message.contains("abgelaufen"), "{}", fehler.message);
+    assert!(fehler.message.contains("abap_lock"), "{}", fehler.message);
+    // Kein zweiter Versuch: genau ein PUT ging hinaus.
+    assert_eq!(attrappe.aufzeichnung.anzahl_mit("zcl_demo", "PUT"), 1);
+    // Die Lock-Tabelle ist verworfen: der Handle gilt nicht mehr.
+    let fehler = aufruf(
+        &server,
+        "abap_write",
+        json!({ "name": "ZCL_DEMO", "source": NEUER_QUELLTEXT, "lockHandle": "LH1" }),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        fehler.message.contains("Lock-Handle unbekannt"),
+        "{}",
+        fehler.message
+    );
+}
+
+#[tokio::test]
+async fn ein_abgelehntes_csrf_token_wird_in_der_sitzung_erneuert() {
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+
+    antwort(&server, "abap_lock", json!({ "name": "ZCL_DEMO" })).await;
+
+    attrappe.csrf_erneuern_in_sitzung();
+    let text = antwort(
+        &server,
+        "abap_write",
+        json!({ "name": "ZCL_DEMO", "source": NEUER_QUELLTEXT, "lockHandle": "LH1" }),
+    )
+    .await;
+    assert!(text.contains("Quelltext geschrieben"), "{text}");
+
+    // Einmal abgelehnt, einmal erfolgreich – und zwar **in derselben Sitzung**:
+    // gleicher Keks, neues Token.
+    let puts = attrappe.aufzeichnung.zu_mit("zcl_demo", "PUT");
+    assert_eq!(puts.len(), 2, "einmal abgelehnt, einmal wiederholt");
+    assert_eq!(puts[0].cookie, puts[1].cookie, "dieselbe Sitzung");
+    assert_ne!(puts[0].csrf, puts[1].csrf, "neues Token");
+    assert!(puts.iter().all(|aufruf| aufruf.ist_stateful()));
+}
+
+#[tokio::test]
+async fn eine_abgelehnte_anmeldung_wird_nicht_wiederholt() {
+    let attrappe = Attrappe::starte().await;
+    let server = server_mit_passwort(&attrappe.adresse, "falsch-4711");
+
+    let fehler = aufruf(&server, "abap_lock", json!({ "name": "ZCL_DEMO" }))
+        .await
+        .unwrap_err();
+    assert!(fehler.message.contains("abgelehnt"), "{}", fehler.message);
+    assert!(
+        !fehler.message.contains("falsch-4711"),
+        "{}",
+        fehler.message
+    );
+    // Genau ein Anmeldeversuch.
+    assert_eq!(attrappe.aufzeichnung.anzahl("compatibility/graph"), 1);
+}
+
+#[tokio::test]
+async fn eine_andere_sitzung_darf_nicht_entsperren() {
+    let attrappe = Attrappe::starte().await;
+
+    // Zwei Server auf dasselbe SAP-System: zwei getrennte Sitzungen.
+    let einer = server(&attrappe.adresse);
+    let anderer = server(&attrappe.adresse);
+
+    antwort(&einer, "abap_lock", json!({ "name": "ZCL_DEMO" })).await;
+    assert_eq!(attrappe.offene_locks(), 1);
+
+    // Der andere Server weiß nichts von der Sperre: keine Anfrage, klare Meldung.
+    let fehler = aufruf(
+        &anderer,
+        "abap_unlock",
+        json!({ "name": "ZCL_DEMO", "lockHandle": "LH1" }),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        fehler.message.contains("Lock-Handle unbekannt"),
+        "{}",
+        fehler.message
+    );
+    assert_eq!(attrappe.offene_locks(), 1);
+}
+
+#[tokio::test]
+async fn textelemente_pruefen_ihre_schluessel_vor_der_anfrage() {
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+
+    let fehler = aufruf(
+        &server,
+        "abap_set_text_elements",
+        json!({
+            "name": "ZCL_DEMO",
+            "category": "symbols",
+            "elements": [{ "id": "01", "text": "Zu kurz" }]
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        fehler.message.contains("drei Zeichen"),
+        "{}",
+        fehler.message
+    );
+
+    let fehler = aufruf(
+        &server,
+        "abap_set_text_elements",
+        json!({
+            "name": "ZCL_DEMO",
+            "category": "quatsch",
+            "elements": [{ "id": "001", "text": "Anzahl" }]
+        }),
+    )
+    .await
+    .unwrap_err();
+    assert!(fehler.message.contains("symbols"), "{}", fehler.message);
+    assert!(attrappe.aufzeichnung.alle().is_empty());
+}
+
+#[tokio::test]
+async fn name_und_fremde_url_zusammen_werden_ohne_anfrage_abgelehnt() {
+    // Geschrieben wird an die URL – also muss auch sie im Kundennamensraum
+    // liegen, nicht nur der Name.
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+    for werkzeug in ["abap_write", "abap_lock", "abap_activate"] {
+        let fehler = aufruf(
+            &server,
+            werkzeug,
+            json!({
+                "name": "ZCL_DEMO",
+                "objectUrl": "/sap/bc/adt/oo/classes/cl_abap_typedescr",
+                "source": NEUER_QUELLTEXT
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            fehler.message.contains("Kundennamensraum"),
+            "{werkzeug}: {}",
+            fehler.message
+        );
+    }
+    assert!(attrappe.aufzeichnung.alle().is_empty());
+}
+
+#[tokio::test]
+async fn beim_schreiben_zaehlt_nur_ein_exakter_treffer() {
+    // Die Suche der Attrappe liefert immer ZCL_DEMO – für „ZCL_ANDERS“ ist das
+    // kein exakter Treffer, also wird nichts gesperrt und nichts geschrieben.
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+    let fehler = aufruf(
+        &server,
+        "abap_write",
+        json!({ "name": "ZCL_ANDERS", "source": NEUER_QUELLTEXT }),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        fehler.message.contains("nicht eindeutig"),
+        "{}",
+        fehler.message
+    );
+    // Gesucht und gelesen darf werden, gesperrt (POST) und geschrieben (PUT) nicht.
+    assert_eq!(
+        attrappe.aufzeichnung.anzahl_mit("/sap/bc/adt/oo/", "POST"),
+        0
+    );
+    assert_eq!(attrappe.aufzeichnung.anzahl_mit("/sap/bc/adt/", "PUT"), 0);
 }

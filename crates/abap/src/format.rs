@@ -9,10 +9,12 @@
 use quiver_tools_kern::kuerzen;
 
 use crate::adt::daten::{
-    Abfrage, Auftragsobjekt, Aufzeichnung, Aussage, Baumknoten, Dump, Hotspot, Objektart,
-    Syntaxmeldung, Testklasse, Textelement, Transport, Transportdetail, Treffer, Verwendung,
+    Abfrage, Aktivierung, Auftragsobjekt, Aufzeichnung, Aussage, Baumknoten, Dump, Hotspot,
+    Objektart, Sperre, Syntaxmeldung, Testklasse, Textelement, Transport, Transportdetail, Treffer,
+    Verwendung,
 };
 use crate::systeme::System;
+use crate::werkzeug::TITEL;
 
 /// Eine Liste von Systemen (ohne Passwort).
 pub fn status(systeme: &[System]) -> String {
@@ -492,6 +494,135 @@ pub fn textelemente(elemente: &[Textelement], kategorie: &str, programm: &str) -
     )
 }
 
+// ------------------------------------------------- Schreiben (Teil 2)
+
+/// Der Hinweis, wenn „schreiben“ für ein System aus ist (Aufgabe 08).
+///
+/// Wird **vor** jeder Anfrage an SAP geantwortet.
+pub fn schreiben_aus(system: &str) -> String {
+    format!(
+        "Schreiben ist für {system} aus – im quiver-Fenster unter Tools → {TITEL} → Systeme → \
+         {system} ‚schreiben‘ einschalten."
+    )
+}
+
+/// Die Ablehnung eines Objekts außerhalb des Kundennamensraums.
+pub fn namensraum(name: &str) -> String {
+    format!(
+        "„{name}“ liegt nicht im Kundennamensraum. Geschrieben, angelegt und gesperrt werden nur \
+         Objekte mit Z*, Y* oder /…/ im Namen – SAP-Standard und fremde Namensräume bleiben \
+         unberührt."
+    )
+}
+
+/// `abap_lock`: Handle, Objekt, Transport und der Hinweis zum Freigeben.
+pub fn sperre(objekt: &str, url: &str, sperre: &Sperre) -> String {
+    let mut text = format!(
+        "{objekt} ist gesperrt ({url}).\nLock-Handle: {}",
+        sperre.handle
+    );
+    if sperre.lokal || sperre.auftrag.trim().is_empty() {
+        text.push_str("\nTransport: nicht nötig (lokales Objekt).");
+    } else {
+        text.push_str(&format!(
+            "\nTransport: {} – beim Schreiben als `transport` mitgeben.",
+            sperre.auftrag
+        ));
+    }
+    text.push_str(
+        "\nFür abap_write als `lockHandle` mitgeben oder mit abap_unlock freigeben – der Handle \
+         gilt nur in dieser Sitzung.",
+    );
+    text
+}
+
+/// `abap_unlock`: die Sperre ist weg.
+pub fn entsperrt(objekt: &str, url: &str) -> String {
+    format!("{objekt} ist freigegeben ({url}).")
+}
+
+/// `abap_write`: was geschrieben wurde und was mit der Sperre passiert ist.
+pub fn geschrieben(name: &str, zeichen: usize, freigegeben: bool) -> String {
+    let sperre = if freigegeben {
+        "Lock freigegeben"
+    } else {
+        "Lock bleibt"
+    };
+    format!(
+        "Quelltext geschrieben: {name} ({zeichen} Zeichen). {sperre}. Mit abap_activate \
+         aktivieren."
+    )
+}
+
+/// `abap_activate`: Erfolg und Meldungen (Typ, Zeile, Text), höchstens 50.
+pub fn aktivierung(name: &str, ergebnis: &Aktivierung) -> String {
+    let mut text = if ergebnis.erfolg {
+        format!("{name} ist aktiviert.")
+    } else {
+        format!("Aktivierung von {name} nicht erfolgreich.")
+    };
+    if ergebnis.inaktiv > 0 {
+        text.push_str(&format!(
+            "\nAchtung: {} Objekt(e) blieben inaktiv.",
+            ergebnis.inaktiv
+        ));
+    }
+    if !ergebnis.meldungen.is_empty() {
+        let gezeigt: Vec<String> = ergebnis
+            .meldungen
+            .iter()
+            .take(50)
+            .map(|meldung| {
+                let art = if meldung.art.is_empty() {
+                    "?"
+                } else {
+                    meldung.art.as_str()
+                };
+                let zeile = match meldung.zeile {
+                    Some(zeile) => format!("Zeile {zeile}"),
+                    None => "ohne Zeile".to_string(),
+                };
+                format!("- [{art}] {zeile}: {}", meldung.text)
+            })
+            .collect();
+        text.push_str(&format!(
+            "\nMeldungen ({}):\n{}",
+            ergebnis.meldungen.len(),
+            gezeigt.join("\n")
+        ));
+        if ergebnis.meldungen.len() > gezeigt.len() {
+            text.push_str(&format!(
+                "\n… {} weitere Meldung(en) nicht gezeigt.",
+                ergebnis.meldungen.len() - gezeigt.len()
+            ));
+        }
+    }
+    text
+}
+
+/// `abap_create_object`: die Adresse des neuen Objekts.
+pub fn neues_objekt(typ: &str, name: &str, paket: &str, url: &str) -> String {
+    format!(
+        "{typ} {name} in {paket} angelegt: {url}\nMit abap_write den Quelltext schreiben und \
+         danach mit abap_activate aktivieren."
+    )
+}
+
+/// `abap_set_text_elements`: wie viele Elemente geschrieben wurden.
+pub fn textelemente_geschrieben(
+    name: &str,
+    kategorie: &str,
+    anzahl: usize,
+    freigegeben: bool,
+) -> String {
+    let sperre = if freigegeben {
+        "Lock freigegeben"
+    } else {
+        "Lock bleibt"
+    };
+    format!("{anzahl} Textelement(e) der Art „{kategorie}“ für {name} geschrieben. {sperre}.")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -507,6 +638,7 @@ mod tests {
             sprache: "DE".into(),
             passwort: "geheim-4711".into(),
             zertifikat_pruefen: true,
+            schreiben: false,
         }
     }
 
@@ -516,6 +648,7 @@ mod tests {
         assert!(text.starts_with("1 SAP-System(e):"), "{text}");
         assert!(text.contains("dev-100"), "{text}");
         assert!(text.contains("Mandant 100"), "{text}");
+        assert!(text.contains("Schreiben aus"), "{text}");
         assert!(!text.contains("geheim-4711"), "{text}");
         assert_eq!(status(&[]), "Kein SAP-System eingerichtet.");
     }
@@ -772,5 +905,116 @@ mod tests {
             textelemente(&[], "symbols", "ZREPORT"),
             "Keine Textelemente der Art „symbols“ für ZREPORT gefunden."
         );
+    }
+
+    #[test]
+    fn die_schreibenden_antworten_sind_knapp_und_deutlich() {
+        let hinweis = schreiben_aus("dev-100");
+        assert!(
+            hinweis.contains("Schreiben ist für dev-100 aus"),
+            "{hinweis}"
+        );
+        assert!(hinweis.contains("Tools → ABAP"), "{hinweis}");
+        assert!(hinweis.contains("‚schreiben‘ einschalten"), "{hinweis}");
+
+        let abgelehnt = namensraum("CL_ABAP_TYPEDESCR");
+        assert!(abgelehnt.contains("Kundennamensraum"), "{abgelehnt}");
+        assert!(abgelehnt.contains("CL_ABAP_TYPEDESCR"), "{abgelehnt}");
+    }
+
+    #[test]
+    fn eine_sperre_und_ihre_freigabe_werden_erklaert() {
+        let lokal = Sperre {
+            handle: "LH4711".into(),
+            auftrag: String::new(),
+            lokal: true,
+        };
+        let text = sperre("ZCL_DEMO", "/sap/bc/adt/oo/classes/zcl_demo", &lokal);
+        assert!(text.contains("Lock-Handle: LH4711"), "{text}");
+        assert!(text.contains("nicht nötig (lokales Objekt)"), "{text}");
+        assert!(text.contains("abap_unlock"), "{text}");
+
+        let mit_auftrag = Sperre {
+            handle: "LH0815".into(),
+            auftrag: "DEVK900123".into(),
+            lokal: false,
+        };
+        let text = sperre("ZCL_DEMO", "/sap/bc/adt/oo/classes/zcl_demo", &mit_auftrag);
+        assert!(text.contains("Transport: DEVK900123"), "{text}");
+
+        assert!(entsperrt("ZCL_DEMO", "/x").contains("ist freigegeben"));
+    }
+
+    #[test]
+    fn geschrieben_nennt_zeichen_und_lock() {
+        let text = geschrieben("ZCL_DEMO", 42, true);
+        assert_eq!(
+            text,
+            "Quelltext geschrieben: ZCL_DEMO (42 Zeichen). Lock freigegeben. Mit abap_activate \
+             aktivieren."
+        );
+        assert!(geschrieben("ZCL_DEMO", 1, false).contains("Lock bleibt"));
+    }
+
+    #[test]
+    fn eine_aktivierung_zeigt_hoechstens_50_meldungen() {
+        let meldung =
+            |art: &str, zeile: Option<u32>, text: &str| crate::adt::daten::Aktivierungsmeldung {
+                art: art.into(),
+                zeile,
+                text: text.into(),
+            };
+        let ergebnis = Aktivierung {
+            erfolg: false,
+            meldungen: vec![
+                meldung("W", Some(1), "Nie gelesen."),
+                meldung("E", Some(3), "Nicht erlaubt."),
+            ],
+            inaktiv: 2,
+        };
+        let text = aktivierung("ZCL_DEMO", &ergebnis);
+        assert!(text.contains("nicht erfolgreich"), "{text}");
+        assert!(text.contains("[E] Zeile 3: Nicht erlaubt."), "{text}");
+        assert!(text.contains("[W] Zeile 1: Nie gelesen."), "{text}");
+        assert!(text.contains("2 Objekt(e) blieben inaktiv"), "{text}");
+
+        let viele = Aktivierung {
+            erfolg: true,
+            meldungen: (1..=60)
+                .map(|nummer| meldung("I", None, &format!("Meldung {nummer}")))
+                .collect(),
+            inaktiv: 0,
+        };
+        let text = aktivierung("ZCL_DEMO", &viele);
+        assert!(text.starts_with("ZCL_DEMO ist aktiviert."), "{text}");
+        assert!(text.contains("Meldungen (60)"), "{text}");
+        assert!(text.contains("Meldung 50"), "{text}");
+        assert!(!text.contains("Meldung 51"), "{text}");
+        assert!(text.contains("10 weitere Meldung(en)"), "{text}");
+        assert!(text.contains("[I] ohne Zeile:"), "{text}");
+    }
+
+    #[test]
+    fn die_antworten_zu_anlegen_und_textelementen_sind_knapp() {
+        let text = neues_objekt(
+            "CLAS/OC",
+            "ZCL_NEU",
+            "Z_PAKET",
+            "/sap/bc/adt/oo/classes/zcl_neu",
+        );
+        assert!(
+            text.contains("CLAS/OC ZCL_NEU in Z_PAKET angelegt"),
+            "{text}"
+        );
+        assert!(text.contains("/sap/bc/adt/oo/classes/zcl_neu"), "{text}");
+        assert!(text.contains("abap_activate"), "{text}");
+
+        let text = textelemente_geschrieben("ZCL_DEMO", "symbols", 3, true);
+        assert!(
+            text.contains("3 Textelement(e) der Art „symbols“"),
+            "{text}"
+        );
+        assert!(text.contains("Lock freigegeben"), "{text}");
+        assert!(textelemente_geschrieben("ZCL_DEMO", "symbols", 1, false).contains("Lock bleibt"));
     }
 }

@@ -1,21 +1,31 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Der MCP-Server: neunzehn lesende Werkzeuge über stdio (Aufgabe 07).
+//! Der MCP-Server: 25 Werkzeuge über stdio (Aufgaben 07 und 08).
 //!
-//! Die Systeme kommen aus `QUIVER_ZUGAENGE` (mehrere je Werkzeug). Fehlt die
-//! Liste, antwortet jedes Werkzeug mit dem Hinweis auf das quiver-Fenster –
-//! **kein** MCP-Fehler. Jedes Werkzeug nimmt `system`; bei genau einem System
-//! darf der Name fehlen.
+//! Neunzehn lesende Werkzeuge (Teil 1) und sechs schreibende (Teil 2) – dazu
+//! aus dem Kern `abap_profile`. Die Systeme kommen aus `QUIVER_ZUGAENGE`
+//! (mehrere je Werkzeug). Fehlt die Liste, antwortet jedes Werkzeug mit dem
+//! Hinweis auf das quiver-Fenster – **kein** MCP-Fehler. Jedes Werkzeug nimmt
+//! `system`; bei genau einem System darf der Name fehlen.
 //!
-//! Kein Werkzeug verändert etwas im SAP-System: `read_only_hint` steht bei
-//! allen auf `true`, auch bei Syntax-Check, Unit-Tests und ATC – die rechnen
-//! nur.
+//! Die lesenden Werkzeuge tragen `read_only_hint` und arbeiten zustandslos
+//! (auch Syntax-Check, Unit-Tests und ATC – die rechnen nur). Die schreibenden
+//! tragen `destructive_hint` (`abap_lock`/`abap_unlock` nur „nicht lesend“) und
+//! laufen über **eine** stateful Sitzung je System ([`crate::adt::sitzung`]),
+//! weil ein Lock-Handle nur dort gilt.
+//!
+//! Drei Regeln stehen **vor** jeder Anfrage an SAP
+//! ([`crate::schreiben`]): der Schalter `schreiben` je System (Standard aus),
+//! der Kundennamensraum (`Z*`, `Y*`, `/…/`) und `source` bis 2 MB.
 
 use std::any::Any;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
+use quiver_tools_kern::mcp::profile_tool;
 use quiver_tools_kern::{antwort, hinweis_zugang, OhneProfil, Zugang};
 use rmcp::handler::server::tool::schema_for_type;
 use rmcp::model::{
@@ -31,8 +41,11 @@ use serde_json::Value;
 
 use crate::adt::client::{Anfrage, Client, Methode};
 use crate::adt::daten::{self, Objekt};
+use crate::adt::sitzung::{Sitzung, Sitzungen, FREIGABE_FRIST};
+use crate::adt::xml::attribut_wert as xml_attribut;
 use crate::adt::AdtFehler;
 use crate::format;
+use crate::schreiben::{self, Kategorie};
 use crate::systeme::{AuswahlFehler, SammelFehler, Sammlung, System};
 use crate::werkzeug::{MEHRFACH_EINZAHL, MEHRFACH_TITEL, TITEL};
 
@@ -51,6 +64,8 @@ const DUMPS: &str = "/sap/bc/adt/runtime/dumps";
 const TRACES: &str = "/sap/bc/adt/runtime/traces/abaptraces";
 const TRANSPORTE: &str = "/sap/bc/adt/cts/transportrequests";
 const DISCOVERY: &str = "/sap/bc/adt/core/discovery";
+/// Aktivieren (`POST`, `api/activate.js`).
+const AKTIVIERUNG: &str = "/sap/bc/adt/activation";
 
 /// So viele Zeichen kommen höchstens aus `abap_read`.
 const MAX_ZEICHEN_STANDARD: u32 = 20_000;
@@ -64,11 +79,15 @@ const AUFLOESEN_TREFFER: u32 = 20;
 /// Was ein Werkzeug zurückgibt.
 type Ergebnis = Result<CallToolResult, McpError>;
 
-/// Der ABAP-Server: die Systeme und die Werkzeugliste.
+/// Der ABAP-Server: die Systeme, die Werkzeugliste und die Schreibsitzungen.
 pub struct AbapServer {
     /// Der Zugang des Kerns; bei `mehrfach` ohne Felder, aber mit Titel.
     zugang: Zugang,
     systeme: Result<Sammlung, SammelFehler>,
+    /// Je System eine stateful Sitzung, erst beim ersten Schreibaufruf angelegt.
+    sitzungen: Arc<Sitzungen>,
+    /// Hängt der SIGTERM-Wächter schon?
+    ende_beobachtet: Arc<AtomicBool>,
 }
 
 impl AbapServer {
@@ -77,16 +96,90 @@ impl AbapServer {
         AbapServer {
             zugang,
             systeme: Sammlung::aus_umgebung(),
+            sitzungen: Arc::new(Sitzungen::default()),
+            ende_beobachtet: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Feste Teile (Tests und Sonderfälle), ohne Prozessumgebung.
     pub fn mit(zugang: Zugang, systeme: Result<Sammlung, SammelFehler>) -> Self {
-        AbapServer { zugang, systeme }
+        AbapServer {
+            zugang,
+            systeme,
+            sitzungen: Arc::new(Sitzungen::default()),
+            ende_beobachtet: Arc::new(AtomicBool::new(false)),
+        }
     }
+
+    /// Beim Ende des Prozesses alle Locks freigeben, höchstens 5 s.
+    fn ende_aufraeumen(&self) {
+        let sitzungen = self.sitzungen.mit_locks();
+        if sitzungen.is_empty() {
+            return;
+        }
+        crate::adt::sitzung::freigeben_mit_frist(sitzungen);
+    }
+
+    /// Die Sitzung dieses Systems (wird beim ersten Mal angelegt).
+    fn sitzung(&self, system: &System) -> Result<Arc<Sitzung>, McpError> {
+        self.sitzungen
+            .hole(system)
+            .map_err(|fehler| fehler_zu_mcp(system, fehler))?;
+        // Nach dem ersten Schreibaufruf auf SIGTERM hören – dann gehen die
+        // Locks auch beim Beenden durch ein Signal frei.
+        self.beobachte_ende();
+        self.sitzungen
+            .vorhandene(&system.name)
+            .ok_or_else(|| McpError::internal_error("Die Sitzung ließ sich nicht anlegen.", None))
+    }
+
+    /// Auf `SIGTERM` achten: Locks freigeben und gehen (höchstens 5 s).
+    ///
+    /// Nur auf Unix; auf anderen Plattformen bleibt das normale Ende, für das
+    /// [`Drop`] aufräumt.
+    #[cfg(unix)]
+    fn beobachte_ende(&self) {
+        if self.ende_beobachtet.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let sitzungen = self.sitzungen.clone();
+        let Ok(laufzeit) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        laufzeit.spawn(async move {
+            let Ok(mut signal) =
+                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            else {
+                return;
+            };
+            signal.recv().await;
+            let offene = sitzungen.mit_locks();
+            let _ = tokio::time::timeout(FREIGABE_FRIST, async {
+                for sitzung in &offene {
+                    sitzung.alle_entsperren().await;
+                }
+            })
+            .await;
+            // 128 + SIGTERM, wie eine Shell es erwartet.
+            std::process::exit(143);
+        });
+    }
+
+    #[cfg(not(unix))]
+    fn beobachte_ende(&self) {}
 
     /// Alle Werkzeuge, wie `tools/list` sie meldet.
     pub fn werkzeuge(&self) -> Vec<Tool> {
+        let mut alle = self.lesende_werkzeuge();
+        alle.extend(self.schreibende_werkzeuge());
+        // `abap_profile` kommt aus dem Kern: bei jedem Tool dasselbe lesende
+        // Werkzeug.
+        alle.push(profile_tool(&self.zugang));
+        alle
+    }
+
+    /// Die neunzehn lesenden Werkzeuge (Teil 1).
+    fn lesende_werkzeuge(&self) -> Vec<Tool> {
         vec![
             lesend::<StatusParam>(
                 "abap_status",
@@ -211,6 +304,54 @@ impl AbapServer {
         ]
     }
 
+    /// Die sechs schreibenden Werkzeuge (Teil 2, Aufgabe 08).
+    fn schreibende_werkzeuge(&self) -> Vec<Tool> {
+        vec![
+            aendernd::<SperrParam>(
+                "abap_lock",
+                "Objekt sperren",
+                "Sperrt ein Objekt zum Bearbeiten und gibt den Lock-Handle zurück. Der Handle gilt \
+                 nur in dieser Sitzung und muss an abap_write gehen oder mit abap_unlock \
+                 freigegeben werden. Nur Objekte im Kundennamensraum (Z*, Y*, /…/); der Schalter \
+                 „schreiben“ muss für das System an sein.",
+            ),
+            aendernd::<EntsperrParam>(
+                "abap_unlock",
+                "Objekt freigeben",
+                "Gibt eine Sperre wieder frei. `lockHandle` stammt aus abap_lock und muss aus \
+                 dieser Sitzung kommen.",
+            ),
+            schreibend::<SchreibParam>(
+                "abap_write",
+                "Quelltext schreiben",
+                "Schreibt (speichert) den vollständigen Quelltext eines Objekts. Ohne \
+                 `lockHandle` wird gesperrt, geschrieben und wieder entsperrt; mit `lockHandle` \
+                 bleibt die Sperre stehen. Höchstens 2 MB, nur Kundennamensraum, nur bei \
+                 eingeschaltetem „schreiben“. Danach mit abap_activate aktivieren.",
+            ),
+            schreibend::<AktivierParam>(
+                "abap_activate",
+                "Objekt aktivieren",
+                "Aktiviert ein Objekt nach dem Schreiben und gibt die Meldungen mit Typ, Zeile und \
+                 Text zurück (höchstens 50). `preauditRequested` ist standardmäßig an.",
+            ),
+            schreibend::<AnlegenParam>(
+                "abap_create_object",
+                "Objekt anlegen",
+                "Legt ein neues Objekt an: CLAS/OC, INTF/OI, PROG/P, PROG/I, FUGR/F, TABL/DT, \
+                 DTEL/DE, DOMA/DD oder DDLS/DF. Das Paket ist `$TMP` oder ein Kundenpaket; der \
+                 Name muss im Kundennamensraum liegen. Gibt die Adresse des neuen Objekts zurück.",
+            ),
+            schreibend::<TextelementeSchreibenParam>(
+                "abap_set_text_elements",
+                "Textelemente schreiben",
+                "Schreibt Textelemente eines Objekts: `symbols` (Schlüssel mit drei Zeichen, \
+                 optional `maxLength`), `selections` oder `headings`. Ohne `lockHandle` wird \
+                 gesperrt, geschrieben und entsperrt.",
+            ),
+        ]
+    }
+
     /// Ein Werkzeug aufrufen. Auch der Weg, den die Tests nehmen.
     pub async fn aufrufen(&self, name: &str, argumente: Option<JsonObject>) -> Ergebnis {
         match name {
@@ -233,11 +374,26 @@ impl AbapServer {
             "abap_transports" => self.transporte(argumente).await,
             "abap_transport_details" => self.transportdetails(argumente).await,
             "abap_text_elements" => self.textelemente(argumente).await,
+            "abap_lock" => self.sperren(argumente).await,
+            "abap_unlock" => self.entsperren(argumente).await,
+            "abap_write" => self.schreiben(argumente).await,
+            "abap_activate" => self.aktivieren(argumente).await,
+            "abap_create_object" => self.anlegen(argumente).await,
+            "abap_set_text_elements" => self.textelemente_schreiben(argumente).await,
+            "abap_profile" => self.profile(argumente),
             sonst => Err(McpError::invalid_params(
                 format!("Unbekanntes Werkzeug „{sonst}“."),
                 None,
             )),
         }
+    }
+
+    /// `abap_profile`: bei einer Systemliste sind „die Angaben“ die Systeme.
+    ///
+    /// Ein einzelnes `Profil` gibt es nur ohne `mehrfach`; hier antwortet das
+    /// Werkzeug darum mit derselben Liste wie `abap_status` – ohne Passwort.
+    fn profile(&self, roh: Option<JsonObject>) -> Ergebnis {
+        self.status(roh)
     }
 
     /// Die Liste der Systeme oder ein Fehler ohne ihren Inhalt.
@@ -881,6 +1037,445 @@ impl AbapServer {
         )))
     }
 
+    // ------------------------------------------------------------ schreibend
+
+    /// `abap_lock`: sperren und den Handle in dieser Sitzung merken.
+    async fn sperren(&self, roh: Option<JsonObject>) -> Ergebnis {
+        let p: SperrParam = argumente(roh)?;
+        let system = match self.schreiben_erlaubt(p.system.as_deref()) {
+            Ok(system) => system,
+            Err(ohne) => return ohne.in_ergebnis(),
+        };
+        let objekt_param = p.objekt_param();
+        self.namensraum_pruefen(&objekt_param)?;
+        let modus = p
+            .access_mode
+            .as_deref()
+            .map(str::trim)
+            .filter(|modus| !modus.is_empty())
+            .unwrap_or("MODIFY")
+            .to_uppercase();
+
+        let objekt = self.aufloesen_zum_schreiben(&system, &objekt_param).await?;
+        let sitzung = self.sitzung(&system)?;
+        let sperre = sitzung
+            .sperren(&objekt.objekt_url, &modus)
+            .await
+            .map_err(|fehler| fehler_zu_mcp(&system, fehler))?;
+        sitzung.merken(&objekt.objekt_url, &objekt.name, &sperre.handle);
+        Ok(antwort(format::sperre(
+            &objekt.name,
+            &objekt.objekt_url,
+            &sperre,
+        )))
+    }
+
+    /// `abap_unlock`: eine Sperre dieser Sitzung freigeben.
+    async fn entsperren(&self, roh: Option<JsonObject>) -> Ergebnis {
+        let p: EntsperrParam = argumente(roh)?;
+        let system = match self.schreiben_erlaubt(p.system.as_deref()) {
+            Ok(system) => system,
+            Err(ohne) => return ohne.in_ergebnis(),
+        };
+        let objekt_param = p.objekt_param();
+        self.namensraum_pruefen(&objekt_param)?;
+        let handle = pflicht(&p.lock_handle, "lockHandle")?.to_string();
+
+        // Erst prüfen, ob der Handle aus dieser Sitzung stammt – ohne Anfrage.
+        let sitzung = self.sitzung(&system)?;
+        if !self.ist_bekannter_handle(&sitzung, &p.name, &p.object_url, &handle) {
+            return Err(unbekannter_handle());
+        }
+        let objekt = self.aufloesen_zum_schreiben(&system, &objekt_param).await?;
+        sitzung
+            .entsperren(&objekt.objekt_url, &handle)
+            .await
+            .map_err(|fehler| fehler_zu_mcp(&system, fehler))?;
+        Ok(antwort(format::entsperrt(&objekt.name, &objekt.objekt_url)))
+    }
+
+    /// `abap_write`: Quelltext speichern, Sperre wie `finally` behandeln.
+    async fn schreiben(&self, roh: Option<JsonObject>) -> Ergebnis {
+        let p: SchreibParam = argumente(roh)?;
+        let system = match self.schreiben_erlaubt(p.system.as_deref()) {
+            Ok(system) => system,
+            Err(ohne) => return ohne.in_ergebnis(),
+        };
+        let objekt_param = p.objekt_param();
+        self.namensraum_pruefen(&objekt_param)?;
+        if p.source.len() > schreiben::MAX_QUELLE {
+            return Err(McpError::invalid_params(
+                format!(
+                    "`source` ist zu groß ({} Bytes); höchstens {} Bytes (2 MB) gehen in einem \
+                     Aufruf.",
+                    p.source.len(),
+                    schreiben::MAX_QUELLE
+                ),
+                None,
+            ));
+        }
+
+        let sitzung = self.sitzung(&system)?;
+        let uebergeben = uebergebener_handle(p.lock_handle.as_deref());
+        if let Some(handle) = &uebergeben {
+            if !self.ist_bekannter_handle(&sitzung, &p.name, &p.object_url, handle) {
+                return Err(unbekannter_handle());
+            }
+        }
+
+        let objekt = self.aufloesen_zum_schreiben(&system, &objekt_param).await?;
+        let (handle, selbst_gesperrt) = self
+            .handle_besorgen(&sitzung, &system, &objekt, uebergeben)
+            .await?;
+        let ergebnis = self
+            .quelle_schreiben(
+                &sitzung,
+                &system,
+                &objekt,
+                &p.source,
+                p.transport.as_deref(),
+                &handle,
+            )
+            .await;
+        // Wie `finally` in der Vorlage: auch nach einem gescheiterten Schreiben
+        // wird die selbst geholte Sperre freigegeben.
+        let freigegeben = if selbst_gesperrt {
+            self.freigeben(&sitzung, &objekt, &handle).await
+        } else {
+            false
+        };
+        ergebnis?;
+        Ok(antwort(format::geschrieben(
+            &objekt.name,
+            p.source.chars().count(),
+            freigegeben,
+        )))
+    }
+
+    /// `abap_activate`: aktivieren und die Meldungen zeigen.
+    async fn aktivieren(&self, roh: Option<JsonObject>) -> Ergebnis {
+        let p: AktivierParam = argumente(roh)?;
+        let system = match self.schreiben_erlaubt(p.system.as_deref()) {
+            Ok(system) => system,
+            Err(ohne) => return ohne.in_ergebnis(),
+        };
+        let objekt_param = p.objekt_param();
+        self.namensraum_pruefen(&objekt_param)?;
+        let vorpruefung = p.preaudit_requested.unwrap_or(true);
+
+        let objekt = self.aufloesen_zum_schreiben(&system, &objekt_param).await?;
+        let sitzung = self.sitzung(&system)?;
+        let rumpf =
+            schreiben::aktivierung_rumpf(&objekt.objekt_url, &objekt.name, &objekt.quelltext_url);
+        let geantwortet = sitzung
+            .anfrage(
+                &Anfrage::senden(Methode::Post, AKTIVIERUNG, rumpf)
+                    .mit_annahme("application/*")
+                    .mit_kopf("Content-Type", "application/xml")
+                    .mit_abfrage("method", "activate")
+                    .mit_abfrage(
+                        "preauditRequested",
+                        if vorpruefung { "true" } else { "false" },
+                    ),
+            )
+            .await
+            .map_err(|fehler| fehler_zu_mcp(&system, fehler))?;
+        let ergebnis = daten::aktivierung(&geantwortet.text)
+            .map_err(|fehler| fehler_zu_mcp(&system, fehler))?;
+        Ok(antwort(format::aktivierung(&objekt.name, &ergebnis)))
+    }
+
+    /// `abap_create_object`: ein neues Objekt im Kundenpaket anlegen.
+    async fn anlegen(&self, roh: Option<JsonObject>) -> Ergebnis {
+        let p: AnlegenParam = argumente(roh)?;
+        let system = match self.schreiben_erlaubt(p.system.as_deref()) {
+            Ok(system) => system,
+            Err(ohne) => return ohne.in_ergebnis(),
+        };
+        let art = schreiben::anlegbar(&p.object_type).ok_or_else(|| {
+            McpError::invalid_params(
+                format!(
+                    "Die Objektart „{}“ legt dieses Werkzeug nicht an; möglich sind: {}.",
+                    p.object_type,
+                    schreiben::anlegbare_arten()
+                ),
+                None,
+            )
+        })?;
+        let name = pflicht(&p.name, "name")?;
+        if !schreiben::im_kundennamensraum(name) {
+            return Err(McpError::invalid_params(format::namensraum(name), None));
+        }
+        let paket = pflicht(&p.parent_name, "parentName")?;
+        if !schreiben::paket_erlaubt(paket) {
+            return Err(McpError::invalid_params(
+                format!(
+                    "Das Paket „{paket}“ ist nicht erlaubt – erlaubt sind `$TMP` und \
+                     Kundenpakete (Z*, Y*, /…/)."
+                ),
+                None,
+            ));
+        }
+        let beschreibung = pflicht(&p.description, "description")?;
+
+        let rumpf = schreiben::anlege_rumpf(
+            art,
+            name,
+            paket,
+            beschreibung,
+            &system.sprache,
+            &system.benutzer,
+        );
+        let anfrage = mit_transport(
+            Anfrage::senden(Methode::Post, schreiben::anlege_pfad(art), rumpf)
+                .mit_annahme("application/*")
+                .mit_kopf("Content-Type", "application/*"),
+            p.transport.as_deref(),
+        );
+
+        let sitzung = self.sitzung(&system)?;
+        let geantwortet = sitzung
+            .anfrage(&anfrage)
+            .await
+            .map_err(|fehler| fehler_zu_mcp(&system, fehler))?;
+        let url = geantwortet
+            .ort
+            .filter(|ort| !ort.trim().is_empty())
+            .unwrap_or_else(|| schreiben::neue_objekt_url(art, name));
+        Ok(antwort(format::neues_objekt(art.typ, name, paket, &url)))
+    }
+
+    /// `abap_set_text_elements`: Textelemente schreiben.
+    async fn textelemente_schreiben(&self, roh: Option<JsonObject>) -> Ergebnis {
+        let p: TextelementeSchreibenParam = argumente(roh)?;
+        let system = match self.schreiben_erlaubt(p.system.as_deref()) {
+            Ok(system) => system,
+            Err(ohne) => return ohne.in_ergebnis(),
+        };
+        let objekt_param = p.objekt_param();
+        self.namensraum_pruefen(&objekt_param)?;
+        let kategorie = Kategorie::aus_text(&p.category).ok_or_else(|| {
+            McpError::invalid_params(
+                format!(
+                    "`category` muss symbols, selections oder headings sein, nicht „{}“.",
+                    p.category
+                ),
+                None,
+            )
+        })?;
+        let elemente: Vec<schreiben::Element> = p
+            .elements
+            .iter()
+            .map(|element| schreiben::Element {
+                id: element.id.clone(),
+                text: element.text.clone(),
+                max_laenge: element.max_length,
+            })
+            .collect();
+        let rumpf = schreiben::textelemente_rumpf(&elemente, kategorie)
+            .map_err(|text| McpError::invalid_params(text, None))?;
+
+        let sitzung = self.sitzung(&system)?;
+        let uebergeben = uebergebener_handle(p.lock_handle.as_deref());
+        if let Some(handle) = &uebergeben {
+            if !self.ist_bekannter_handle(&sitzung, &p.name, &p.object_url, handle) {
+                return Err(unbekannter_handle());
+            }
+        }
+
+        let objekt = self.aufloesen_zum_schreiben(&system, &objekt_param).await?;
+        let medientyp = kategorie.medientyp();
+        let url = format!(
+            "{}/source/{}",
+            daten::textelemente_url(&objekt.typ, &objekt.name),
+            kategorie.name()
+        );
+        let (handle, selbst_gesperrt) = self
+            .handle_besorgen(&sitzung, &system, &objekt, uebergeben)
+            .await?;
+        let anfrage = mit_transport(
+            Anfrage::senden(Methode::Put, url, rumpf)
+                .mit_annahme(medientyp.clone())
+                .mit_kopf("Content-Type", format!("{medientyp}; charset=UTF-8"))
+                .mit_abfrage("lockHandle", handle.clone()),
+            p.transport.as_deref(),
+        );
+        let ergebnis = sitzung
+            .anfrage(&anfrage)
+            .await
+            .map(|_| ())
+            .map_err(|fehler| fehler_zu_mcp(&system, fehler));
+        let freigegeben = if selbst_gesperrt {
+            self.freigeben(&sitzung, &objekt, &handle).await
+        } else {
+            false
+        };
+        ergebnis?;
+        Ok(antwort(format::textelemente_geschrieben(
+            &objekt.name,
+            kategorie.name(),
+            elemente.len(),
+            freigegeben,
+        )))
+    }
+
+    /// Das System – aber nur, wenn der Schalter „schreiben“ an ist.
+    ///
+    /// Ist er aus, kommt der Hinweis **ohne** Anfrage an SAP.
+    fn schreiben_erlaubt(&self, name: Option<&str>) -> Result<System, OhneProfil> {
+        let system = self.waehlen(name)?;
+        if !system.schreiben_erlaubt() {
+            return Err(OhneProfil::Hinweis(antwort(format::schreiben_aus(
+                &system.name,
+            ))));
+        }
+        Ok(system)
+    }
+
+    /// Der Objektname im Kundennamensraum – ohne Anfrage an SAP geprüft.
+    ///
+    /// **Jede** Angabe muss passen: `name` und der Name aus `objectUrl`. Sonst
+    /// ließe sich mit `name: "ZFOO"` plus `objectUrl` auf ein SAP-Objekt die
+    /// Regel umgehen (geschrieben wird an die URL).
+    fn namensraum_pruefen(&self, p: &ObjektParam) -> Result<(), McpError> {
+        let namen = namen_ohne_anfrage(p.name.as_deref(), p.object_url.as_deref());
+        if namen.is_empty() {
+            return Err(McpError::invalid_params(
+                "Bitte `name` oder `objectUrl` angeben.".to_string(),
+                None,
+            ));
+        }
+        for name in namen {
+            if !schreiben::im_kundennamensraum(&name) {
+                return Err(McpError::invalid_params(format::namensraum(&name), None));
+            }
+        }
+        Ok(())
+    }
+
+    /// Auflösen für einen Schreibvorgang: nur ein **exakter** Treffer zählt
+    /// (kein „erster Treffer“), und der Name, den SAP für das Objekt meldet,
+    /// muss ebenfalls im Kundennamensraum liegen.
+    async fn aufloesen_zum_schreiben(
+        &self,
+        system: &System,
+        p: &ObjektParam,
+    ) -> Result<Objekt, McpError> {
+        let objekt = self.aufloesen(system, p).await?;
+        let gemeldet = [
+            Some(objekt.name.clone()),
+            schreiben::name_aus_url(&objekt.objekt_url),
+        ];
+        for name in gemeldet.into_iter().flatten() {
+            if !schreiben::im_kundennamensraum(&name) {
+                return Err(McpError::invalid_params(format::namensraum(&name), None));
+            }
+        }
+        if let Some(gesucht) = p.name.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+            if p.object_url
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or("")
+                .is_empty()
+                && !objekt.name.eq_ignore_ascii_case(gesucht)
+            {
+                return Err(McpError::invalid_params(
+                    format!(
+                        "„{gesucht}“ ist nicht eindeutig gefunden (SAP meldet „{}“) – bitte \
+                         `objectUrl` angeben.",
+                        objekt.name
+                    ),
+                    None,
+                ));
+            }
+        }
+        Ok(objekt)
+    }
+
+    /// Der Handle für einen Schreibvorgang: der bereits geprüfte übergebene
+    /// oder ein frisch geholter. Das zweite Feld sagt, ob **wir** gesperrt haben
+    /// und darum wieder freigeben müssen.
+    async fn handle_besorgen(
+        &self,
+        sitzung: &Sitzung,
+        system: &System,
+        objekt: &Objekt,
+        uebergeben: Option<String>,
+    ) -> Result<(String, bool), McpError> {
+        match uebergeben {
+            Some(handle) => Ok((handle, false)),
+            None => {
+                let sperre = sitzung
+                    .sperren(&objekt.objekt_url, "MODIFY")
+                    .await
+                    .map_err(|fehler| fehler_zu_mcp(system, fehler))?;
+                sitzung.merken(&objekt.objekt_url, &objekt.name, &sperre.handle);
+                Ok((sperre.handle, true))
+            }
+        }
+    }
+
+    /// Stammt dieser Handle aus dieser Sitzung? Ohne Anfrage an SAP.
+    fn ist_bekannter_handle(
+        &self,
+        sitzung: &Sitzung,
+        name: &Option<String>,
+        object_url: &Option<String>,
+        handle: &str,
+    ) -> bool {
+        sitzung
+            .handle_fuer(name.as_deref(), object_url.as_deref())
+            .as_deref()
+            == Some(handle)
+    }
+
+    /// Eine selbst geholte Sperre freigeben. Fehler nur ins Log – der
+    /// Schreibvorgang ist wichtiger als das Aufräumen.
+    async fn freigeben(&self, sitzung: &Sitzung, objekt: &Objekt, handle: &str) -> bool {
+        match sitzung.entsperren(&objekt.objekt_url, handle).await {
+            Ok(()) => true,
+            Err(fehler) => {
+                tracing::warn!(
+                    system = %sitzung.system().name,
+                    objekt = %objekt.objekt_url,
+                    "Sperre nach dem Schreiben nicht freigegeben: {fehler}"
+                );
+                false
+            }
+        }
+    }
+
+    /// Den Quelltext in den Hauptinclude schreiben (`setObjectSource`).
+    async fn quelle_schreiben(
+        &self,
+        sitzung: &Sitzung,
+        system: &System,
+        objekt: &Objekt,
+        quelle: &str,
+        transport: Option<&str>,
+        handle: &str,
+    ) -> Result<(), McpError> {
+        // XML-Quelltexte (z. B. CDS) gehen als `application/*`, alles andere als
+        // Klartext – dieselbe Wahl wie in der Vorlage.
+        let typ = if quelle.trim_start().starts_with("<?xml") {
+            "application/*"
+        } else {
+            "text/plain; charset=utf-8"
+        };
+        let anfrage = mit_transport(
+            Anfrage::senden(Methode::Put, &objekt.quelltext_url, quelle)
+                .mit_annahme("text/plain")
+                .mit_kopf("Content-Type", typ)
+                .mit_abfrage("lockHandle", handle),
+            transport,
+        );
+        sitzung
+            .anfrage(&anfrage)
+            .await
+            .map(|_| ())
+            .map_err(|fehler| fehler_zu_mcp(system, fehler))
+    }
+
     // ------------------------------------------------------------- intern
 
     /// Ein Objekt auflösen: über die Adresse oder über Name und Typ.
@@ -962,6 +1557,82 @@ fn lesend<P: JsonSchema + Any>(
         ))
 }
 
+/// Ein Werkzeug, das nichts liest, aber auch nichts zerstört: Sperren und
+/// Freigeben (`read_only_hint` falsch, `destructive_hint` falsch).
+fn aendernd<P: JsonSchema + Any>(
+    name: &'static str,
+    titel: &'static str,
+    beschreibung: &'static str,
+) -> Tool {
+    Tool::new(name, beschreibung, schema_for_type::<P>())
+        .with_title(titel)
+        .with_annotations(ToolAnnotations::from_raw(
+            Some(titel.to_string()),
+            Some(false),
+            Some(false),
+            Some(false),
+            Some(false),
+        ))
+}
+
+/// Ein schreibendes Werkzeug (`destructive_hint`, Aufgabe 08).
+fn schreibend<P: JsonSchema + Any>(
+    name: &'static str,
+    titel: &'static str,
+    beschreibung: &'static str,
+) -> Tool {
+    Tool::new(name, beschreibung, schema_for_type::<P>())
+        .with_title(titel)
+        .with_annotations(ToolAnnotations::from_raw(
+            Some(titel.to_string()),
+            Some(false),
+            Some(true),
+            Some(false),
+            Some(false),
+        ))
+}
+
+/// Der Objektname aus `name` oder `objectUrl` – **ohne** Anfrage an SAP.
+fn namen_ohne_anfrage(name: Option<&str>, object_url: Option<&str>) -> Vec<String> {
+    let mut namen = Vec::new();
+    if let Some(name) = name.map(str::trim).filter(|name| !name.is_empty()) {
+        namen.push(name.to_string());
+    }
+    if let Some(name) = object_url.and_then(schreiben::name_aus_url) {
+        namen.push(name);
+    }
+    namen
+}
+
+/// Die Meldung zu einem Handle, der nicht aus dieser Sitzung stammt.
+fn unbekannter_handle() -> McpError {
+    McpError::invalid_params(
+        "Lock-Handle unbekannt – erst abap_lock aufrufen. Ein Handle gilt nur in der Sitzung, \
+         die ihn geholt hat."
+            .to_string(),
+        None,
+    )
+}
+
+/// Der übergebene Lock-Handle, falls einer dabei ist.
+fn uebergebener_handle(handle: Option<&str>) -> Option<String> {
+    handle
+        .map(str::trim)
+        .filter(|handle| !handle.is_empty())
+        .map(str::to_string)
+}
+
+/// Einen Transportauftrag als `corrNr` anhängen, falls einer genannt ist.
+fn mit_transport(anfrage: Anfrage, transport: Option<&str>) -> Anfrage {
+    match transport
+        .map(str::trim)
+        .filter(|transport| !transport.is_empty())
+    {
+        Some(transport) => anfrage.mit_abfrage("corrNr", transport),
+        None => anfrage,
+    }
+}
+
 /// Die Argumente eines Aufrufs als typisierte Parameter.
 fn argumente<T: DeserializeOwned>(roh: Option<JsonObject>) -> Result<T, McpError> {
     let wert = Value::Object(roh.unwrap_or_default());
@@ -998,23 +1669,21 @@ fn benutzer(genannt: &Option<String>, system: &System) -> String {
         .unwrap_or_else(|| system.benutzer.to_uppercase())
 }
 
-/// Ein Text für ein XML-Attribut: nur die fünf Zeichen, die XML nicht erlaubt.
-fn xml_attribut(wert: &str) -> String {
-    wert.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
-
 /// Aus einem ADT-Fehler wird ein MCP-Fehler – mit Systemnamen, nie mit Geheimnis.
 fn fehler_zu_mcp(system: &System, fehler: AdtFehler) -> McpError {
     let text = format!("{}: {fehler}", system.name);
     match fehler {
-        AdtFehler::Anmeldung { .. } | AdtFehler::Csrf { .. } => {
-            McpError::invalid_params(text, None)
-        }
+        AdtFehler::Anmeldung { .. }
+        | AdtFehler::Csrf { .. }
+        | AdtFehler::SitzungAbgelaufen { .. } => McpError::invalid_params(text, None),
         _ => McpError::internal_error(text, None),
+    }
+}
+
+/// Beim Ende des Prozesses (stdin zu, normales Ende) alle Locks freigeben.
+impl Drop for AbapServer {
+    fn drop(&mut self) {
+        self.ende_aufraeumen();
     }
 }
 
@@ -1279,6 +1948,209 @@ pub struct TextelementParam {
     pub category: Option<String>,
 }
 
+// ------------------------------------------------------- schreibend (Teil 2)
+
+/// Parameter von `abap_lock`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct SperrParam {
+    /// System; bei genau einem darf der Name fehlen.
+    #[serde(default)]
+    pub system: Option<String>,
+    /// Objektname, z. B. `ZCL_MY_CLASS`.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Objekt-URL, z. B. `/sap/bc/adt/oo/classes/zcl_my_class`. Geht vor `name`.
+    #[serde(default, rename = "objectUrl")]
+    pub object_url: Option<String>,
+    /// Art als Hinweis für die Suche, z. B. `CLAS/OC`.
+    #[serde(default, alias = "type")]
+    pub typ: Option<String>,
+    /// Sperrmodus: `MODIFY` (Standard) oder `EDIT`.
+    #[serde(default, rename = "accessMode")]
+    pub access_mode: Option<String>,
+}
+
+impl SperrParam {
+    fn objekt_param(&self) -> ObjektParam {
+        ObjektParam {
+            system: self.system.clone(),
+            name: self.name.clone(),
+            object_url: self.object_url.clone(),
+            typ: self.typ.clone(),
+        }
+    }
+}
+
+/// Parameter von `abap_unlock`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct EntsperrParam {
+    /// System; bei genau einem darf der Name fehlen.
+    #[serde(default)]
+    pub system: Option<String>,
+    /// Objektname.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Objekt-URL. Geht vor `name`.
+    #[serde(default, rename = "objectUrl")]
+    pub object_url: Option<String>,
+    /// Art als Hinweis für die Suche.
+    #[serde(default, alias = "type")]
+    pub typ: Option<String>,
+    /// Der Handle aus `abap_lock`.
+    #[serde(rename = "lockHandle")]
+    pub lock_handle: String,
+}
+
+impl EntsperrParam {
+    fn objekt_param(&self) -> ObjektParam {
+        ObjektParam {
+            system: self.system.clone(),
+            name: self.name.clone(),
+            object_url: self.object_url.clone(),
+            typ: self.typ.clone(),
+        }
+    }
+}
+
+/// Parameter von `abap_write`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct SchreibParam {
+    /// System; bei genau einem darf der Name fehlen.
+    #[serde(default)]
+    pub system: Option<String>,
+    /// Objektname.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Objekt-URL. Geht vor `name`.
+    #[serde(default, rename = "objectUrl")]
+    pub object_url: Option<String>,
+    /// Art als Hinweis für die Suche.
+    #[serde(default, alias = "type")]
+    pub typ: Option<String>,
+    /// Der vollständige neue Quelltext (höchstens 2 MB).
+    pub source: String,
+    /// Transportauftrag, z. B. `DEVK900123`.
+    #[serde(default)]
+    pub transport: Option<String>,
+    /// Handle aus `abap_lock`. Ohne Angabe wird gesperrt und wieder entsperrt.
+    #[serde(default, rename = "lockHandle")]
+    pub lock_handle: Option<String>,
+}
+
+impl SchreibParam {
+    fn objekt_param(&self) -> ObjektParam {
+        ObjektParam {
+            system: self.system.clone(),
+            name: self.name.clone(),
+            object_url: self.object_url.clone(),
+            typ: self.typ.clone(),
+        }
+    }
+}
+
+/// Parameter von `abap_activate`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AktivierParam {
+    /// System; bei genau einem darf der Name fehlen.
+    #[serde(default)]
+    pub system: Option<String>,
+    /// Objektname.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Objekt-URL. Geht vor `name`.
+    #[serde(default, rename = "objectUrl")]
+    pub object_url: Option<String>,
+    /// Art als Hinweis für die Suche.
+    #[serde(default, alias = "type")]
+    pub typ: Option<String>,
+    /// Vorprüfung anfordern. Standard `true`.
+    #[serde(default, rename = "preauditRequested")]
+    pub preaudit_requested: Option<bool>,
+}
+
+impl AktivierParam {
+    fn objekt_param(&self) -> ObjektParam {
+        ObjektParam {
+            system: self.system.clone(),
+            name: self.name.clone(),
+            object_url: self.object_url.clone(),
+            typ: self.typ.clone(),
+        }
+    }
+}
+
+/// Parameter von `abap_create_object`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct AnlegenParam {
+    /// System; bei genau einem darf der Name fehlen.
+    #[serde(default)]
+    pub system: Option<String>,
+    /// Objektart: `CLAS/OC`, `INTF/OI`, `PROG/P`, `PROG/I`, `FUGR/F`, `TABL/DT`,
+    /// `DTEL/DE`, `DOMA/DD` oder `DDLS/DF`.
+    #[serde(rename = "objectType")]
+    pub object_type: String,
+    /// Name des neuen Objekts, z. B. `ZCL_NEU`.
+    pub name: String,
+    /// Paket, in das angelegt wird (`$TMP` für lokal, sonst Z*, Y*, /…/).
+    #[serde(rename = "parentName")]
+    pub parent_name: String,
+    /// Beschreibung des Objekts.
+    pub description: String,
+    /// Transportauftrag.
+    #[serde(default)]
+    pub transport: Option<String>,
+}
+
+/// Ein Textelement, wie der Agent es übergibt.
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+pub struct ElementParam {
+    /// Schlüssel, z. B. `001` oder `LISTHEADER`.
+    pub id: String,
+    /// Der Text.
+    pub text: String,
+    /// Höchstlänge (nur Textsymbole).
+    #[serde(default, rename = "maxLength")]
+    pub max_length: Option<u32>,
+}
+
+/// Parameter von `abap_set_text_elements`.
+#[derive(Debug, Default, Deserialize, JsonSchema)]
+pub struct TextelementeSchreibenParam {
+    /// System; bei genau einem darf der Name fehlen.
+    #[serde(default)]
+    pub system: Option<String>,
+    /// Objektname.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Objekt-URL. Geht vor `name`.
+    #[serde(default, rename = "objectUrl")]
+    pub object_url: Option<String>,
+    /// Art als Hinweis für die Suche.
+    #[serde(default, alias = "type")]
+    pub typ: Option<String>,
+    /// `symbols`, `selections` oder `headings`.
+    pub category: String,
+    /// Die zu schreibenden Elemente.
+    pub elements: Vec<ElementParam>,
+    /// Transportauftrag.
+    #[serde(default)]
+    pub transport: Option<String>,
+    /// Handle aus `abap_lock`. Ohne Angabe wird gesperrt und wieder entsperrt.
+    #[serde(default, rename = "lockHandle")]
+    pub lock_handle: Option<String>,
+}
+
+impl TextelementeSchreibenParam {
+    fn objekt_param(&self) -> ObjektParam {
+        ObjektParam {
+            system: self.system.clone(),
+            name: self.name.clone(),
+            object_url: self.object_url.clone(),
+            typ: self.typ.clone(),
+        }
+    }
+}
+
 // -------------------------------------------------------------- MCP-Anker
 
 impl ServerHandler for AbapServer {
@@ -1288,8 +2160,11 @@ impl ServerHandler for AbapServer {
             .with_instructions(format!(
                 "ABAP über SAP ADT: Objekte suchen und lesen, Tabellen und freie SELECTs ansehen, \
                  Syntax prüfen, Unit-Tests und ATC laufen lassen, Dumps, Traces und Transporte \
-                 ansehen. Alle Werkzeuge sind lesend – nichts wird im SAP-System geändert. Die \
-                 {MEHRFACH_TITEL} ({MEHRFACH_EINZAHL}e) legt der User im quiver-Fenster unter \
+                 ansehen. Schreibend gehen Sperren, Quelltext schreiben, Aktivieren, Anlegen und \
+                 Textelemente – aber nur für Objekte im Kundennamensraum (Z*, Y*, /…/) und nur, \
+                 wenn der Schalter „schreiben“ für das System an ist (Standard: aus). Ist er aus, \
+                 antworten die schreibenden Werkzeuge mit dem Hinweis und ohne Anfrage an SAP. \
+                 Die {MEHRFACH_TITEL} ({MEHRFACH_EINZAHL}e) legt der User im quiver-Fenster unter \
                  Tools → {TITEL} an; jedes Werkzeug nimmt `system`, bei genau einem System darf der \
                  Name fehlen. Fehlt die Liste, sagen die Werkzeuge das als Text."
             ))
@@ -1339,6 +2214,15 @@ mod tests {
         runtime.block_on(server.aufrufen(name, Some(objekt)))
     }
 
+    /// Der Text einer Antwort.
+    fn text_von(ergebnis: CallToolResult) -> String {
+        ergebnis.content[0]
+            .as_text()
+            .expect("keine Textantwort")
+            .text
+            .clone()
+    }
+
     fn system() -> System {
         System {
             name: "dev-100".into(),
@@ -1348,25 +2232,74 @@ mod tests {
             sprache: "DE".into(),
             passwort: "geheim-4711".into(),
             zertifikat_pruefen: true,
+            schreiben: true,
         }
     }
 
     #[test]
-    fn alle_werkzeuge_sind_lesend_und_nehmen_ein_system() {
+    fn alle_werkzeuge_nehmen_ein_system_und_tragen_den_richtigen_hinweis() {
         let server = ohne_systeme();
         let werkzeuge = server.werkzeuge();
-        assert_eq!(werkzeuge.len(), 19);
+        assert_eq!(werkzeuge.len(), 26, "25 Werkzeuge plus abap_profile");
+
+        let schreibend = [
+            "abap_write",
+            "abap_activate",
+            "abap_create_object",
+            "abap_set_text_elements",
+        ];
+        let aendernd = ["abap_lock", "abap_unlock"];
+
         for werkzeug in &werkzeuge {
             let hinweise = werkzeug.annotations.as_ref().expect("Hinweise fehlen");
-            assert_eq!(hinweise.read_only_hint, Some(true), "{}", werkzeug.name);
-            assert_eq!(hinweise.destructive_hint, Some(false), "{}", werkzeug.name);
+            let name = werkzeug.name.as_ref();
+            let destruktiv = schreibend.contains(&name);
+            let allein_aendernd = aendernd.contains(&name);
+            let lesend = !destruktiv && !allein_aendernd;
+            assert_eq!(hinweise.read_only_hint, Some(lesend), "{name}");
+            assert_eq!(hinweise.destructive_hint, Some(destruktiv), "{name}");
+            // Alle Werkzeuge dieses Tools tragen einen Titel – die 25 eigenen
+            // direkt, `abap_profile` aus dem Kern in den Hinweisen.
+            if name == "abap_profile" {
+                assert!(hinweise.title.is_some(), "{name} hat keinen Titel");
+            } else {
+                assert!(werkzeug.title.is_some(), "{name} hat keinen Titel");
+            }
+        }
+
+        // Jedes Werkzeug außer `abap_profile` und `abap_create_object` nimmt
+        // `system`; create_object bekommt es auch (nur nicht als Objekt).
+        for werkzeug in &werkzeuge {
             let eigenschaften = &werkzeug.input_schema["properties"];
+            if werkzeug.name.as_ref() == "abap_profile" {
+                continue;
+            }
             assert!(
                 eigenschaften.get("system").is_some(),
                 "{} kennt kein `system`: {eigenschaften:?}",
                 werkzeug.name
             );
         }
+
+        // Die Namen stehen in einer festen Reihenfolge: erst lesend, dann
+        // schreibend, zuletzt das Profil.
+        let namen: Vec<&str> = werkzeuge.iter().map(|w| w.name.as_ref()).collect();
+        assert_eq!(namen[19], "abap_lock");
+        assert_eq!(namen[24], "abap_set_text_elements");
+        assert_eq!(namen[25], "abap_profile");
+    }
+
+    #[test]
+    fn das_profil_nennt_bei_einer_liste_die_systeme_ohne_passwort() {
+        let server = mit_einem_system();
+        let text = text_von(aufruf(&server, "abap_profile", json!({})).unwrap());
+        assert!(text.contains("dev-100"), "{text}");
+        assert!(text.contains("Schreiben aus"), "{text}");
+        assert!(!text.contains("geheim-4711"), "{text}");
+
+        // Ohne Systeme bleibt es beim Hinweis, kein Fehler.
+        let text = text_von(aufruf(&ohne_systeme(), "abap_profile", json!({})).unwrap());
+        assert!(text.contains("Zugang fehlt"), "{text}");
     }
 
     #[test]
@@ -1378,6 +2311,11 @@ mod tests {
             ("abap_search", json!({ "query": "Z*" })),
             ("abap_read", json!({ "name": "ZCL_DEMO" })),
             ("abap_table", json!({ "table": "SFLIGHT" })),
+            ("abap_lock", json!({ "name": "ZCL_DEMO" })),
+            (
+                "abap_write",
+                json!({ "name": "ZCL_DEMO", "source": "REPORT x." }),
+            ),
         ] {
             let ergebnis = aufruf(&server, name, argumente).unwrap();
             let text = ergebnis.content[0].as_text().unwrap().text.clone();

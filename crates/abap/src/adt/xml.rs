@@ -175,6 +175,18 @@ impl std::fmt::Display for Knoten {
     }
 }
 
+/// Einen Text für ein XML-Attribut unschädlich machen.
+///
+/// Nur die fünf Zeichen, die XML in einem Attributwert nicht erlaubt; alles
+/// andere (Umlaute, Zeilenumbrüche) bleibt stehen.
+pub fn attribut_wert(wert: &str) -> String {
+    wert.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
 /// `amp`, `lt`, `#38`, `#x26` wieder zu einem Zeichen machen.
 fn referenz_aufloesen(name: &str) -> String {
     match name {
@@ -287,6 +299,15 @@ mod tests {
         // Unbekannte Entities bleiben stehen.
         assert_eq!(referenz_aufloesen("unbekannt"), "&unbekannt;");
         assert_eq!(referenz_aufloesen("#x26"), "&");
+    }
+
+    #[test]
+    fn entity_und_text() {
+        assert_eq!(
+            attribut_wert("a&b<c>d\"e'f"),
+            "a&amp;b&lt;c&gt;d&quot;e&apos;f"
+        );
+        assert_eq!(attribut_wert("Grüße"), "Grüße");
     }
 
     #[test]

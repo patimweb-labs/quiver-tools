@@ -1,6 +1,6 @@
 # Architektur
 
-> Stand: 2026-11-23, nach Aufgabe 07. Gilt für den Kern (`crates/kern`) und alle
+> Stand: 2026-11-23, nach Aufgabe 07 und 08. Gilt für den Kern (`crates/kern`) und alle
 > Tools, die darauf aufsetzen. Festlegungen und Preise: [../SPEC.md](../SPEC.md).
 
 ## Richtung
@@ -335,22 +335,24 @@ funktioniert: [adr/0004-zep-offizieller-mcp.md](adr/0004-zep-offizieller-mcp.md)
 ## Ein fünftes Tool: `crates/abap`
 
 Die Vorlage `pi-abap-fs` (TypeScript, Bibliothek `abap-adt-api`) liefert die Semantik,
-nicht den Code (SPEC §6). Teil 1 ist **nur lesend**; die Anfragen sind bei
-`abap-adt-api` abgelesen und in Rust neu gebaut
-([adr/0005-adt-client-in-rust.md](adr/0005-adt-client-in-rust.md)).
+nicht den Code (SPEC §6). Die Anfragen sind bei `abap-adt-api` abgelesen und in Rust neu
+gebaut ([adr/0005-adt-client-in-rust.md](adr/0005-adt-client-in-rust.md)); Teil 2
+(Schreiben) steht in [adr/0006-abap-schreiben.md](adr/0006-abap-schreiben.md).
 
 | Modul | Aufgabe | Zustand |
 |---|---|---|
-| `werkzeug` | `Abap` (sechs Felder, `mehrfach` = „Systeme“, `testen`) | keiner |
-| `systeme` | `QUIVER_ZUGAENGE` → geprüfte `System`e, Auswahl (`waehlen`) | Umgebungsvariable |
-| `adt::client` | der **einzige** Ort mit Netzverkehr: Basic-Auth, `sap-client`/`sap-language`, Cookies je System, CSRF, 401 | Token + Cookies je System |
+| `werkzeug` | `Abap` (sieben Felder, `mehrfach` = „Systeme“, `testen`) | keiner |
+| `systeme` | `QUIVER_ZUGAENGE` → geprüfte `System`e, Auswahl (`waehlen`), Schalter `schreiben` | Umgebungsvariable |
+| `adt::client` | der **einzige** Ort mit Netzverkehr: Basic-Auth, `sap-client`/`sap-language`, Cookies je System, CSRF, 401, `stateful` | Token + Cookies je Client |
+| `adt::sitzung` | die stateful Sitzung je System: Lock-Tabelle, Sitzungsablauf, Freigabe beim Ende | Cookies, Token, Locks |
 | `adt::xml` | `quick-xml` → `Knoten`, Namensräume fallen weg | keiner |
-| `adt::daten` | je Endpunkt ein reiner Leser: XML → Daten | keiner |
-| `adt::fehler` | `AdtFehler`: Ausnahme, HTTP, 401, Netz – nie mit Geheimnis | keiner |
+| `adt::daten` | je Endpunkt ein reiner Leser: XML → Daten (auch Sperre und Aktivierung) | keiner |
+| `adt::fehler` | `AdtFehler`: Ausnahme, HTTP, 401, abgelaufene Sitzung – nie mit Geheimnis | keiner |
+| `schreiben` | Schutzregeln und Rümpfe der schreibenden Werkzeuge | keiner |
 | `format` | reine Funktionen: Daten → knapper Text, gekürzt über `mcp::kuerzen` | keiner |
-| `server` | die neunzehn lesenden MCP-Werkzeuge | Systeme aus der Umgebung |
+| `server` | die 25 MCP-Werkzeuge (plus `abap_profile` aus dem Kern) | Systeme aus der Umgebung, Sitzungen |
 
-Datenfluss eines Aufrufs:
+Datenfluss eines **lesenden** Aufrufs (zustandslos):
 
 ```
 MCP tools/call
@@ -362,26 +364,58 @@ MCP tools/call
   → CallToolResult
 ```
 
+Datenfluss eines **schreibenden** Aufrufs (eine Sitzung je System):
+
+```
+MCP tools/call
+  → server::schreiben_erlaubt  Schalter `schreiben`? Sonst Hinweis, **keine** Anfrage
+  → server::namensraum_pruefen Z*, Y*, /…/ – sonst Ablehnung, **keine** Anfrage
+  → Größe/Format prüfen        `source` ≤ 2 MB, Textelemente nach Vorlage
+  → server::aufloesen          Name/Typ → objectUrl + Hauptinclude (lesend, zustandslos)
+  → adt::sitzung::hole         eine Sitzung je System (Cookies, Token, Lock-Tabelle)
+  → sitzung::sperren           POST <objekt-url>?_action=LOCK
+  → sitzung::anfrage           PUT <hauptinclude>?lockHandle=…&corrNr=…
+  → sitzung::entsperren        POST <objekt-url>?_action=UNLOCK (auch nach Fehler)
+  → format                     Daten → knapper Text
+  → CallToolResult
+```
+
 Regeln, die dort gelten:
 
 - **Anmeldung ohne Wiederholung.** `401` heißt „Anmeldung abgelehnt“ und wird nicht
   wiederholt: SAP sperrt Benutzer nach zu vielen Fehlversuchen. Das Passwort steht nur
-  im Basic-Auth-Kopf; `Debug` von `System` und `Client` zeigt höchstens, *ob* eines
-  gesetzt ist.
+  im Basic-Auth-Kopf; `Debug` von `System`, `Client` und `Sitzung` zeigt höchstens, *ob*
+  eines gesetzt ist.
 - **CSRF genau einmal.** Ein `403` mit `x-csrf-token: Required` (oder eine CSRF-Meldung
   im Rumpf) holt ein neues Token und wiederholt den Aufruf **einmal**; ein zweiter
-  Fehlschlag geht als Fehler hinaus.
-- **Cookies je System.** `SAP_SESSIONID_*` liegt im Client des Systems, nicht im
-  Prozess; zwei Systeme teilen sich nichts.
+  Fehlschlag geht als Fehler hinaus. In einer Sitzung bleibt der Keks dabei gleich.
+- **Cookies je Client.** `SAP_SESSIONID_*` liegt im Client, nicht im Prozess; zwei
+  Systeme teilen sich nichts.
+- **Eine Sitzung je System.** `abap_lock`, `abap_write`, `abap_unlock`,
+  `abap_activate` und `abap_set_text_elements` laufen über dieselbe stateful Sitzung
+  (`X-sap-adt-sessiontype: stateful`), weil SAP einen Lock-Handle nur dort kennt.
+  Lesende Werkzeuge arbeiten weiter zustandslos.
+- **Kein stilles Wiederholen.** Läuft die Sitzung ab (`400`/`401` mit „Session timed
+  out“), wird sie samt Lock-Tabelle verworfen und der Aufruf endet mit
+  `AdtFehler::SitzungAbgelaufen`. Ein Schreibvorgang wird nie nachgeschoben.
+- **Locks werden freigegeben.** Selbst geholte Sperren gibt `abap_write`/
+  `abap_set_text_elements` auch nach einem Fehler frei (wie `finally` in der Vorlage).
+  Beim Prozessende (stdin zu, normales Ende) gibt `Drop` des Servers alle bekannten Locks
+  frei, auf Unix zusätzlich der SIGTERM-Wächter – höchstens 5 s, Fehler nur ins Log.
+- **Drei Schutzregeln vor jeder Anfrage.** `schreiben` je System (Standard aus),
+  Kundennamensraum (`Z*`, `Y*`, `/…/`, Paket `$TMP` oder Kundenpaket) und `source` bis
+  2 MB. Verstöße enden als Text bzw. Parameterfehler, **ohne** Anfrage an SAP.
 - **Zertifikate.** `reqwest` mit rustls und den Wurzeln des System-Zertifikatsspeichers
   (`rustls-native-certs`); `zertifikat_pruefen = aus` ist der Notausgang.
 - **Ausnahmen durchreichen.** `exc:exception` wird zu Typ und Nachricht; ein Agent soll
   die SAP-Meldung sehen, nicht `HTTP 400`.
-- **Alles lesend.** Auch Syntax-Check, Unit-Tests und ATC tragen `read_only_hint`: sie
-  rechnen im System, ändern aber nichts.
+- **`abap_profile` kommt aus dem Kern.** Bei einem Werkzeug mit `mehrfach` gibt es kein
+  einzelnes Profil; das Werkzeug antwortet darum mit derselben Liste wie `abap_status`
+  (Systeme ohne Passwort).
 - **Grenzen.** `max_zeichen` (Standard 20000) bei `abap_read`, `max_zeilen` (Standard
-  100, höchstens 1000) bei `abap_table`/`abap_query`.
+  100, höchstens 1000) bei `abap_table`/`abap_query`, 50 Aktivierungsmeldungen.
 - `crates/abap/tests/attrappe` bildet einen ADT-Server nach: CSRF-Token mit
-  `403 Required`, Cookies, Basic-Auth, je Endpunkt eine Antwort und auf Wunsch eine
-  ADT-Ausnahme. Kein Test spricht mit einem echten SAP-System; das Passwort der
-  Attrappe ist erfunden.
+  `403 Required`, Cookies je Sitzung, Basic-Auth, Sperren, Quelltext-PUT, Aktivierung,
+  Anlegen und je Endpunkt eine Antwort. Sperren, Schreiben und Entsperren gehen dort nur
+  mit dem Keks der Sitzung, die gesperrt hat; eine andere Sitzung bekommt `423`. Kein
+  Test spricht mit einem echten SAP-System; das Passwort der Attrappe ist erfunden.

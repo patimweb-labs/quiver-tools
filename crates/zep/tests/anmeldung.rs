@@ -15,12 +15,15 @@ use std::time::Duration;
 use quiver_zep::anmeldung::{Anmeldung, Status};
 use quiver_zep::tresor::{schluessel_refresh, SpeicherTresor, Tresor};
 use quiver_zep::vermittler::Vermittler;
+use quiver_zep::ZepKonfig;
 use rmcp::model::CallToolRequestParams;
 
 use attrappe::{Attrappe, AttrappenBrowser, BENUTZER, GEHEIM_MARKE, PASSWORT};
 
 /// Der Takt der Hintergrund-Erneuerung in den Tests.
 const TAKT: Duration = Duration::from_millis(50);
+/// Die Wartezeit nach einem Fehlschlag vor dem Absenden (wie in der Attrappe).
+const PAUSE: Duration = Duration::from_millis(50);
 
 fn baue(
     attrappe: &Attrappe,
@@ -41,6 +44,25 @@ fn speicher() -> Arc<SpeicherTresor> {
 
 fn browser() -> Arc<AttrappenBrowser> {
     Arc::new(AttrappenBrowser::neu(BENUTZER, PASSWORT))
+}
+
+/// Eine Konfiguration, deren ZEP es nicht gibt: jeder Versuch scheitert, bevor
+/// Benutzer und Passwort abgeschickt werden.
+fn tote_konfig(zustand: std::path::PathBuf) -> ZepKonfig {
+    ZepKonfig {
+        url: "http://127.0.0.1:9/zepneoimpulse/next/mcp".to_string(),
+        benutzer: BENUTZER.to_string(),
+        passwort: PASSWORT.to_string(),
+        zustand,
+        takt: TAKT,
+        wartezeit: Duration::from_secs(2),
+        pause: PAUSE,
+    }
+}
+
+/// Die Sperrdatei im Zustandsordner des Tests.
+fn sperrdatei(ordner: &tempfile::TempDir) -> std::path::PathBuf {
+    ordner.path().join("routine-gesperrt.json")
 }
 
 #[tokio::test]
@@ -149,6 +171,12 @@ async fn falsches_passwort_ergibt_genau_einen_versuch_dann_sperre() {
     let erster = anmeldung.access_token().await.unwrap_err();
     assert!(!erster.to_string().contains(PASSWORT), "{erster}");
     assert_eq!(attrappe.login_posts(), 1, "genau ein Anmeldeversuch");
+    // Benutzer und Passwort wurden gesendet und abgelehnt: das ist ein
+    // Fehlversuch bei ZEP, also sperrt die Routine (in einer Datei).
+    assert!(
+        sperrdatei(&ordner).exists(),
+        "ohne Sperrdatei gäbe es keinen Schutz vor dem nächsten Versuch"
+    );
 
     // Der zweite Aufruf versucht es nicht noch einmal.
     let zweiter = anmeldung.access_token().await.unwrap_err();
@@ -183,8 +211,76 @@ async fn eine_unbekannte_seite_bricht_ab_und_nennt_nur_feldnamen() {
     // Kein Wert – auch nicht der, der in der Seite stand.
     assert!(!fehler.contains(GEHEIM_MARKE), "{fehler}");
     assert!(!fehler.contains(PASSWORT), "{fehler}");
-    assert!(anmeldung.sperrgrund().is_some(), "ein Versuch, dann Sperre");
+    // Die Seite kam **vor** dem Formular: ZEP hat nichts bekommen, also gibt es
+    // keine Sperre (Aufgabe 11).
+    assert!(
+        anmeldung.sperrgrund().is_none(),
+        "ein Fehler vor dem Absenden darf nicht sperren"
+    );
+    assert!(!sperrdatei(&ordner).exists());
     assert_eq!(attrappe.login_posts(), 0);
+}
+
+#[tokio::test]
+async fn ein_netzfehler_vor_dem_abschicken_sperrt_nicht() {
+    let ordner = tempfile::tempdir().unwrap();
+    let anmeldung = Anmeldung::neu(
+        tote_konfig(ordner.path().to_path_buf()),
+        speicher(),
+        browser(),
+    );
+
+    let fehler = anmeldung.access_token().await.unwrap_err();
+    assert!(fehler.ist_voruebergehend(), "{fehler}");
+    assert!(!fehler.ist_gesperrt());
+    assert!(!fehler.to_string().contains(PASSWORT), "{fehler}");
+    assert!(
+        fehler.to_string().contains("ZEP-Anmeldung nötig"),
+        "{fehler}"
+    );
+
+    // Keine Sperrdatei und kein Sperrgrund: ZEP hat die Zugangsdaten nie gesehen.
+    assert!(anmeldung.sperrgrund().is_none());
+    assert!(!sperrdatei(&ordner).exists());
+    assert_eq!(anmeldung.status(), Status::NichtAngemeldet);
+
+    // Der nächste Versuch wartet eine Weile (Merker im Speicher, nicht in der Datei).
+    assert!(anmeldung.wartezeit_bis_neuer_versuch().is_some());
+    let zweiter = anmeldung.access_token().await.unwrap_err();
+    assert!(zweiter.ist_voruebergehend(), "{zweiter}");
+    assert!(!sperrdatei(&ordner).exists());
+}
+
+#[tokio::test]
+async fn nach_einem_fehlschlag_vor_dem_abschicken_klappt_der_zweite_versuch() {
+    let attrappe = Attrappe::starte().await;
+    let ordner = tempfile::tempdir().unwrap();
+    let anmeldung = baue(&attrappe, &ordner, speicher(), browser());
+    // Eine unbekannte Seite vor dem Formular: ZEP sieht keine Zugangsdaten.
+    attrappe.unklare_seite_zeigen();
+
+    let erster = anmeldung.access_token().await.unwrap_err();
+    assert!(erster.ist_voruebergehend(), "{erster}");
+    assert!(anmeldung.sperrgrund().is_none());
+    assert!(
+        !sperrdatei(&ordner).exists(),
+        "kein Fehlversuch, keine Sperre"
+    );
+    assert_eq!(attrappe.login_posts(), 0);
+
+    // Vor der Wartezeit gibt es keinen zweiten Versuch …
+    let zu_frueh = anmeldung.access_token().await.unwrap_err();
+    assert!(zu_frueh.ist_voruebergehend(), "{zu_frueh}");
+    assert_eq!(attrappe.login_posts(), 0);
+
+    // … danach klappt die Anmeldung ohne Zutun des Users.
+    attrappe.unklare_seite_aus();
+    tokio::time::sleep(PAUSE * 3).await;
+    let token = anmeldung.access_token().await.expect("zweiter Versuch");
+    assert!(!token.is_empty());
+    assert_eq!(attrappe.login_posts(), 1, "genau ein Login-POST");
+    assert!(matches!(anmeldung.status(), Status::Angemeldet { .. }));
+    assert!(!sperrdatei(&ordner).exists());
 }
 
 #[tokio::test]

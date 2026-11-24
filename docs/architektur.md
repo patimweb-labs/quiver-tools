@@ -230,11 +230,11 @@ Aufgabe: angemeldet bleiben.
 | `cookies` | Cookie-Speicher des Ablaufs (Host, Pfad, `Secure`) | je Ablauf |
 | `routine` | der Ablauf ohne Browser: Formular, Zustimmung, Rückleitung abfangen, Code tauschen | je Ablauf |
 | `browser` | `Browser`-Naht: `OeffneBrowser` (Notfall), `KeinBrowser` | keiner |
-| `anmeldung` | Token, Tresor, Sperrschutz, Hintergrund-Erneuerung, `status` | ein Token im Speicher, Refresh im Tresor |
+| `anmeldung` | Token, Tresor, Sperrschutz (nur nach echtem Fehlversuch), Hintergrund-Erneuerung, `status` | ein Token im Speicher, Refresh im Tresor |
 | `tresor` | `Tresor`-Naht: `DateiTresor` (`tresor/` im Zustandsordner), `SpeicherTresor` | Refresh-Token, `client_id` |
 | `sperre` | Sperrzustand als Datei (`routine-gesperrt.json`) | eine Datei |
 | `vermittler` | rmcp-Client zum ZEP-MCP, 401 → erneuern → einmal wiederholen | eine Verbindung |
-| `server` | der MCP-Server über stdio, Liste beim Start, `list_changed` weitergeben | Werkzeugliste |
+| `server` | der MCP-Server über stdio, Anmeldung und Liste beim Start, `list_changed` weitergeben | Werkzeugliste |
 | `befehle` | `anmelden`, `anmelden --browser`, `status`, `abmelden`, `routine-pruefen` | keiner |
 
 Datenfluss eines Aufrufs:
@@ -282,9 +282,20 @@ Regeln, die dort gelten:
   Feld**namen**; Werte stehen in keinem Bericht, keinem Fehler und keinem Log.
 - **Zugangsdaten gehen nur an den Authorization-Host.** Eine Weiterleitung auf einen
   fremden Host bricht ab, statt das Passwort dorthin zu tragen.
-- **Ein Versuch, dann Sperre.** Jeder Fehlschlag der Routine schreibt
-  `routine-gesperrt.json`; frei wird sie nur durch eine erfolgreiche Anmeldung über den
-  Knopf (`anmelden`). Automatische Wege wiederholen nie.
+- **Nur ein echter Fehlversuch sperrt.** Gesperrt wird nur, wenn Benutzer und Passwort
+  tatsächlich abgeschickt wurden und die Anmeldung danach nicht zum Token führte
+  (`Abgelehnt`, oder eine unbekannte Seite **nach** dem Absenden) – nur das zählt bei
+  ZEP, das nach fünf Fehlversuchen sperrt. Dann steht `routine-gesperrt.json` im
+  Zustandsordner, und frei wird sie erst durch eine erfolgreiche Anmeldung über den
+  Knopf (`anmelden`). Fehler **vor** dem Absenden (Netz, Metadaten, Registrierung,
+  unbekannte Seite vor dem Formular, fremder Host) schreiben keine Sperrdatei: sie
+  werden gemeldet, und der nächste Bedarf versucht es erneut – höchstens alle 60 s
+  (Merker im Speicher, nicht in der Datei). Dafür gibt `routine::Routine` zurück, ob
+  die Zugangsdaten gesendet wurden (`zugangsdaten_gesendet`).
+- **Anmelden beim Start.** Ohne gültiges Token, ohne Sperre und mit Benutzer und
+  Passwort meldet sich `quiver-zep` beim Start des MCP-Prozesses sofort im Hintergrund
+  an (`server::starte_anmeldung`) – nicht erst beim ersten Werkzeugaufruf. Danach liegt
+  das Refresh-Token im Tresor und `status` sagt „Angemeldet“.
 - **Nur eine Erneuerung gleichzeitig.** Refresh und Routine liegen unter einer Sperre;
   sonst nähmen sich zwei Erneuerungen das rotierte Refresh-Token weg.
 - **Der Browser ist Notfall.** `KeinBrowser` ist der Normalfall; nur `anmelden --browser`
@@ -328,6 +339,14 @@ funktioniert: [adr/0004-zep-offizieller-mcp.md](adr/0004-zep-offizieller-mcp.md)
   ein Mini-MCP-Server hinter `Bearer`, der auf Wunsch `tools/list_changed` schickt.
   Kein Test spricht mit zep-online.de; `ZEP_TRESOR=speicher` hält die Tresor-Datei aus
   dem Spiel.
+- **Tests laufen nie im echten Zustand.** Wo ein Modul einen Ordner für Zustand wählt,
+  liefert er unter `cfg(test)` einen temporären Ordner je Prozess – `zep::werkzeug::
+  zustandsordner` (und damit der Sperrzustand und `DateiTresor::standard`),
+  `m365_anmeldung::tresor` und `ssh::pfade::Pfade::aus_umgebung` (im Test ohne Home).
+  Ein Wächter-Test je Crate prüft, dass dieser Ordner nicht unter `HOME` liegt; ein
+  Test schreibt so nie eine `routine-gesperrt.json` in den Zustand des Users.
+  Integrationstests setzen weiterhin `ZEP_ZUSTAND`/`QUIVER_SSH_DATEN`, weil die
+  Bibliothek dort ohne `cfg(test)` läuft.
 - `crates/email/tests/imap_echt.rs` ist `#[ignore]` und spricht nur auf Anforderung mit
   einem echten IMAP-Server (`EMAIL_TEST_*`, z. B. GreenMail im Docker). Ohne diese
   Umgebung geht kein Test ins Netz.

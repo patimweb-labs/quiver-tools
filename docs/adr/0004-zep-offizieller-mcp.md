@@ -48,10 +48,14 @@ ein; danach soll kein Browser mehr nötig sein.
   Access-Token nur im Arbeitsspeicher; ein rotiertes Refresh-Token wird sofort gesichert.
   Die Hintergrund-Erneuerung greift bei 80 % der Laufzeit, ohne Werkzeugaufruf – damit
   verfällt das Refresh-Token nicht aus Untätigkeit.
-- **Sperrschutz in einer Datei.** Je Fehlschlag der Routine genau ein Versuch, danach
-  „Routine gesperrt“ (bis zur nächsten erfolgreichen Anmeldung über den Knopf). Der
+- **Sperrschutz in einer Datei.** Nur ein Fehlschlag, den ZEP selbst gesehen hat
+  (Benutzer und Passwort wurden abgeschickt und abgelehnt), sperrt die Routine: danach
+  „Routine gesperrt“ bis zur nächsten erfolgreichen Anmeldung über den Knopf. Der
   Zustand überlebt Neustarts, weil er in `<Zustandsordner>/routine-gesperrt.json` steht.
-  Ein gesperrter Ablauf wird nie in einer Schleife wiederholt.
+  Ein gesperrter Ablauf wird nie in einer Schleife wiederholt. Fehler davor (Netz,
+  Metadaten, unbekannte Seite vor dem Formular) sperren nicht; sie wiederholen sich
+  höchstens alle 60 s (Merker im Speicher). Beim Start meldet sich das Werkzeug ohne
+  gültiges Token selbst an, statt auf den Knopf zu warten (Aufgabe 11).
 - **401 → erneuern, einmal wiederholen.** Lehnt ZEP das Access-Token ab, wird es
   verworfen, über das Refresh-Token erneuert und der Aufruf genau einmal wiederholt.
 - **`tools/list_changed` wird weitergegeben.** Der rmcp-Client-Handler meldet die

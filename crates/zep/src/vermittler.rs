@@ -53,7 +53,9 @@ impl VermittlerFehler {
         matches!(
             self,
             VermittlerFehler::Anmeldung(
-                AnmeldeFehler::NichtAngemeldet | AnmeldeFehler::Gesperrt(_)
+                AnmeldeFehler::NichtAngemeldet
+                    | AnmeldeFehler::Gesperrt(_)
+                    | AnmeldeFehler::Voruebergehend(_)
             )
         )
     }
@@ -266,6 +268,7 @@ mod tests {
                 zustand: ordner.path().to_path_buf(),
                 takt: Duration::from_millis(50),
                 wartezeit: Duration::from_secs(2),
+                pause: Duration::from_millis(50),
             },
             Arc::new(crate::tresor::SpeicherTresor::neu()),
             Arc::new(crate::browser::KeinBrowser),

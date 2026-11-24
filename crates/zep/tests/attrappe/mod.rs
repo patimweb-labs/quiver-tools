@@ -289,6 +289,8 @@ impl Attrappe {
             zustand,
             takt,
             wartezeit: std::time::Duration::from_secs(10),
+            // Kurz: der Test soll den zweiten Versuch nicht 60 s abwarten.
+            pause: std::time::Duration::from_millis(50),
         }
     }
 
@@ -320,6 +322,11 @@ impl Attrappe {
     /// `/authorize` antwortet mit einer Seite, die zu keinem Schritt passt.
     pub fn unklare_seite_zeigen(&self) {
         self.zustand.unklare_seite.store(true, Ordering::SeqCst);
+    }
+
+    /// `/authorize` antwortet wieder mit dem Anmeldeformular.
+    pub fn unklare_seite_aus(&self) {
+        self.zustand.unklare_seite.store(false, Ordering::SeqCst);
     }
 
     /// Die Zustimmung kommt wie bei ZEP als Inertia-Seite (ohne `<form>`).

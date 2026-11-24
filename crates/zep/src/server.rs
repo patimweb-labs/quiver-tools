@@ -9,7 +9,9 @@
 //!
 //! Zwei Dinge tut der Server selbst:
 //!
-//! - **Anmelden bleiben**: er startet die Hintergrund-Erneuerung des Tokens.
+//! - **Anmelden bleiben**: er startet die Hintergrund-Erneuerung des Tokens und
+//!   meldet sich beim Start sofort an, wenn kein gültiges Token da ist, die
+//!   Routine nicht gesperrt ist und Benutzer und Passwort gesetzt sind.
 //! - **Liste aktuell halten**: meldet ZEP `tools/list_changed`, holt er die
 //!   Liste neu und schickt selbst `list_changed` an seinen Client.
 //!
@@ -182,6 +184,31 @@ impl ZepServer {
         profile_antwort(&self.geteilt.zugang)
     }
 
+    /// Beim Start im Hintergrund anmelden, falls nötig (Aufgabe 11).
+    ///
+    /// Ohne gültiges Token, ohne Sperre und mit Benutzer und Passwort meldet
+    /// sich das Werkzeug **sofort** an – nicht erst beim ersten Werkzeugaufruf.
+    /// Danach liegt das Refresh-Token im Tresor, und `status` in einem zweiten
+    /// Prozess sagt „Angemeldet“.
+    ///
+    /// Läuft im Hintergrund, damit der Handshake nicht wartet. Ein zweiter Weg
+    /// (die Werkzeugliste) hängt an derselben Sperre und meldet sich nicht
+    /// noch einmal an.
+    fn starte_anmeldung(&self) {
+        let Some(anmeldung) = self.geteilt.anmeldung.clone() else {
+            return;
+        };
+        tokio::spawn(async move {
+            if anmeldung.status().ist_angemeldet() || anmeldung.sperrgrund().is_some() {
+                return;
+            }
+            match anmeldung.access_token().await {
+                Ok(_) => tracing::info!("Beim Start angemeldet"),
+                Err(fehler) => tracing::warn!(%fehler, "Anmeldung beim Start nicht möglich"),
+            }
+        });
+    }
+
     /// Hintergrundarbeit starten: Token erneuern, Liste nachführen.
     ///
     /// Läuft einmal je Prozess. Der erste Aufruf setzt den Peer; danach darf
@@ -259,6 +286,9 @@ impl ServerHandler for ZepServer {
 
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
         self.starte_hintergrund(context.peer);
+        // Ohne Token sofort anmelden – der User soll nicht auf „Anmelden“
+        // klicken müssen (Aufgabe 11, Punkt 3).
+        self.starte_anmeldung();
         // Die Werkzeugliste beim Start holen.
         self.liste_holen().await;
     }

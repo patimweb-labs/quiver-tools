@@ -15,9 +15,13 @@
 //!   nicht aus Untätigkeit verfällt.
 //! - **Routine** mit Benutzer und Passwort (kein Browser) als erster Weg;
 //!   **Browser** nur als Notfall (`anmelden --browser`).
-//! - **Sperrschutz**: je Fehlschlag der Routine genau ein Versuch, danach ist
-//!   die Routine gesperrt (in einer Datei, also auch über Neustarts). Frei wird
-//!   sie erst durch eine erfolgreiche Anmeldung über den Knopf.
+//! - **Sperrschutz**: nur ein Fehlschlag, den ZEP selbst gesehen hat (Benutzer
+//!   und Passwort wurden abgeschickt), sperrt die Routine – in einer Datei,
+//!   also auch über Neustarts. Frei wird sie erst durch eine erfolgreiche
+//!   Anmeldung über den Knopf. Fehler davor (Netz, Metadaten, Registrierung,
+//!   unbekannte Seite vor dem Formular, fremder Host) sperren nicht; der
+//!   nächste Versuch ist dann höchstens alle [`NEUER_VERSUCH`] fällig (Merker
+//!   im Speicher).
 //!
 //! Kein Wert von hier erscheint in einer Meldung: weder Passwort noch Token.
 
@@ -33,7 +37,7 @@ use crate::browser::{Browser, KeinBrowser};
 use crate::metadaten::{self, Metadaten};
 use crate::oauth::{self, TokenAntwort};
 use crate::pkce::{self, Pkce};
-use crate::routine::Routine;
+use crate::routine::{Routine, RoutineFehler};
 use crate::sperre::Sperre;
 use crate::tresor::{schluessel_client, schluessel_refresh, DateiTresor, Tresor};
 use crate::werkzeug::ZepKonfig;
@@ -45,6 +49,12 @@ pub const HINWEIS_ANMELDUNG: &str =
 
 /// Wie lange eine Anfrage an einen OAuth-Endpunkt höchstens dauert.
 pub const ZEITLIMIT: Duration = Duration::from_secs(30);
+
+/// So lange wartet der automatische Weg nach einem Fehlschlag, der Benutzer und
+/// Passwort gar nicht erst abgeschickt hat (Merker im Speicher, nicht in der
+/// Datei). Ein solcher Fehlschlag ist bei ZEP kein Fehlversuch – die Routine
+/// bleibt frei und versucht es beim nächsten Bedarf erneut.
+pub const NEUER_VERSUCH: Duration = Duration::from_secs(60);
 
 /// Was bei der Anmeldung schiefgehen kann.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -58,6 +68,12 @@ pub enum AnmeldeFehler {
     /// Das Refresh-Token wurde abgelehnt (`invalid_grant`): neu anmelden.
     #[error("Das Refresh-Token wurde abgelehnt – eine neue Anmeldung ist nötig.")]
     RefreshAbgelehnt,
+    /// Gerade kein Token, aber auch **kein** Fehlversuch: der Versuch scheiterte
+    /// vor dem Absenden (Netz, Metadaten, Registrierung, unbekannte Seite vor
+    /// dem Formular) oder pausiert noch. Beim nächsten Bedarf wird es erneut
+    /// versucht; die Routine bleibt frei.
+    #[error("{0} {HINWEIS_ANMELDUNG}")]
+    Voruebergehend(String),
     /// Alles andere, als Text ohne Geheimnisse.
     #[error("{0}")]
     Fehlgeschlagen(String),
@@ -72,6 +88,11 @@ impl AnmeldeFehler {
     /// Hat der Token-Endpunkt das Refresh-Token abgelehnt (`invalid_grant`)?
     pub fn ist_invalid_grant(&self) -> bool {
         matches!(self, AnmeldeFehler::RefreshAbgelehnt)
+    }
+
+    /// Ist es ein Fehlschlag **vor** dem Absenden (kein Fehlversuch bei ZEP)?
+    pub fn ist_voruebergehend(&self) -> bool {
+        matches!(self, AnmeldeFehler::Voruebergehend(_))
     }
 }
 
@@ -114,6 +135,41 @@ impl RoutineLauf {
     /// Ist der Versuch gelungen?
     pub fn gelungen(&self) -> bool {
         self.fehler.is_none()
+    }
+}
+
+/// Wie ein Lauf der Routine ausgegangen ist – und ob er bei ZEP als
+/// Fehlversuch zählt.
+enum Ausgang {
+    /// Angemeldet: Token da, Sperre weg.
+    Fertig,
+    /// Benutzer und Passwort wurden gesendet und danach abgelehnt. Nur das
+    /// zählt bei ZEP als Fehlversuch (nach fünf sperrt ZEP das Konto).
+    Fehlversuch(AnmeldeFehler),
+    /// Fehlschlag **vor** dem Absenden: Netz, Metadaten, Registrierung,
+    /// unbekannte Seite vor dem Formular, fremder Host. Kein Fehlversuch.
+    KeinFehlversuch(AnmeldeFehler),
+}
+
+impl Ausgang {
+    /// Was ein Fehler der Routine bedeutet.
+    ///
+    /// Gesperrt wird nur, wenn die Zugangsdaten tatsächlich abgeschickt wurden
+    /// und die Anmeldung danach nicht zum Token führte.
+    fn aus_routine(fehler: RoutineFehler, zugangsdaten_gesendet: bool) -> Ausgang {
+        match fehler {
+            // Benutzer oder Passwort wurden gesendet und abgelehnt.
+            RoutineFehler::Abgelehnt => {
+                Ausgang::Fehlversuch(AnmeldeFehler::Fehlgeschlagen(fehler.to_string()))
+            }
+            // Nach dem Absenden kam eine Seite, die die Routine nicht einordnen
+            // kann – auch das ist ein Anmeldeversuch bei ZEP.
+            RoutineFehler::UnklareSeite(_) if zugangsdaten_gesendet => {
+                Ausgang::Fehlversuch(AnmeldeFehler::Fehlgeschlagen(fehler.to_string()))
+            }
+            // Alles andere ist kein Fehlversuch bei ZEP.
+            _ => Ausgang::KeinFehlversuch(AnmeldeFehler::Voruebergehend(fehler.to_string())),
+        }
     }
 }
 
@@ -168,6 +224,38 @@ struct Inner {
     token: Mutex<Option<Gespeichertes>>,
     /// Nur ein Anmeldevorgang gleichzeitig.
     vorgang: tokio::sync::Mutex<()>,
+    /// Wann die Routine nach einem Fehlschlag **vor** dem Absenden wieder
+    /// laufen darf. Nur im Speicher: der Sperrzustand in der Datei bleibt dem
+    /// echten Fehlversuch vorbehalten.
+    naechster_versuch: Mutex<Option<Instant>>,
+}
+
+impl Inner {
+    /// Die Sperre über den Merker im Speicher (nur für den automatischen Weg).
+    fn fach(&self) -> std::sync::MutexGuard<'_, Option<Instant>> {
+        // Ein vergifteter Sperrhahn enthält nur einen Zeitpunkt, keine Logik.
+        self.naechster_versuch
+            .lock()
+            .unwrap_or_else(|vergiftet| vergiftet.into_inner())
+    }
+
+    /// Wie lange der nächste Versuch noch gesperrt ist.
+    fn wartezeit_bis_neuer_versuch(&self) -> Option<Duration> {
+        let frist = *self.fach();
+        frist
+            .filter(|frist| *frist > Instant::now())
+            .map(|frist| frist - Instant::now())
+    }
+
+    /// Nach einem Fehlschlag vor dem Absenden: eine Weile kein neuer Versuch.
+    fn frist_setzen(&self) {
+        *self.fach() = Some(Instant::now() + self.konfig.pause);
+    }
+
+    /// Nach einer erfolgreichen Anmeldung: dem nächsten Aufruf steht alles frei.
+    fn frist_loeschen(&self) {
+        *self.fach() = None;
+    }
 }
 
 impl std::fmt::Debug for Anmeldung {
@@ -203,6 +291,7 @@ impl Anmeldung {
                 client_id: Mutex::new(None),
                 token: Mutex::new(None),
                 vorgang: tokio::sync::Mutex::new(()),
+                naechster_versuch: Mutex::new(None),
             }),
         }
     }
@@ -229,6 +318,12 @@ impl Anmeldung {
     /// Der Grund, falls die Routine gesperrt ist.
     pub fn sperrgrund(&self) -> Option<String> {
         self.inner.sperre.grund()
+    }
+
+    /// Wie lange die Routine nach einem Fehlschlag vor dem Absenden noch
+    /// pausiert (Merker im Speicher).
+    pub fn wartezeit_bis_neuer_versuch(&self) -> Option<Duration> {
+        self.inner.wartezeit_bis_neuer_versuch()
     }
 
     /// Der Anmeldezustand – ohne Netz und ohne Anmeldeversuch.
@@ -286,12 +381,26 @@ impl Anmeldung {
         if let Some(grund) = self.inner.sperre.grund() {
             return Err(AnmeldeFehler::Gesperrt(grund));
         }
+        // Ein Fehlschlag vor dem Absenden ist kein Fehlversuch bei ZEP: die
+        // Routine bleibt frei, aber höchstens ein Versuch je Wartezeit.
+        if let Some(rest) = self.inner.wartezeit_bis_neuer_versuch() {
+            return Err(AnmeldeFehler::Voruebergehend(format!(
+                "Der letzte Anmeldeversuch ist vor dem Absenden gescheitert; der nächste ist in \
+                 {} Sekunden möglich.",
+                rest.as_secs() + 1
+            )));
+        }
 
         // Nur eine Routine gleichzeitig; ein zweiter Aufruf übernimmt das
         // Ergebnis des ersten, statt sich ein zweites Mal anzumelden.
         let lauf = self.routine_lauf_intern(true).await;
         if let Some(fehler) = lauf.fehler {
-            return Err(AnmeldeFehler::Fehlgeschlagen(fehler));
+            // Die Sperrdatei entscheidet: nur nach einem echten Fehlversuch ist
+            // die Routine gesperrt, sonst war der Fehler vor dem Absenden.
+            return match self.inner.sperre.grund() {
+                Some(grund) => Err(AnmeldeFehler::Gesperrt(grund)),
+                None => Err(AnmeldeFehler::Voruebergehend(fehler)),
+            };
         }
         self.aus_dem_speicher()
             .ok_or(AnmeldeFehler::NichtAngemeldet)
@@ -332,7 +441,7 @@ impl Anmeldung {
     /// kein zweites Mal angefragt (sonst zwei Logins je Fehlversuch).
     async fn routine_lauf_intern(&self, nur_wenn_noetig: bool) -> RoutineLauf {
         let mut bericht = Vec::new();
-        let ergebnis = {
+        let ausgang = {
             let _wache = self.inner.vorgang.lock().await;
             if nur_wenn_noetig && self.aus_dem_speicher().is_some() {
                 return RoutineLauf {
@@ -342,7 +451,7 @@ impl Anmeldung {
             }
             self.routine_innen(&mut bericht).await
         };
-        self.verdauen(ergebnis, bericht)
+        self.verdauen(ausgang, bericht)
     }
 
     /// Der Notfall: Anmeldung über den Browser mit Rückleitung an den Loopback.
@@ -352,7 +461,13 @@ impl Anmeldung {
             let _wache = self.inner.vorgang.lock().await;
             self.browser_innen(&mut bericht).await
         };
-        self.verdauen(ergebnis, bericht)
+        // Im Browser tippt der User selbst; ob ZEP einen Fehlversuch gezählt
+        // hat, sehen wir nicht. Darum sperrt dieser Weg nie.
+        let ausgang = match ergebnis {
+            Ok(()) => Ausgang::Fertig,
+            Err(fehler) => Ausgang::KeinFehlversuch(fehler),
+        };
+        self.verdauen(ausgang, bericht)
     }
 
     /// Erneuern, wenn das Access-Token bei 80 % seiner Laufzeit angekommen ist.
@@ -398,33 +513,47 @@ impl Anmeldung {
 
     // ------------------------------------------------------------ innen
 
-    fn verdauen(
-        &self,
-        ergebnis: Result<(), AnmeldeFehler>,
-        mut bericht: Vec<String>,
-    ) -> RoutineLauf {
-        match ergebnis {
-            Ok(()) => {
+    fn verdauen(&self, ausgang: Ausgang, mut bericht: Vec<String>) -> RoutineLauf {
+        match ausgang {
+            Ausgang::Fertig => {
                 if let Err(fehler) = self.inner.sperre.loesen() {
                     tracing::warn!("Sperrzustand ließ sich nicht löschen: {fehler}");
                 }
+                self.inner.frist_loeschen();
                 bericht.push("Angemeldet – die Sperre der Routine ist aufgehoben.".to_string());
                 RoutineLauf {
                     bericht,
                     fehler: None,
                 }
             }
-            Err(fehler) => {
+            Ausgang::Fehlversuch(fehler) => {
                 let grund = sperrgrund(&fehler);
                 if let Err(sperrfehler) = self.inner.sperre.sperren(&grund) {
                     tracing::warn!("Sperrzustand ließ sich nicht schreiben: {sperrfehler}");
                 }
                 bericht.push(format!("Fehlschlag: {fehler}"));
                 bericht.push(
-                    "Die Routine ist jetzt gesperrt: je Fehlschlag ein Versuch. Eine erfolgreiche \
-                     Anmeldung hebt die Sperre wieder auf."
+                    "Benutzer und Passwort wurden gesendet und abgelehnt – das ist bei ZEP ein \
+                     Fehlversuch. Die Routine ist jetzt gesperrt: ein Versuch, dann Pause. Eine \
+                     erfolgreiche Anmeldung über den Knopf hebt die Sperre wieder auf."
                         .to_string(),
                 );
+                RoutineLauf {
+                    bericht,
+                    fehler: Some(fehler.to_string()),
+                }
+            }
+            Ausgang::KeinFehlversuch(fehler) => {
+                // Kein Fehlversuch bei ZEP, also keine Sperrdatei – nur ein
+                // Merker im Speicher.
+                self.inner.frist_setzen();
+                let wartezeit = self.inner.konfig.pause.as_secs();
+                bericht.push(format!("Fehlschlag vor dem Absenden: {fehler}"));
+                bericht.push(format!(
+                    "Benutzer und Passwort wurden nicht gesendet – für ZEP ist das kein \
+                     Fehlversuch. Die Routine bleibt frei; der nächste Versuch ist nach {wartezeit} \
+                     Sekunden möglich."
+                ));
                 RoutineLauf {
                     bericht,
                     fehler: Some(fehler.to_string()),
@@ -433,14 +562,20 @@ impl Anmeldung {
         }
     }
 
-    async fn routine_innen(&self, bericht: &mut Vec<String>) -> Result<(), AnmeldeFehler> {
-        let metadaten = self.metadaten().await?;
+    async fn routine_innen(&self, bericht: &mut Vec<String>) -> Ausgang {
+        let metadaten = match self.metadaten().await {
+            Ok(metadaten) => metadaten,
+            Err(fehler) => return Ausgang::KeinFehlversuch(fehler),
+        };
         bericht.push(format!(
             "Authorization-Server {} (Scope {})",
             kurz(&metadaten.authorization_endpoint()),
             metadaten.scope
         ));
-        let client_id = self.client_id().await?;
+        let client_id = match self.client_id().await {
+            Ok(client_id) => client_id,
+            Err(fehler) => return Ausgang::KeinFehlversuch(fehler),
+        };
         bericht.push(format!("Client-Registrierung: {client_id}"));
 
         let mut routine = Routine::neu(
@@ -458,11 +593,15 @@ impl Anmeldung {
                 Err(fehler) => bericht.push(format!("Seitenaufbau nicht gespeichert: {fehler}")),
             }
         }
+        let gesendet = routine.zugangsdaten_gesendet();
         bericht.extend(routine.in_bericht());
-        let antwort =
-            ergebnis.map_err(|fehler| AnmeldeFehler::Fehlgeschlagen(fehler.to_string()))?;
-        self.uebernehmen(antwort);
-        Ok(())
+        match ergebnis {
+            Ok(antwort) => {
+                self.uebernehmen(antwort);
+                Ausgang::Fertig
+            }
+            Err(fehler) => Ausgang::aus_routine(fehler, gesendet),
+        }
     }
 
     async fn browser_innen(&self, bericht: &mut Vec<String>) -> Result<(), AnmeldeFehler> {
@@ -728,7 +867,7 @@ fn sperrgrund(fehler: &AnmeldeFehler) -> String {
             "Ohne Benutzer und Passwort ist keine Anmeldung möglich.".to_string()
         }
         AnmeldeFehler::RefreshAbgelehnt => "Das Refresh-Token wurde abgelehnt.".to_string(),
-        AnmeldeFehler::Fehlgeschlagen(text) => text.clone(),
+        AnmeldeFehler::Voruebergehend(text) | AnmeldeFehler::Fehlgeschlagen(text) => text.clone(),
     }
 }
 
@@ -885,6 +1024,7 @@ mod tests {
             zustand,
             takt: Duration::from_millis(50),
             wartezeit: Duration::from_secs(5),
+            pause: Duration::from_millis(50),
         }
     }
 }

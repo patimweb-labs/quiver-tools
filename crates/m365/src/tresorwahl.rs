@@ -91,4 +91,18 @@ mod tests {
         tresor.loeschen("a/b").expect("loeschbar");
         assert!(tresor.lesen("a/b").expect("lesbar").is_none());
     }
+
+    /// Nur der Pfad wird gebaut, nichts geschrieben: Unit-Tests hier berühren
+    /// keine Datei. Der echte Tresor hängt an `m365-anmeldung`, das seine
+    /// eigenen Tests über `cfg(test)` in einen temp-Ordner lenkt (Aufgabe 11).
+    #[test]
+    fn die_datei_wahl_baut_nur_den_pfad() {
+        let TresorWahl::Datei(tresor) = TresorWahl::aus_wert(None) else {
+            panic!("ohne Wert muss es die Datei sein");
+        };
+        assert!(
+            tresor.ordner().ends_with("quiver-m365/tresor"),
+            "{tresor:?}"
+        );
+    }
 }

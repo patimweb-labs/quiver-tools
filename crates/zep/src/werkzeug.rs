@@ -117,6 +117,9 @@ pub struct ZepKonfig {
     pub takt: Duration,
     /// Wie lange der Notfall über den Browser wartet.
     pub wartezeit: Duration,
+    /// Wie lange die Routine nach einem Fehlschlag **vor** dem Absenden
+    /// pausiert (kein Fehlversuch bei ZEP, Merker im Speicher).
+    pub pause: Duration,
 }
 
 impl std::fmt::Debug for ZepKonfig {
@@ -128,6 +131,7 @@ impl std::fmt::Debug for ZepKonfig {
             .field("zustand", &self.zustand)
             .field("takt", &self.takt)
             .field("wartezeit", &self.wartezeit)
+            .field("pause", &self.pause)
             .finish()
     }
 }
@@ -165,6 +169,7 @@ impl ZepKonfig {
             zustand,
             takt,
             wartezeit,
+            pause: crate::anmeldung::NEUER_VERSUCH,
         })
     }
 }
@@ -188,6 +193,7 @@ fn pflichtwert(profil: &Profil, feld: &str, titel: &str) -> anyhow::Result<Strin
 ///
 /// Plattformneutral gelöst: kein `cfg(target_os)`, sondern die üblichen
 /// Umgebungsvariablen, zuletzt das temporäre Verzeichnis.
+#[cfg(not(test))]
 pub fn zustandsordner() -> PathBuf {
     if let Some(pfad) = std::env::var_os("ZEP_ZUSTAND") {
         return PathBuf::from(pfad);
@@ -198,6 +204,18 @@ pub fn zustandsordner() -> PathBuf {
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
         .unwrap_or_else(std::env::temp_dir);
     basis.join("quiver-zep")
+}
+
+/// Der Zustandsordner eines **Unit-Tests**: ein temporärer Ordner je Prozess.
+///
+/// Kein Unit-Test kommt so an den echten Zustand des Users – weder an die
+/// Sperrdatei noch über [`crate::tresor::DateiTresor::standard`] an den echten
+/// Tresor. Auch `ZEP_ZUSTAND` gilt hier nicht: was ein Test braucht, gibt er
+/// über [`crate::ZepKonfig::zustand`] selbst an. Integrationstests setzen
+/// weiterhin `ZEP_ZUSTAND`; die Bibliothek läuft dort ohne `cfg(test)`.
+#[cfg(test)]
+pub fn zustandsordner() -> PathBuf {
+    std::env::temp_dir().join(format!("quiver-zep-test-{}", std::process::id()))
 }
 
 /// Der Anmeldezustand für dieses Werkzeug: `None`, wenn der Zugang fehlt.
@@ -287,6 +305,31 @@ mod tests {
     #[test]
     fn der_zustandsordner_ist_ein_pfad_mit_namen() {
         let ordner = zustandsordner();
-        assert!(ordner.ends_with("quiver-zep"), "{ordner:?}");
+        assert!(
+            ordner
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("quiver-zep")),
+            "{ordner:?}"
+        );
+    }
+
+    /// Wächter: im Test liegt der Zustandsordner nie unter `HOME`. Sonst
+    /// schriebe ein Unit-Test in die echte Sperrdatei des Users und die
+    /// automatische Anmeldung wäre danach gesperrt (Aufgabe 11).
+    #[test]
+    fn der_zustandsordner_liegt_im_test_nicht_unter_home() {
+        let ordner = zustandsordner();
+        for name in ["HOME", "USERPROFILE"] {
+            let Some(heim) = std::env::var_os(name).filter(|wert| !wert.is_empty()) else {
+                continue;
+            };
+            let heim = PathBuf::from(heim);
+            assert!(
+                !ordner.starts_with(&heim),
+                "{ordner:?} liegt unter {name}={heim:?}"
+            );
+        }
+        assert!(ordner.starts_with(std::env::temp_dir()), "{ordner:?}");
     }
 }

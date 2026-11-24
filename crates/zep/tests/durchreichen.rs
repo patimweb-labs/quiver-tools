@@ -164,6 +164,37 @@ impl Kind {
             .collect()
     }
 
+    /// Nur der Handschlag – danach wartet der Client (kein `tools/list`).
+    fn begruessen_ohne_liste(&mut self) {
+        self.sende(json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {},
+                "clientInfo": { "name": "quiver-test", "version": "0" }
+            }
+        }));
+        let handschlag = self.antwort(1);
+        assert_eq!(
+            handschlag["result"]["serverInfo"]["name"],
+            json!("quiver-zep")
+        );
+        self.sende(json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }));
+    }
+
+    /// Warten, bis `bedingung` gilt (oder die Geduld zu Ende ist).
+    fn warte_auf_bedingung(&self, bedingung: impl Fn() -> bool) {
+        let grenze = Instant::now() + GEDULD;
+        while Instant::now() < grenze {
+            if bedingung() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     fn aufrufen(&mut self, id: u64, name: &str) -> Value {
         self.sende(json!({
             "jsonrpc": "2.0",
@@ -289,6 +320,53 @@ fn kindprozess_reicht_die_werkzeuge_durch_und_meldet_list_changed() {
         !stderr.contains("rt-"),
         "Refresh-Token auf stderr: {stderr}"
     );
+}
+
+#[test]
+fn beim_start_meldet_sich_das_werkzeug_selbst_an() {
+    let laufzeit = tokio::runtime::Runtime::new().unwrap();
+    let mock = laufzeit.block_on(Attrappe::starte());
+    let ordner = tempfile::tempdir().unwrap();
+    let zustand = ordner.path().display().to_string();
+
+    let mut kind = Kind::starte(&[
+        ("ZEP_URL", mock.mcp_adresse().as_str()),
+        ("ZEP_BENUTZER", attrappe::BENUTZER),
+        ("ZEP_PASSWORT", PASSWORT),
+        ("ZEP_TRESOR", "speicher"),
+        ("ZEP_ZUSTAND", &zustand),
+    ]);
+
+    // Nur der Handschlag: kein Werkzeugaufruf, kein `tools/list`.
+    kind.begruessen_ohne_liste();
+    kind.warte_auf_bedingung(|| mock.login_posts() > 0);
+
+    assert_eq!(
+        mock.login_posts(),
+        1,
+        "beim Start genau eine Anmeldung, ohne dass ein Werkzeug aufgerufen wurde"
+    );
+    assert!(!ordner.path().join("routine-gesperrt.json").exists());
+
+    // Der Server ist danach benutzbar: die Werkzeuge kommen von ZEP.
+    kind.sende(json!({
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "tools/list",
+        "params": {}
+    }));
+    let liste = kind.antwort(2);
+    let namen: Vec<String> = liste["result"]["tools"]
+        .as_array()
+        .expect("tools fehlt")
+        .iter()
+        .map(|werkzeug| werkzeug["name"].as_str().unwrap().to_string())
+        .collect();
+    assert!(namen.contains(&"zep_projekte".to_string()), "{namen:?}");
+    assert_eq!(mock.login_posts(), 1, "kein zweiter Login");
+
+    let stderr = kind.beenden();
+    assert!(!stderr.contains(PASSWORT), "Passwort auf stderr: {stderr}");
 }
 
 #[test]

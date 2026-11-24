@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::fmt;
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::Tresor;
@@ -14,14 +15,27 @@ pub use crate::dateitresor::DateiTresor;
 
 impl DateiTresor {
     /// Der Tresor in `<Datenordner>/quiver-m365/tresor` (macOS: `~/Library/Application Support`, Linux: `~/.local/share`, Windows: `%APPDATA%`).
+    ///
+    /// Unter `cfg(test)` liegt er in einem temporären Ordner je Prozess: kein
+    /// Unit-Test kommt so an die echte Tresor-Datei des Users (Aufgabe 11).
     pub fn standard() -> Self {
-        DateiTresor::im_ordner(
-            dirs::data_dir()
-                .unwrap_or_else(std::env::temp_dir)
-                .join("quiver-m365")
-                .join("tresor"),
-        )
+        DateiTresor::im_ordner(zustandsordner())
     }
+}
+
+/// Der Ordner des Standard-Tresors.
+#[cfg(not(test))]
+fn zustandsordner() -> PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(std::env::temp_dir)
+        .join("quiver-m365")
+        .join("tresor")
+}
+
+/// Im Test ein temporärer Ordner je Prozess – nie der echte Tresor.
+#[cfg(test)]
+fn zustandsordner() -> PathBuf {
+    std::env::temp_dir().join(format!("quiver-m365-test-{}", std::process::id()))
 }
 
 impl Tresor for DateiTresor {
@@ -88,5 +102,29 @@ impl Tresor for SpeicherTresor {
     fn loeschen(&self, schluessel: &str) -> anyhow::Result<()> {
         self.fach().remove(schluessel);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// Wächter: `DateiTresor::standard()` zeigt im Test nie unter `HOME` – sonst
+    /// schriebe ein Unit-Test in den echten Tresor des Users (Aufgabe 11).
+    #[test]
+    fn der_standard_tresor_liegt_im_test_nicht_unter_home() {
+        let ordner = DateiTresor::standard().ordner().to_path_buf();
+        for name in ["HOME", "USERPROFILE"] {
+            let Some(heim) = std::env::var_os(name).filter(|wert| !wert.is_empty()) else {
+                continue;
+            };
+            let heim = PathBuf::from(heim);
+            assert!(
+                !ordner.starts_with(&heim),
+                "{ordner:?} liegt unter {name}={heim:?}"
+            );
+        }
+        assert!(ordner.starts_with(std::env::temp_dir()), "{ordner:?}");
     }
 }

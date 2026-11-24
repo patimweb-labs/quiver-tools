@@ -46,6 +46,11 @@ pub struct Pfade {
 
 impl Pfade {
     /// Die Pfade aus der echten Umgebung (so startet quiver das Tool).
+    ///
+    /// Unter `cfg(test)` liegen sie in einem temporären Ordner je Prozess und
+    /// ohne Home: kein Unit-Test kommt so an die echten Schlüssel oder an
+    /// `~/.ssh/known_hosts` des Users (Aufgabe 11).
+    #[cfg(not(test))]
     pub fn aus_umgebung() -> Pfade {
         let basis = match std::env::var_os(DATEN) {
             Some(wert) if !wert.is_empty() => {
@@ -56,6 +61,20 @@ impl Pfade {
         Pfade {
             basis,
             heim: heim(),
+        }
+    }
+
+    /// Im Test: ein temporärer Ordner je Prozess, kein Home.
+    #[cfg(test)]
+    pub fn aus_umgebung() -> Pfade {
+        Pfade {
+            basis: Some(
+                std::env::temp_dir()
+                    .join(format!("quiver-ssh-test-{}", std::process::id()))
+                    .join("quiver-tools")
+                    .join("ssh"),
+            ),
+            heim: None,
         }
     }
 
@@ -250,5 +269,26 @@ mod tests {
             let rechte = std::fs::metadata(ordner).unwrap().permissions().mode() & 0o777;
             assert_eq!(rechte, 0o700);
         }
+    }
+
+    /// Wächter: die Pfade aus der Umgebung liegen im Test nie unter `HOME` –
+    /// sonst schriebe ein Unit-Test in die echten Schlüssel des Users oder
+    /// läse dessen `~/.ssh/known_hosts` (Aufgabe 11).
+    #[test]
+    fn die_pfade_aus_der_umgebung_liegen_im_test_nicht_unter_home() {
+        let pfade = Pfade::aus_umgebung();
+        let basis = pfade.basis().expect("kein Datenordner im Test");
+        for name in ["HOME", "USERPROFILE"] {
+            let Some(heim) = std::env::var_os(name).filter(|wert| !wert.is_empty()) else {
+                continue;
+            };
+            let heim = PathBuf::from(heim);
+            assert!(
+                !basis.starts_with(&heim),
+                "{basis:?} liegt unter {name}={heim:?}"
+            );
+        }
+        assert!(basis.starts_with(std::env::temp_dir()), "{basis:?}");
+        assert!(pfade.heim.is_none(), "im Test kein Home: {pfade:?}");
     }
 }

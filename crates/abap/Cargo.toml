@@ -1,0 +1,37 @@
+[package]
+name = "quiver-abap"
+description = "ABAP über SAP ADT als MCP-Tool: lesen, suchen, prüfen."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "quiver-abap"
+path = "src/main.rs"
+
+[dependencies]
+quiver-tools-kern = { path = "../kern" }
+anyhow = "1"
+# Für den Rumpf des Syntax-Checks: SAP erwartet den Quelltext base64-kodiert.
+base64 = "0.22"
+# XML nur mit den Feldern, die die Werkzeuge brauchen (Aufgabe 07).
+quick-xml = "0.41"
+# rustls + die Wurzeln des System-Zertifikatsspeichers (`rustls-native-certs`):
+# damit erkennt der Client Firmen-CAs, ohne dass der User etwas abschalten muss.
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls-native-roots",
+] }
+rmcp = { version = "3.11", features = ["server", "transport-io", "macros", "schemars"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "signal"] }
+tracing = "0.1"
+
+[dev-dependencies]
+# Die ADT-Attrappe ist ein kleines axum-Programm (SPEC §7).
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }

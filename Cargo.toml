@@ -1,6 +1,17 @@
 [workspace]
 resolver = "2"
-members = ["crates/kern"]
+members = [
+  "crates/kern",
+  "crates/outline",
+  "crates/email",
+  "crates/zep",
+  "crates/ssh",
+  "crates/abap",
+  "crates/devops",
+  "crates/m365-anmeldung",
+  "crates/m365-graph",
+  "crates/m365",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,3 +19,19 @@ edition = "2021"
 license = "MIT"
 authors = ["Patrick Weppelmann"]
 repository = "https://github.com/patimweb-labs/quiver-tools"
+
+# Gemeinsame Abhängigkeiten (aus quiver-m365 übernommen; die übrigen Crates
+# nennen ihre Versionen noch selbst).
+[workspace.dependencies]
+m365-anmeldung = { path = "crates/m365-anmeldung" }
+m365-graph = { path = "crates/m365-graph" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync", "io-util"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Zeitzonen mit Sommerzeit für die Antworten (m365, Aufgabe 04).
+jiff = "0.2"

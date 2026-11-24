@@ -1,0 +1,36 @@
+[package]
+name = "quiver-devops"
+description = "Azure DevOps als MCP-Tool: Arbeitsitems, Repos, Pull Requests und Pipelines je Organisation."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "quiver-devops"
+path = "src/main.rs"
+
+[dependencies]
+quiver-tools-kern = { path = "../kern" }
+anyhow = "1"
+# rustls + die Wurzeln des System-Zertifikatsspeichers: damit erkennt der Client
+# Firmen-CAs (Azure DevOps Server beim Kunden), ohne dass der User etwas abschaltet.
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls-native-roots",
+  "json",
+] }
+rmcp = { version = "3.11", features = ["server", "transport-io", "macros", "schemars"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+# Die DevOps-Attrappe ist ein kleines axum-Programm (SPEC §7).
+axum = "0.8"
+# Für den `Authorization`-Kopf in den Tests: Basic = base64(":" + PAT).
+base64 = "0.22"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }

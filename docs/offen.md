@@ -1,0 +1,51 @@
+# Offene Punkte
+
+- [ ] Outline: `insecureTls` der Vorlage (selbstsignierte Zertifikate) fehlt – für selbst gehostete Instanzen ggf. als Schalter-Feld nachrüsten.
+- [ ] Parameternamen gemischt (deutsch/englisch, z. B. `collection_id`, `max_zeichen`); einheitlich festlegen.
+- [ ] Kein `tracing-subscriber` im Kern – `tracing`-Ereignisse sind stumm.
+- [ ] Mehrere Zugänge je Tool: heute genau ein Zugang `standard`. Ein zweites Wiki oder Postfach braucht einen zweiten Bibliothekseintrag.
+- [ ] „Testen“-Knopf in quiver: `Werkzeug::testen` und `quiver-<tool> testen` sind da, quiver ruft sie noch nicht auf.
+- [ ] `README.de.md` fehlt.
+- [ ] E-Mail: PDF-Text aus Anhängen (Vorlage `pdf-reader.ts`) fehlt vorerst; `email_read` nennt Anhänge nur.
+- [ ] E-Mail: `email_send` kennt weder HTML-Rumpf (`html`) noch lokale Anhänge (`attachmentPaths`) der Vorlage.
+- [ ] E-Mail: `email_read` lädt keine Anhänge herunter (`downloadDir` der Vorlage fehlt).
+- [ ] E-Mail: IMAP prüft gegen `webpki-roots`, nicht gegen den System-Speicher. Für Server mit Firmen-CA `rustls-native-certs` nachziehen (ADR 0003).
+- [ ] E-Mail: Gmail wird über die Domain (`gmail.com`, `googlemail.com`) erkannt, damit keine zweite Kopie in „Gesendet“ landet. Andere Anbieter, die selbst ablegen, bekommen die Kopie doppelt.
+- [ ] E-Mail: STARTTLS (IMAP) ist eigener Code und nur über den ignorierten `imap_echt`-Test gegen einen echten Server geprüft.
+- [ ] E-Mail: mehrere Nachrichten je Aufruf (UID-Bereiche, Massen-Flaggen) gibt es nicht; die Vorlage auch nicht.
+- [ ] ZEP: Den Aufbau der echten ZEP-Anmeldeseiten kennen wir nicht. Der HTML-Formularleser ist gegen die eigene Attrappe getestet; der begleitete erste Test ist `quiver-zep routine-pruefen`. MFA/Einmalcode/Captcha enden mit einer Meldung – dann bleibt `anmelden --browser`.
+- [ ] ZEP: `ZEP_TRESOR=speicher` (statt Tresor-Datei) ist ein Cheat für die Kindprozess-Tests und für Läufe ohne Tresor-Datei. Ticket: entweder einen Test-Tresor nur hinter `#[cfg(test)]` oder den Schalter dokumentiert lassen.
+- [ ] ZEP: Sperrzustand liegt je Zustandsordner (`ZEP_ZUSTAND`, sonst `$XDG_STATE_HOME/quiver-zep`). Zwei quiver-Profile auf einem Gerät teilen ihn – gewollt (ein Konto), aber nicht geprüft.
+- [ ] ZEP: Die Rückleitung wird als `http://127.0.0.1` registriert (Port egal, RFC 8252 §7.3). Akzeptiert ein Server das nicht, braucht der Notfall eine Registrierung je Port (ADR 0004).
+- [ ] ZEP: `tracing`-Ereignisse des Werkzeugs sind stumm, weil der Kern keinen Subscriber setzt – die Meldungen von `anmelden`/`routine-pruefen` gehen stattdessen auf stdout.
+- [ ] Mehrere Zugänge je Tool: Outline, E-Mail und ABAP haben weiterhin genau einen Zugang `standard`. Nur SSH nutzt `mehrfach` (`QUIVER_ZUGAENGE`). Ein zweites Wiki braucht einen zweiten Bibliothekseintrag.
+- [ ] „Testen“-Knopf in quiver: `Werkzeug::testen` und `quiver-<tool> testen` sind da, quiver ruft sie noch nicht auf.
+- [ ] `README.de.md` fehlt.
+- [ ] SSH: Tunnel (`ssh_tunnel`) fehlen – die Vorlage `pi-ssh` hat lokale und entfernte Portweiterleitungen, Aufgabe 05 nicht.
+- [ ] SSH: `ssh_doctor` (Diagnose: Host erreichbar, Schlüssel akzeptiert, SFTP verfügbar) fehlt.
+- [ ] SSH: Wird ein Schlüssel ersetzt, bleibt der alte Eintrag in der entfernten `authorized_keys` stehen; ein Aufräumschritt (Kommentar `quiver-ssh <name>` entfernen) fehlt.
+- [ ] SSH: Der Schlüssel hat keine Passphrase; er liegt mit 0600 im Datenordner. Eine Passphrase bräuchte eine Tresor-Datei-Zugriff im Tool.
+- [ ] SSH: Nur ed25519 – kein RSA, keine Zertifikate, kein Agent, keine Sprung-Hosts (`ProxyJump`).
+- [ ] SSH: `ssh_list` zeigt keine Änderungszeiten (die SFTP-Attrappe und das Format lassen sie aus); die Vorlage zeigt das Datum.
+- [ ] ABAP: Teil 2 ist da (`abap_lock`/`abap_unlock`/`abap_write`/`abap_activate`/`abap_create_object`/`abap_set_text_elements`), aber nicht alles: **Transporte anlegen** und freigeben fehlen (der Auftrag wird nur als `corrNr` mitgegeben), ebenso die **Inaktiv-Liste** (`/sap/bc/adt/activation/inactiveobjects`), Löschen, Umbenennen und Refactoring.
+- [ ] ABAP: Der SIGTERM-Wächter (`cfg(unix)`) ist nicht getestet – ein Signal lässt sich im Kindprozess-Test nicht portabel senden. Geprüft ist das normale Ende über stdin; ein `SIGKILL` lässt eine Sperre stehen (löschen im SAP über SM12).
+- [ ] ABAP: Zwei parallele schreibende Aufrufe teilen sich die Sitzung eines Systems; ein zweites `abap_lock` auf dasselbe Objekt endet mit einem SAP-Fehler statt mit einer Warteschlange.
+- [ ] ABAP: `abap_create_object` kennt nur die neun Objektarten der Aufgabe (keine Funktionsbausteine `FUGR/FF`, Includes `FUGR/I`, Service-Bindings, Pakete `DEVC/K`).
+- [ ] ABAP: Textelemente werden ohne `@DDICReference` geschrieben (die Aufgabe nennt nur `id`, `text`, `maxLength`); die Vorlage kann es.
+- [ ] ABAP: Tabellenwerte kommen als Text, nicht typisiert (`C`/`N`/`D`/`P` wie in der Vorlage). Für Anzeige reicht das; ein Agent, der rechnen will, muss selbst wandeln.
+- [ ] ABAP: `abap_atc` liest die Prüfliste ohne `timestamp`/`usedObjectSet` aus dem Lauf-Ergebnis; neuere Systeme verlangen beides. Bei Bedarf nachziehen (Vorlage: `atcWorklists(run.id, timestamp, usedObjectSet)`).
+- [ ] ABAP: Klassenkomponenten (`objectstructure`, `classComponents`) werden nicht angezeigt; `abap_object_structure` nennt nur die Includes.
+- [ ] ABAP: kein Debugger, kein Refactoring, kein abapGit, kein RAP-Generator – bewusst (ADR 0005).
+- [ ] ABAP: CSRF-Token und Cookies leben nur im Prozess; jeder Start meldet sich neu an. Ein Token-Cache über Prozesse wäre eine Datei mit Geheimnis – nicht gewollt. Die Lock-Tabelle einer Sitzung geht mit dem Prozess verloren (siehe ADR 0006).
+
+- [ ] Tresor-Datei (ADR mcp-quiver 0001): optional Hauptpasswort (Argon2) beim Start.
+- [ ] DevOps: Testpläne (Pläne, Suiten, Punkte, Läufe, Ergebnisse), Kapazität, Board-Spalten, Branch-Policies (`policy-evaluations`), Auto-complete, Läufe **abbrechen** und **wiederholen**, Artefakte eines Laufs – die Vorlage `pi-azure-devops` hat sie, Aufgabe 09 nennt 26 Werkzeuge.
+- [ ] DevOps: `devops_pull_request_abstimmen` holt die Benutzer-ID mit einer zusätzlichen Anfrage (`_apis/connectionData`); mit einem Cache je Organisation wäre es eine Anfrage weniger.
+- [ ] DevOps: `ersteller` bei `devops_pull_requests` filtert lokal nach Anzeigename (Teiltreffer); DevOps selbst kennt nur `searchCriteria.creatorId` (GUID).
+- [ ] DevOps: Kommentar-Endpunkte laufen mit `api-version=7.1-preview.4` (DevOps führt sie noch als Vorschau); alle anderen mit `7.1`. Bei einer stabilen Fassung umstellen.
+- [ ] DevOps: `devops_workitem_anlegen` schreibt `System.Description` unverändert – der Agent muss HTML oder Text liefern; eine Umschreibung von Markdown nach HTML gibt es nicht.
+- [ ] DevOps: Arbeitsitem-Felder sind Text (auch Zahlen und Daten); ein Agent, der rechnen will, muss selbst wandeln.
+- [ ] DevOps: `devops_pull_request` zeigt höchstens 20 Commits (Aufgabe) und lädt keine Dateiänderungen (`iterations`/`changes`).
+- [ ] DevOps: nur Git-Repos – TFVC (`_apis/tfvc`) fehlt.
+- [ ] DevOps: `devops_lauf_log` liest das ganze Log und schneidet das Ende ab; ein `Range`-Kopf (DevOps kann Zeilenbereiche liefern) wäre bei großen Logs sparsamer.
+- [ ] DevOps: `tracing`-Ereignisse des Werkzeugs sind stumm, weil der Kern keinen Subscriber setzt.

@@ -1,11 +1,12 @@
 # SPEC – quiver-tools
 
-> Stand: Entwurf 0, 2026-11-23. Jede Festlegung mit Begründung und Preis.
+> Stand: Entwurf 1, 2026-11-23 (Aufgabe 03). Jede Festlegung mit Begründung und Preis.
 
 ## 1. Zweck
 
 Eigene MCP-Tools für die [mcp-quiver](https://github.com/patimweb-labs/mcp-quiver)-Bibliothek, in Rust,
-als Nachfolger der pi-Erweiterungen `pi-outline-wiki`, `pi-email`, `pi-ssh` und `pi-abap-fs`.
+als Nachfolger der pi-Erweiterungen `pi-outline-wiki`, `pi-email`, `pi-ssh`, `pi-abap-fs` und
+`pi-azure-devops`.
 Jedes Tool ist ein eigenes Programm (MCP über stdio); alle teilen sich einen Kern.
 
 | Tool | Programm | Vorlage | Reihenfolge |
@@ -14,53 +15,92 @@ Jedes Tool ist ein eigenes Programm (MCP über stdio); alle teilen sich einen Ke
 | E-Mail (IMAP/SMTP) | `quiver-email` | `~/Documents/Workspaces/pi-email` | 2 |
 | SSH/SFTP | `quiver-ssh` | `~/Documents/Workspaces/pi-ssh` | 3 |
 | ABAP (SAP ADT) | `quiver-abap` | `~/Documents/Workspaces/pi-abap-fs` | 4 |
+| Azure DevOps | `quiver-devops` | `~/Documents/Workspaces/pi-azure-devops` | 5 |
 
 ## 2. Zugangsdaten gehen nie durch den Agenten
 
-**Festlegung (Nutzer, 2026-11-23):** Die `*_setup`-Tools der Vorlagen fallen weg. Zugänge (Profile) richtet
-der User auf einer **Einrichtungsseite** ein, die das Tool selbst im Browser öffnet; quiver startet sie über
-den Knopf „Einrichten“ (`Eintrag.einrichtung = { einrichten: ["einrichten"] }`).
-*Begründung:* Passwörter und API-Keys erreichen nie ein Modell. *Preis:* Jedes Tool braucht eine Seite – darum
-erzeugt der Kern sie aus einer Feldbeschreibung.
+**Festlegung (Nutzer, 2026-11-23):** Keine Einrichtung im Browser. Die Felder eines Zugangs trägt der
+User **im quiver-Fenster** ein – unter Tools → <Titel>. quiver liest die Feldbeschreibung aus dem
+Bibliothekseintrag (`Werkzeug::felder()`), der Client bleibt allgemein.
+*Begründung:* Passwörter und API-Keys erreichen nie ein Modell, und das Tool braucht dafür weder Seite
+noch Browser. *Preis:* vorerst genau ein Zugang je Tool (siehe unten) – außer bei SSH, ABAP und
+DevOps, die eine Liste pflegen (§2a).
 
-- Ein Tool hat **beliebig viele Profile** (mehrere Wikis, Postfächer, Hosts, SAP-Systeme) und ein **Standardprofil**.
-- Jedes MCP-Tool nimmt optional `profil` (Name); ohne → Standardprofil.
-- Ein Lese-Tool `<tool>_profile` listet Profile **ohne** Geheimnisse (Name, Beschreibung, Standard ja/nein,
-  nicht-geheime Felder wie Host oder URL). Damit weiß der Agent, was es gibt.
-- Fehlt ein Profil, antwortet jedes Tool: „Noch kein Zugang eingerichtet – bitte im quiver-Fenster unter
-  Tools → <Titel> auf „Einrichten“ klicken.“ (Text, kein MCP-Fehler.)
+- Die Felder eines Zugangs stehen im Bibliothekseintrag. Offene Felder (Quelle `client`, z. B. eine
+  Adresse) liegen in der Client-Konfiguration, geheime Felder (`geheim`, Feldart `Passwort`) im
+  Tresor-Datei des Geräts und werden nie gepusht.
+- quiver setzt beim Start die Umgebung des Werkzeugs: `<NAME>_<FELD>` in Großbuchstaben, z. B.
+  `OUTLINE_URL` und `OUTLINE_API_KEY`. Der Kern liest nur diese Umgebung; er kennt weder quiver noch
+  die Tresor-Datei.
+- **Genau ein Zugang `standard`.** Sind alle Pflichtfelder gesetzt, gibt es dieses eine Profil
+  (Geheimes kommt aus der Umgebung, nicht aus einem Tresor). Leere Werte gelten als fehlend.
+- Fehlt ein Pflichtfeld, antwortet **jedes** Tool mit dem Text
+  „Zugang fehlt – bitte im quiver-Fenster unter Tools → <Titel> die Angaben eintragen.“ (Text, **kein**
+  MCP-Fehler). Es gibt keinen `profil`-Parameter mehr.
+- Ein Lese-Tool `<tool>_profile` zeigt den Zugang **ohne** Geheimnisse (Name, nicht-geheime Felder wie
+  Adresse oder Host) oder denselben Hinweis. Damit weiß der Agent, was es gibt.
+- *Preis:* mehrere Wikis, Postfächer oder Hosts je Tool sind nicht möglich; sie kämen als mehrere
+  Bibliothekseinträge (eigene Crate-Instanz) oder später als zusätzliche Umgebungsnamen.
 
-## 3. Profile und Geheimnisse
+### 2a. Ausnahme: mehrere gleichartige Zugänge
 
-- Nicht-geheime Werte: `<konfig>/quiver-tools/<tool>/profile.toml` (`dirs::config_dir()`;
-  `QUIVER_TOOLS_DIR` verlegt den Ordner, für Tests).
-- Geheime Werte (Feldart `Passwort`): Schlüsselbund, Dienst `quiver-<tool>`, Schlüssel `<profil>/<feld>`;
-  `QUIVER_TOOLS_TRESOR=speicher` → nur im Speicher (Tests).
-- Nie in Logs, Fehlertexten, Tool-Antworten, nie zurück an den Browser (dort steht nur „gesetzt“).
+`quiver-ssh`, `quiver-abap` und `quiver-devops` pflegen statt eines Zugangs eine Liste
+(`Werkzeug::mehrfach` = Titel und Einzahl, z. B. „Organisationen“/„Organisation“). Der Eintrag trägt
+die Felder dann unter `mehrfach` und hat selbst keine `felder` und keine `umgebung`; quiver übergibt
+alle Zugänge als JSON in `QUIVER_ZUGAENGE`. Jedes Werkzeug nimmt den Namen (`verbindung` bzw.
+`system`); bei genau einem Zugang darf er fehlen.
 
-## 4. Die Einrichtungsseite (`quiver-<tool> einrichten`)
+*Begründung:* ein Nutzer arbeitet mit mehreren Hosts, SAP-Systemen oder DevOps-Organisationen (eigene
+und Kundenorganisationen, oft in fremden Tenants oder auf einem Server). Ein Bibliothekseintrag je
+Host wäre unübersichtlich. *Preis:* die Geheimnisse liegen als JSON in **einer** Umgebungsvariablen –
+der Kern liest sie also alle, nicht nur die des gewählten Zugangs; kaputtes JSON ist ein Fehler ohne
+Inhalt. Ein Feld `schreiben` (Schalter, Standard **aus**) erlaubt verändernde Werkzeuge je Zugang; ist
+es aus, antworten sie mit einem Hinweis **ohne** Anfrage.
 
-- axum auf `127.0.0.1:0`; die URL enthält ein zufälliges Einmal-Token als Pfad (`/e/<token>/…`), alle anderen
-  Pfade → 404. So kann keine andere Seite im Browser Profile ändern (kein CSRF über fremde Tabs).
-- Öffnet den Browser selbst (`open`), endet bei „Fertig“ (Exit 0, wenn etwas gespeichert wurde, sonst 1) oder
-  nach 30 min ohne Anfrage (Exit 1).
-- Inhalt: Liste der Profile (Standard markiert), Profil anlegen/bearbeiten/löschen, als Standard setzen,
-  **„Verbindung testen“** (ruft `Werkzeug::testen`, zeigt Erfolg oder Fehlertext), „Fertig“.
-- Formulare werden aus dem Feldschema erzeugt (Text, Passwort, Zahl, Schalter, URL, Auswahl), serverseitig als
-  HTML, ohne Build-Schritt und ohne JS-Framework (wenig Inline-JS ist erlaubt).
-- **Optik wie quiver**: `assets/tokens.css` (Kopie aus mcp-quiver, *nicht von Hand ändern*), IBM Plex,
-  Themes dark/light/mono (Standard nach `prefers-color-scheme`, Umschalter oben), Abstände und Maße nur über
-  `var(--wp-…)`, **Hand-Cursor auf allem Klickbaren**.
+## 3. Wo die Werte liegen
+
+- Offene Werte: Client-Konfiguration von quiver; sie erscheinen in `<tool>_profile`.
+- Geheime Werte: Tresor-Datei des Geräts, gesetzt von quiver. Das Tool sieht sie nur als
+  Umgebungsvariable im eigenen Prozess.
+- Nie in Log, Fehlertext, Tool-Antwort, Kommandozeile oder einer Datei des Tools. `Debug`-Ausgaben des
+  Kerns zeigen Geheimnisse nur als Feldnamen.
+- `Werkzeug::testen` bleibt bestehen (für einen späteren „Testen“-Knopf in quiver), wird aber von
+  keinem MCP-Weg aufgerufen. `quiver-<tool> testen` prüft den Zugang von Hand: es liest die Umgebung,
+  gibt die Meldung aus und endet mit Exit 0 (erreichbar) oder 1 (fehlt/fehlgeschlagen).
+
+## 4. Das Programm und der Bibliothekseintrag
+
+`quiver-<tool>` ist ein Programm mit diesen Aufrufen:
+
+| Aufruf | Wirkung |
+|---|---|
+| ohne Argument | MCP über stdio – so startet quiver das Tool |
+| `eintrag [--befehl <pfad>]` | der Bibliothekseintrag für mcp-quiver als JSON auf stdout |
+| `testen` | Zugang aus der Umgebung prüfen, Meldung, Exit 0/1 |
+| `--version` | Version auf stdout |
+| `--help` | kurze Hilfe auf stdout |
+| sonst | Meldung auf stderr, Exit 2 |
+
+Der Eintrag hat das Format von `quiver_domain::Eintrag`:
+
+- `id` = Name des Werkzeugs (`outline`), `titel`, `beschreibung` (`Werkzeug::beschreibung()`),
+  `version` = Crate-Version, `herkunft` = `eigen`.
+- `laufzeit` = `{ art: "stdio", befehl: <--befehl oder laufendes Programm>, umgebung: { "<NAME>_<FELD>":
+  "${<feld>}" … } }`.
+- `felder`: je Feld `{ name, beschreibung: titel + " – " + hilfe, quelle: "geheim" bei Passwort sonst
+  "client", pflicht, standard }`.
+- **Kein `einrichtung`-Feld**: es gibt keine Seite, die quiver öffnen könnte.
 
 ## 5. Aufbau
 
 ```
-crates/kern       Werkzeug-Trait, Feldschema, Profilspeicher, Tresor, Einrichtungsseite, MCP-Hilfen
+crates/kern       Werkzeug-Trait, Zugang aus der Umgebung, Bibliothekseintrag, MCP-Hilfen, Programm-Gerüst
 crates/outline    quiver-outline   (Aufgabe 02)
 crates/email      quiver-email     (später)
-crates/ssh        quiver-ssh       (später)
-crates/abap       quiver-abap      (später)
-assets/           tokens.css, Schriften (aus mcp-quiver)
+crates/ssh        quiver-ssh       (Aufgabe 05)
+crates/abap       quiver-abap      (Aufgaben 07 und 08)
+crates/devops     quiver-devops    (Aufgabe 09)
+assets/           tokens.css und Schriften aus mcp-quiver (für die Oberfläche von quiver, nicht dieses Repos)
 ```
 
 Richtung: `kern ← <tool>`. Tools kennen einander nicht.
@@ -75,5 +115,7 @@ Semantik, Parameter und Ausgaben folgen der Vorlage (TypeScript-Quelltext lesen)
 
 ## 7. Tests
 
-Gegen Attrappen (axum) – nie gegen echte Server. Die Einrichtungsseite wird mit HTTP-Anfragen getestet
-(Token-Pfad, Formulare, Geheimnisse kommen nie zurück).
+Gegen Attrappen (axum) – nie gegen echte Server. Die Umgebung wird als Paar-Menge übergeben
+(`Zugang::mit_umgebung`, kein Prozesszustand), der Kindprozess-Test setzt sie als echte Variablen und
+prüft beide Fälle: gesetzte Umgebung und fehlende (Hinweistext). `eintrag` wird gegen eine Kopie von
+`quiver_domain::Eintrag` deserialisiert.

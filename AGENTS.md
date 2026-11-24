@@ -4,14 +4,16 @@
 > Arbeitsanweisung für Menschen und Agenten. Abweichungen nur mit Eintrag in
 > `docs/adr/` und Vermerk hier. Der projektspezifische Teil ist §9.
 >
-> **Vermerk:** Die einzige Oberfläche ist die Einrichtungsseite (HTML aus dem Kern). Für sie gelten
-> §2.6, 2.7, 2.11 und 2.12 voll: Tokens aus `assets/tokens.css`, drei Themes, gleiche Optik wie quiver,
-> Hand-Cursor auf allem Klickbaren.
+> **Vermerk (ADR 0002):** quiver-tools hat **keine** eigene Oberfläche. Zugänge gibt der User im
+> quiver-Fenster über die Felder des Bibliothekseintrags ein; die Tools beschreiben ihre Felder
+> (`Werkzeug::felder`) und lesen die Werte aus der Umgebung. Die UI-Regeln (§2.6, 2.7, 2.11, 2.12)
+> gelten hier nicht.
 
 ## 1. Worum es geht
 
-Eigene MCP-Tools für mcp-quiver in Rust (Outline, E-Mail, SSH, ABAP), Nachfolger der pi-Erweiterungen.
-Zugänge richtet der User auf einer Einrichtungsseite ein, nie ein Agent. Details: [SPEC.md](SPEC.md).
+Eigene MCP-Tools für mcp-quiver in Rust (Outline, E-Mail, SSH, ABAP, Azure DevOps), Nachfolger der
+pi-Erweiterungen.
+Zugänge gibt der User im quiver-Fenster ein (Felder des Eintrags), nie ein Agent. Details: [SPEC.md](SPEC.md).
 
 ## 2. Nicht verhandelbar
 
@@ -50,9 +52,8 @@ Zugänge richtet der User auf einer Einrichtungsseite ein, nie ein Agent. Detail
 ## 3. Struktur
 
 ```
-crates/kern       Werkzeug-Trait, Profile, Tresor, Einrichtungsseite, MCP-Hilfen → Unit + HTTP-Tests
+crates/kern       Werkzeug-Trait, Zugang aus der Umgebung, Eintrag für quiver, MCP-Hilfen → Unit-Tests
 crates/<tool>     ein Programm quiver-<tool> je Tool                            → Integration (Attrappe)
-assets/           tokens.css und Schriften aus mcp-quiver (nicht von Hand ändern)
 ```
 
 Richtung: `kern ← <tool>`. Tools kennen einander nicht.
@@ -93,7 +94,9 @@ Weitere Befehle kommen mit dem Code.
 
 ## 8. Projektspezifisch
 
-- **Zugangsdaten:** Geheimnisse nur im Schlüsselbund, nie in Dateien, Logs, Antworten oder im Browser.
-- **Keine `*_setup`-Tools.** Eingerichtet wird nur über `quiver-<tool> einrichten`.
+- **Zugangsdaten:** kommen als Umgebung von quiver (Geheimes liegt dort in der Tresor-Datei); nie in Dateien,
+  Logs oder Antworten.
+- **Keine `*_setup`-Tools.** Felder beschreibt `Werkzeug::felder()`, `quiver-<tool> eintrag` gibt den
+  Bibliothekseintrag aus. Hilfe-Links (z. B. „Token erstellen“) über `Feld::link`.
 - **Vorlagen** liegen unter `~/Documents/Workspaces/pi-*`; Semantik übernehmen, nicht den Code übersetzen.
 - **Verändernde Tools** tragen `destructiveHint`, lesende `readOnlyHint`.

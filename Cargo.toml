@@ -8,6 +8,7 @@ members = [
   "crates/ssh",
   "crates/abap",
   "crates/devops",
+  "crates/zephyr",
   "crates/m365-anmeldung",
   "crates/m365-graph",
   "crates/m365",

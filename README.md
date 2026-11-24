@@ -103,21 +103,35 @@ environment refers to them:
   "felder": [
     {
       "name": "url",
-      "beschreibung": "Adresse – Adresse deines Outline, z. B. https://firma.getoutline.com",
+      "titel": "Basis-URL",
+      "beschreibung": "z. B. https://wiki.firma.de oder https://firma.getoutline.com",
+      "art": "url",
       "quelle": "client",
       "pflicht": true,
       "standard": null
     },
     {
       "name": "api_key",
-      "beschreibung": "API-Schlüssel – Einstellungen → API & Apps, beginnt mit ol_api_",
+      "titel": "API-Token",
+      "beschreibung": "In Outline unter Einstellungen → API & Access erstellen, beginnt mit ol_api_",
+      "art": "passwort",
       "quelle": "geheim",
       "pflicht": true,
-      "standard": null
+      "standard": null,
+      "link": {
+        "text": "Token in Outline erstellen",
+        "url": "${url}/settings/api-and-access"
+      }
     }
   ]
 }
 ```
+
+`titel` is the label quiver shows, `beschreibung` is only the help text below the field, and
+`art` says how the field is drawn: `text`, `passwort`, `zahl`, `schalter`, `url` or
+`auswahl` (`{ "auswahl": { "optionen": [ { "wert", "anzeige" } ] } }`). A field of art
+`passwort` is always secret, whatever its `quelle`. Tools with several accounts put the same
+fields under `mehrfach.felder`.
 
 `quelle: "geheim"` heißt: quiver legt den Wert in die Tresor-Datei und gibt ihn nur als
 Umgebungsvariable an das Tool. Ein `einrichtung`-Feld gibt es nicht – das Tool öffnet

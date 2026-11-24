@@ -50,13 +50,37 @@ pub enum Laufzeit {
 pub struct Feld {
     /// Feldname im Tool, z. B. `api_key`.
     pub name: String,
-    /// `titel – hilfe`.
+    /// Anzeige statt des Feldnamens, z. B. „Mandant“.
+    pub titel: String,
+    /// Nur die Hilfe; der Titel steht eigens in `titel`.
     pub beschreibung: String,
+    /// Wie quiver das Feld darstellt (Checkbox, Zahl, Auswahl …).
+    pub art: Art,
     pub quelle: Quelle,
     pub pflicht: bool,
     pub standard: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub link: Option<FeldLink>,
+}
+
+/// Die Art eines Feldes, im JSON-Format von `quiver_domain::FeldArt`: snake_case,
+/// eine Auswahl als `{ "auswahl": { "optionen": [ { "wert", "anzeige" } ] } }`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Art {
+    Text,
+    Passwort,
+    Zahl,
+    Schalter,
+    Url,
+    Auswahl { optionen: Vec<Wahl> },
+}
+
+/// Eine Möglichkeit einer Auswahl: gespeicherter Wert und Anzeige.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Wahl {
+    pub wert: String,
+    pub anzeige: String,
 }
 
 /// Hilfe-Link neben einem Feld, im Format von `quiver_domain::FeldLink`.
@@ -140,14 +164,18 @@ pub fn eintrag<W: Werkzeug>(werkzeug: &W, befehl: Option<String>) -> Eintrag {
 
 /// Ein Feld des Werkzeugs als Feld des Bibliothekseintrags.
 fn als_feld(feld: crate::Feld) -> Feld {
+    // Geheim bleibt geheim, egal welche Art das Feld hat.
+    let quelle = if feld.art == FeldArt::Passwort {
+        Quelle::Geheim
+    } else {
+        Quelle::Client
+    };
     Feld {
         name: feld.name.to_string(),
-        beschreibung: beschreibung(feld.titel, feld.hilfe),
-        quelle: if feld.art == FeldArt::Passwort {
-            Quelle::Geheim
-        } else {
-            Quelle::Client
-        },
+        titel: feld.titel.to_string(),
+        beschreibung: feld.hilfe.to_string(),
+        art: als_art(feld.art),
+        quelle,
         pflicht: feld.pflicht,
         standard: feld.standard.map(str::to_string),
         link: feld.link.map(|(text, url)| FeldLink {
@@ -157,12 +185,20 @@ fn als_feld(feld: crate::Feld) -> Feld {
     }
 }
 
-/// `titel – hilfe`; ohne Hilfe bleibt der Titel allein.
-fn beschreibung(titel: &str, hilfe: &str) -> String {
-    if hilfe.is_empty() {
-        titel.to_string()
-    } else {
-        format!("{titel} – {hilfe}")
+/// Die Feldart des Werkzeugs als Feldart des Bibliothekseintrags.
+fn als_art(art: FeldArt) -> Art {
+    match art {
+        FeldArt::Text => Art::Text,
+        FeldArt::Passwort => Art::Passwort,
+        FeldArt::Zahl => Art::Zahl,
+        FeldArt::Schalter => Art::Schalter,
+        FeldArt::Url => Art::Url,
+        FeldArt::Auswahl(optionen) => Art::Auswahl {
+            optionen: optionen
+                .into_iter()
+                .map(|(wert, anzeige)| Wahl { wert, anzeige })
+                .collect(),
+        },
     }
 }
 
@@ -178,6 +214,7 @@ fn programm(name: &str) -> String {
 mod tests {
     use super::*;
     use crate::{Feld as KernFeld, Profil};
+    use serde_json::json;
 
     struct Attrappe;
 
@@ -271,11 +308,35 @@ mod tests {
             Geheim,
         }
 
+        #[derive(Debug, Default, Deserialize)]
+        #[serde(rename_all = "snake_case")]
+        pub enum FeldArt {
+            #[default]
+            Text,
+            Passwort,
+            Zahl,
+            Schalter,
+            Url,
+            Auswahl {
+                optionen: Vec<AuswahlOption>,
+            },
+        }
+
+        #[derive(Debug, Deserialize)]
+        pub struct AuswahlOption {
+            pub wert: String,
+            pub anzeige: String,
+        }
+
         #[derive(Debug, Deserialize)]
         pub struct Feld {
             pub name: String,
             #[serde(default)]
             pub beschreibung: String,
+            #[serde(default)]
+            pub art: FeldArt,
+            #[serde(default)]
+            pub titel: Option<String>,
             pub quelle: Quelle,
             #[serde(default = "wahr")]
             pub pflicht: bool,
@@ -310,6 +371,54 @@ mod tests {
             pub einzahl: String,
             #[serde(default)]
             pub felder: Vec<Feld>,
+        }
+    }
+
+    /// Alle Feldarten in einem Werkzeug, damit jede ihr JSON bekommt.
+    struct Arten;
+
+    impl Werkzeug for Arten {
+        fn name(&self) -> &'static str {
+            "arten"
+        }
+
+        fn titel(&self) -> &'static str {
+            "Arten-Tool"
+        }
+
+        fn beschreibung(&self) -> &'static str {
+            "Ein Feld je Art."
+        }
+
+        fn felder(&self) -> Vec<KernFeld> {
+            let feld = |name: &'static str, titel: &'static str, art: FeldArt| KernFeld {
+                name,
+                titel,
+                art,
+                pflicht: false,
+                standard: None,
+                hilfe: "Hilfe",
+                link: None,
+            };
+            vec![
+                feld("text", "Text", FeldArt::Text),
+                feld("passwort", "Passwort", FeldArt::Passwort),
+                feld("zahl", "Zahl", FeldArt::Zahl),
+                feld("schalter", "Schalter", FeldArt::Schalter),
+                feld("url", "Adresse", FeldArt::Url),
+                feld(
+                    "auswahl",
+                    "Auswahl",
+                    FeldArt::Auswahl(vec![
+                        ("a".to_string(), "A".to_string()),
+                        ("b".to_string(), "B".to_string()),
+                    ]),
+                ),
+            ]
+        }
+
+        async fn testen(&self, _profil: &Profil) -> anyhow::Result<String> {
+            Ok("erreichbar".to_string())
         }
     }
 
@@ -401,16 +510,24 @@ mod tests {
         assert_eq!(gelesen.felder.len(), 3);
         let url = &gelesen.felder[0];
         assert_eq!(url.name, "url");
-        assert_eq!(url.beschreibung, "Adresse – Mit https://.");
+        // Der Titel steht eigens, die Beschreibung ist nur die Hilfe.
+        assert_eq!(url.titel.as_deref(), Some("Adresse"));
+        assert_eq!(url.beschreibung, "Mit https://.");
+        assert!(matches!(url.art, quiver_domain::FeldArt::Url));
         assert!(matches!(url.quelle, quiver_domain::Quelle::Client));
         assert!(url.pflicht);
         assert_eq!(url.standard, None);
 
         let token = &gelesen.felder[1];
         assert!(matches!(token.quelle, quiver_domain::Quelle::Geheim));
+        assert!(matches!(token.art, quiver_domain::FeldArt::Passwort));
 
         let umgebung = &gelesen.felder[2];
         assert!(matches!(umgebung.quelle, quiver_domain::Quelle::Client));
+        assert!(matches!(
+            umgebung.art,
+            quiver_domain::FeldArt::Auswahl { .. }
+        ));
         assert!(!umgebung.pflicht);
         assert_eq!(umgebung.standard.as_deref(), Some("test"));
 
@@ -418,6 +535,45 @@ mod tests {
         assert!(json.get("einrichtung").is_none(), "{json}");
         // Ein Zugang: keine Liste.
         assert!(json.get("mehrfach").is_none(), "{json}");
+    }
+
+    /// Je Art die richtige JSON-Ausgabe: snake_case, Auswahl mit `optionen`.
+    #[test]
+    fn jede_art_hat_ihr_json() {
+        let json = serde_json::to_value(eintrag(&Arten, None)).unwrap();
+        let felder = json["felder"].as_array().unwrap();
+        let arten: Vec<&serde_json::Value> = felder.iter().map(|feld| &feld["art"]).collect();
+
+        assert_eq!(
+            arten,
+            vec![
+                &json!("text"),
+                &json!("passwort"),
+                &json!("zahl"),
+                &json!("schalter"),
+                &json!("url"),
+                &json!({
+                    "auswahl": {
+                        "optionen": [
+                            { "wert": "a", "anzeige": "A" },
+                            { "wert": "b", "anzeige": "B" }
+                        ]
+                    }
+                }),
+            ],
+            "{json}"
+        );
+
+        // Auch über die Attrappe lesbar: jede Art kommt beim Client an.
+        let gelesen: quiver_domain::Eintrag = serde_json::from_value(json).unwrap();
+        match &gelesen.felder[5].art {
+            quiver_domain::FeldArt::Auswahl { optionen } => {
+                assert_eq!(optionen.len(), 2);
+                assert_eq!(optionen[0].wert, "a");
+                assert_eq!(optionen[0].anzeige, "A");
+            }
+            sonst => panic!("keine Auswahl: {sonst:?}"),
+        }
     }
 
     #[test]
@@ -440,10 +596,12 @@ mod tests {
         assert_eq!(mehrfach.einzahl, "Verbindung");
         assert_eq!(mehrfach.felder.len(), 2);
         assert_eq!(mehrfach.felder[0].name, "host");
-        assert_eq!(
-            mehrfach.felder[0].beschreibung,
-            "Hostname – Hostname oder IP"
-        );
+        assert_eq!(mehrfach.felder[0].titel.as_deref(), Some("Hostname"));
+        assert_eq!(mehrfach.felder[0].beschreibung, "Hostname oder IP");
+        assert!(matches!(
+            mehrfach.felder[0].art,
+            quiver_domain::FeldArt::Text
+        ));
         assert!(matches!(
             mehrfach.felder[0].quelle,
             quiver_domain::Quelle::Client

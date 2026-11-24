@@ -409,14 +409,14 @@ fn eintrag_enthaelt_mehrfach_mit_vier_feldern_und_pat_link() {
         .as_str()
         .unwrap()
         .contains("dev.azure.com"));
+    assert_eq!(felder[0]["art"], json!("url"));
     assert_eq!(felder[1]["quelle"], json!("client"));
     assert_eq!(felder[1]["pflicht"], json!(false));
-    assert!(felder[1]["beschreibung"]
-        .as_str()
-        .unwrap()
-        .contains("Standardprojekt"));
+    assert_eq!(felder[1]["titel"], json!("Standardprojekt"));
+    assert_eq!(felder[1]["art"], json!("text"));
     // Der PAT ist geheim und hat einen Hilfe-Link auf die Token-Seite.
     assert_eq!(felder[2]["quelle"], json!("geheim"));
+    assert_eq!(felder[2]["art"], json!("passwort"));
     assert_eq!(felder[2]["pflicht"], json!(true));
     assert_eq!(felder[2]["link"]["text"], json!("PAT erstellen"));
     assert_eq!(
@@ -425,6 +425,7 @@ fn eintrag_enthaelt_mehrfach_mit_vier_feldern_und_pat_link() {
     );
     // Der Schalter „schreiben“ steht am Ende und ist im Zweifel aus.
     assert_eq!(felder[3]["name"], json!("schreiben"));
+    assert_eq!(felder[3]["art"], json!("schalter"));
     assert_eq!(felder[3]["standard"], json!("aus"));
     assert_eq!(felder[3]["pflicht"], json!(false));
     assert!(felder[3]["beschreibung"]

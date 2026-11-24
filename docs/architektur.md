@@ -72,8 +72,12 @@ schreibt sie als JSON auf stdout. `befehl` kommt aus `--befehl <pfad>`, sonst au
 
 ```
 laufzeit = { art: "stdio", befehl: <pfad>, umgebung: { "<NAME>_<FELD>": "${<feld>}" } }
-felder   = [ { name, beschreibung: titel – hilfe, quelle: client|geheim, pflicht, standard } ]
+felder   = [ { name, titel, beschreibung: hilfe, art, quelle: client|geheim, pflicht, standard } ]
 ```
+
+`titel` ist die Anzeige, `beschreibung` nur die Hilfe. `art` folgt `quiver_domain::FeldArt`:
+`text`, `passwort`, `zahl`, `schalter`, `url` oder
+`{ auswahl: { optionen: [ { wert, anzeige } ] } }`. Auch `mehrfach.felder` trägt beide Felder.
 
 Kein `einrichtung`-Feld: es gibt keine Seite, die quiver öffnen könnte. `aktiv` und
 `argumente` fehlen absichtlich; beides hat in `quiver_domain` einen Standardwert.

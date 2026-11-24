@@ -447,27 +447,42 @@ fn eintrag_enthaelt_mehrfach_mit_sieben_feldern() {
     );
     assert_eq!(felder[0]["quelle"], json!("client"));
     assert_eq!(felder[0]["pflicht"], json!(true));
+    // Jedes Feld trägt Titel und Art; die Beschreibung ist nur die Hilfe.
+    assert_eq!(felder[0]["titel"], json!("SAP-Benutzer"));
+    assert_eq!(felder[0]["art"], json!("text"));
     assert_eq!(felder[1]["quelle"], json!("client"));
+    assert_eq!(felder[1]["art"], json!("url"));
     assert_eq!(felder[2]["pflicht"], json!(true));
+    assert_eq!(felder[2]["titel"], json!("Mandant"));
     assert_eq!(felder[3]["standard"], json!("DE"));
     assert_eq!(felder[4]["quelle"], json!("geheim"));
+    assert_eq!(felder[4]["art"], json!("passwort"));
     assert_eq!(felder[5]["standard"], json!("an"));
-    assert!(felder[4]["beschreibung"]
-        .as_str()
-        .unwrap()
-        .contains("SAP-Passwort"));
+    assert_eq!(felder[5]["art"], json!("schalter"));
+    assert_eq!(felder[4]["titel"], json!("SAP-Passwort"));
+    assert_eq!(
+        felder[4]["beschreibung"],
+        json!("Passwort des SAP-Benutzers")
+    );
     assert!(felder[5]["beschreibung"]
         .as_str()
         .unwrap()
         .contains("Zertifikatsspeicher"));
     // Der Schalter „schreiben“ steht am Ende und ist im Zweifel aus.
     assert_eq!(felder[6]["name"], json!("schreiben"));
+    assert_eq!(felder[6]["art"], json!("schalter"));
     assert_eq!(felder[6]["standard"], json!("aus"));
     assert_eq!(felder[6]["pflicht"], json!(false));
     assert!(felder[6]["beschreibung"]
         .as_str()
         .unwrap()
         .contains("Produktivsysteme aus lassen"));
+    // Die Beschreibung ist nur die Hilfe, der Titel steht in `titel`.
+    assert_eq!(felder[6]["titel"], json!("Schreiben erlauben"));
+    assert!(!felder[6]["beschreibung"]
+        .as_str()
+        .unwrap()
+        .contains("Schreiben erlauben –"));
 }
 
 #[test]

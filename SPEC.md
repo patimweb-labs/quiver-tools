@@ -87,8 +87,10 @@ Der Eintrag hat das Format von `quiver_domain::Eintrag`:
   `version` = Crate-Version, `herkunft` = `eigen`.
 - `laufzeit` = `{ art: "stdio", befehl: <--befehl oder laufendes Programm>, umgebung: { "<NAME>_<FELD>":
   "${<feld>}" … } }`.
-- `felder`: je Feld `{ name, beschreibung: titel + " – " + hilfe, quelle: "geheim" bei Passwort sonst
-  "client", pflicht, standard }`.
+- `felder`: je Feld `{ name, titel, beschreibung: nur die Hilfe, art, quelle: "geheim" bei
+  Passwort sonst "client", pflicht, standard }`. `titel` ist die Anzeige, `art` die
+  Darstellung: `text`, `passwort`, `zahl`, `schalter`, `url` oder
+  `auswahl { optionen: [ { wert, anzeige } ] }` (snake_case, wie `quiver_domain::FeldArt`).
 - **Kein `einrichtung`-Feld**: es gibt keine Seite, die quiver öffnen könnte.
 
 ## 5. Aufbau

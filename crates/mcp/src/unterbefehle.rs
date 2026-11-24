@@ -213,6 +213,7 @@ mod tests {
 
     fn profil(upn: Option<&str>, mail: Option<&str>) -> Profil {
         Profil {
+            id: Some("u-anna".to_string()),
             display_name: Some("Anna Muster".to_string()),
             mail: mail.map(str::to_string),
             user_principal_name: upn.map(str::to_string),

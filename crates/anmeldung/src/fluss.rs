@@ -82,6 +82,9 @@ pub(crate) enum FlussFehler {
     LauscherAbgelaufen,
     /// Das Refresh-Token ist widerrufen oder abgelaufen (`invalid_grant`).
     RefreshUngueltig,
+    /// Der Token-Endpunkt verlangt eine neue Zustimmung (AADSTS65001 /
+    /// `consent_required`, Aufgabe 05): neuer Scope, kein Browser, Token bleibt.
+    ZustimmungFehlt,
     /// Alles andere, als Text.
     Sonstiges(String),
 }

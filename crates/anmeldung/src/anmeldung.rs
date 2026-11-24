@@ -168,6 +168,13 @@ impl<T: Tresor + 'static, B: Browser + 'static> Kern<T, B> {
             Err(RequestTokenError::ServerResponse(antwort))
                 if matches!(antwort.error(), BasicErrorResponseType::InvalidGrant) =>
             {
+                // Ein neuer Scope (Teams) braucht eine neue Zustimmung: das ist
+                // kein widerrufenes Token. Es bleibt, und es öffnet kein Browser.
+                let beschreibung = antwort.error_description().cloned().unwrap_or_default();
+                if ist_zustimmungsfehler(&beschreibung) {
+                    tracing::info!("Token-Endpunkt verlangt Zustimmung (neuer Scope)");
+                    return Err(FlussFehler::ZustimmungFehlt);
+                }
                 tracing::info!("Refresh-Token abgelehnt (invalid_grant)");
                 Err(FlussFehler::RefreshUngueltig)
             }
@@ -305,6 +312,10 @@ impl<T: Tresor + 'static, B: Browser + 'static> Anmeldung for EntraAnmeldung<T, 
                     // Widerrufen/abgelaufen: weg damit, dann neu anmelden.
                     self.kern.tresor.loeschen(self.kern.schluessel())?;
                 }
+                Err(FlussFehler::ZustimmungFehlt) => {
+                    // Neuer Scope ohne Zustimmung: Token bleibt, kein Browser.
+                    return Err(AnmeldeFehler::ZustimmungFehlt);
+                }
                 Err(fehler) => return Err(fehler.into()),
             }
         }
@@ -348,7 +359,19 @@ impl From<FlussFehler> for AnmeldeFehler {
             FlussFehler::RefreshUngueltig => {
                 AnmeldeFehler::Abgelehnt("Refresh-Token abgelehnt".to_string())
             }
+            FlussFehler::ZustimmungFehlt => AnmeldeFehler::ZustimmungFehlt,
             FlussFehler::Sonstiges(text) => AnmeldeFehler::Sonstiges(anyhow::anyhow!("{text}")),
         }
     }
+}
+
+/// Sieht der `invalid_grant`-Text nach „Zustimmung fehlt“ aus? Entra nennt das
+/// `AADSTS65001` oder `consent_required`; ältere Antworten sagen es im Satz.
+/// Nur der Text wird geprüft, nie ein Token – und nie geloggt.
+fn ist_zustimmungsfehler(beschreibung: &str) -> bool {
+    let klein = beschreibung.to_lowercase();
+    klein.contains("aadsts65001")
+        || klein.contains("consent_required")
+        || klein.contains("has not consented")
+        || klein.contains("admin consent")
 }

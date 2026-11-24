@@ -36,6 +36,13 @@ pub const STANDARD_SCOPES: &[&str] = &[
     "Mail.Send",
     "Calendars.ReadWrite",
     "Files.Read.All",
+    // Teams (docs/aufgaben/05-teams.md): delegiert, als der User.
+    "Team.ReadBasic.All",
+    "Channel.ReadBasic.All",
+    "ChannelMessage.Read.All",
+    "ChannelMessage.Send",
+    "Chat.ReadWrite",
+    "User.ReadBasic.All",
     "offline_access",
 ];
 
@@ -74,6 +81,12 @@ pub enum AnmeldeFehler {
     /// quiver-Fenster an, nicht aus einem Tool-Aufruf heraus.
     #[error("Nicht angemeldet")]
     NichtAngemeldet,
+    /// Der Token-Endpunkt verlangt eine neue Zustimmung (`AADSTS65001`,
+    /// `consent_required`) – typisch, wenn ein neuer Scope wie Teams dazukam.
+    /// Kein Browser, das Refresh-Token bleibt: der User klickt im quiver-Fenster
+    /// erneut auf „Anmelden“ (Aufgabe 05).
+    #[error("Zustimmung fehlt")]
+    ZustimmungFehlt,
     #[error("{0}")]
     Sonstiges(#[from] anyhow::Error),
 }

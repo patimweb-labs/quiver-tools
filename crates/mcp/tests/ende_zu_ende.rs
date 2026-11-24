@@ -14,7 +14,7 @@ use rmcp::ServiceExt;
 use serde_json::Value;
 
 /// Die acht Tools aus SPEC.md §4.
-const TOOLS: &[&str] = &[
+const TOOLS_SPEC: &[&str] = &[
     "profil",
     "mails_suchen",
     "mail_lesen",
@@ -24,6 +24,40 @@ const TOOLS: &[&str] = &[
     "dateien_suchen",
     "abmelden",
 ];
+
+/// Die 16 Teams-Tools aus docs/aufgaben/05-teams.md.
+const TOOLS_TEAMS: &[&str] = &[
+    "teams_eingang",
+    "teams_liste",
+    "teams_kanaele",
+    "teams_kanal_lesen",
+    "teams_thread_lesen",
+    "teams_kanal_senden",
+    "teams_kanal_antworten",
+    "teams_chats",
+    "teams_chat_lesen",
+    "teams_chat_senden",
+    "teams_chat_anlegen",
+    "teams_suchen",
+    "teams_mitglieder",
+    "teams_person_finden",
+    "teams_reagieren",
+    "teams_als_gelesen",
+];
+
+/// Verändert das Tool etwas in Teams bzw. im Postfach/Kalender?
+fn ist_destruktiv(name: &str) -> bool {
+    matches!(
+        name,
+        "mail_senden"
+            | "termin_anlegen"
+            | "teams_kanal_senden"
+            | "teams_kanal_antworten"
+            | "teams_chat_senden"
+            | "teams_chat_anlegen"
+            | "teams_reagieren"
+    )
+}
 
 fn kindprozess(graph: &GraphAttrappe) -> tokio::process::Command {
     let mut befehl = tokio::process::Command::new(env!("CARGO_BIN_EXE_quiver-m365"));
@@ -53,7 +87,7 @@ fn text_aus(ergebnis: &rmcp::model::CallToolResult) -> String {
 }
 
 #[tokio::test]
-async fn list_tools_hat_alle_acht_und_profil_liefert_den_namen() {
+async fn list_tools_hat_alle_tools_und_profil_liefert_den_namen() {
     let graph = GraphAttrappe::starten().await;
     let transport = TokioChildProcess::new(kindprozess(&graph)).expect("Kindprozess startet");
     let client = ().serve(transport).await.expect("MCP-Verbindung steht");
@@ -61,32 +95,51 @@ async fn list_tools_hat_alle_acht_und_profil_liefert_den_namen() {
     let tools = client.list_all_tools().await.expect("list_tools");
     let mut namen: Vec<&str> = tools.iter().map(|tool| tool.name.as_ref()).collect();
     namen.sort_unstable();
-    let mut erwartet = TOOLS.to_vec();
+    let mut erwartet: Vec<&str> = TOOLS_SPEC
+        .iter()
+        .chain(TOOLS_TEAMS.iter())
+        .copied()
+        .collect();
     erwartet.sort_unstable();
-    assert_eq!(namen, erwartet, "genau die acht Tools aus SPEC.md §4");
+    assert_eq!(
+        namen, erwartet,
+        "die acht Tools aus SPEC.md §4 und die 16 aus Aufgabe 05"
+    );
 
-    // Annotationen: verändernd nur `mail_senden` und `termin_anlegen`;
-    // `abmelden` ist weder lesend noch zerstörend (Aufgabe 03).
+    // Jedes Eingabeschema ist ein Objekt (Aufgabe 05) – sonst kann ein Client
+    // die Parameter nicht prüfen.
+    for tool in &tools {
+        assert_eq!(
+            tool.input_schema.get("type").and_then(|wert| wert.as_str()),
+            Some("object"),
+            "{}: inputSchema ohne type=object",
+            tool.name
+        );
+    }
+
+    // Annotationen: verändernd nur die schreibenden Tools; `abmelden` und
+    // `teams_als_gelesen` sind weder lesend noch zerstörend.
     for tool in &tools {
         let annotations = tool.annotations.as_ref().expect("Annotationen gesetzt");
-        let veraendernd = matches!(tool.name.as_ref(), "mail_senden" | "termin_anlegen");
-        if veraendernd {
+        if ist_destruktiv(&tool.name) {
             assert_eq!(
                 annotations.destructive_hint,
                 Some(true),
                 "{} ist verändernd",
                 tool.name
             );
-        } else if tool.name == "abmelden" {
+        } else if matches!(tool.name.as_ref(), "abmelden" | "teams_als_gelesen") {
             assert_eq!(
                 annotations.read_only_hint,
                 Some(false),
-                "abmelden löscht das Refresh-Token"
+                "{} ändert Zustand",
+                tool.name
             );
             assert_eq!(
                 annotations.destructive_hint,
                 Some(false),
-                "abmelden zerstört keine Daten bei Graph"
+                "{} zerstört keine Daten bei Graph",
+                tool.name
             );
         } else {
             assert_eq!(

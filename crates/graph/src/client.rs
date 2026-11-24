@@ -3,7 +3,9 @@
 
 //! Der Graph-Client (SPEC.md §4): Token über [`m365_anmeldung::Anmeldung`],
 //! 401 → Token verwerfen und **einmal** wiederholen, 429/503 mit `Retry-After`
-//! → einmal nach der genannten Zeit (höchstens 10 s).
+//! → höchstens **zwei** Wiederholungen, und nur bei **lesenden** Aufrufen
+//! (Aufgabe 05: ein Senden wird nie automatisch wiederholt, sonst entstehen
+//! doppelte Nachrichten).
 //!
 //! Tokens stehen nie in einem Fehlertext und nie in einem Log.
 
@@ -14,9 +16,12 @@ use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 use crate::fehler::GraphFehler;
+use crate::modelle::Sammlung;
 
 /// Länger als so wartet ein erneuter Versuch nach `Retry-After` nie.
 pub const HOECHSTENS_WARTEN: Duration = Duration::from_secs(10);
+/// So oft versucht es ein **lesender** Aufruf nach 429/503 höchstens erneut.
+const HOECHSTENS_WIEDERHOLUNGEN: u32 = 2;
 /// Länger wird ein Fehlertext nicht (Antworten bleiben knapp, SPEC.md §4).
 const HOECHSTENS_TEXT: usize = 500;
 
@@ -76,6 +81,62 @@ impl<A: Anmeldung> GraphClient<A> {
         Self::lesen(wert)
     }
 
+    /// Eine Liste lesen und über `@odata.nextLink` so lange blättern, bis
+    /// `hoechstens` Einträge da sind oder Graph keine Seite mehr anbietet.
+    ///
+    /// Mehr Seiten als für `hoechstens` nötig holt das nie.
+    pub async fn get_seiten<T: DeserializeOwned>(
+        &self,
+        pfad: &str,
+        query: &[(&str, String)],
+        hoechstens: usize,
+    ) -> Result<Vec<T>, GraphFehler> {
+        let erste: Sammlung<T> = self.get(pfad, query).await?;
+        let Sammlung {
+            value: mut werte,
+            mut next_link,
+        } = erste;
+
+        while werte.len() < hoechstens {
+            let Some(link) = next_link.take() else {
+                break;
+            };
+            let seite: Sammlung<T> = self.get_link(&link).await?;
+            werte.extend(seite.value);
+            next_link = seite.next_link;
+        }
+
+        werte.truncate(hoechstens);
+        Ok(werte)
+    }
+
+    /// Eine volle Adresse lesen (`@odata.nextLink` ist absolut). Relative
+    /// Adressen gelten gegen die Basis.
+    pub async fn get_link<T: DeserializeOwned>(&self, link: &str) -> Result<T, GraphFehler> {
+        let ziel = self.adresse(link)?;
+        let wert = self
+            .anfrage_url(Methode::Get, ziel, None, &[], true)
+            .await?;
+        Self::lesen(wert)
+    }
+
+    /// Absolute Adresse unverändert, relative gegen die Basis.
+    fn adresse(&self, link: &str) -> Result<reqwest::Url, GraphFehler> {
+        let link = link.trim();
+        let ziel = match reqwest::Url::parse(link) {
+            Ok(ziel) => ziel,
+            Err(_) => reqwest::Url::parse(&format!("{}{}", self.basis, link))
+                .map_err(|fehler| GraphFehler::Antwort(format!("Adresse unbrauchbar: {fehler}")))?,
+        };
+        if !matches!(ziel.scheme(), "http" | "https") {
+            return Err(GraphFehler::Antwort(format!(
+                "Adresse mit unerwartetem Schema: {}",
+                ziel.scheme()
+            )));
+        }
+        Ok(ziel)
+    }
+
     /// `POST <pfad>` mit JSON-Körper.
     pub async fn post<T: DeserializeOwned>(
         &self,
@@ -120,9 +181,23 @@ impl<A: Anmeldung> GraphClient<A> {
         if !query.is_empty() {
             ziel.set_query(Some(&abfrage_text(query)));
         }
+        // 429/503 nur bei lesenden Aufrufen wiederholen: ein zweiter POST
+        // könnte eine doppelte Nachricht erzeugen (Aufgabe 05).
+        let wiederholbar = methode == Methode::Get;
+        self.anfrage_url(methode, ziel, body, kopfzeilen, wiederholbar)
+            .await
+    }
 
+    async fn anfrage_url(
+        &self,
+        methode: Methode,
+        ziel: reqwest::Url,
+        body: Option<&Value>,
+        kopfzeilen: &[(&str, &str)],
+        wiederholbar: bool,
+    ) -> Result<Value, GraphFehler> {
         let mut erneuert = false;
-        let mut nach_warten = false;
+        let mut wiederholungen = 0u32;
         loop {
             let token = self.token().await?;
             let mut anfrage = match methode {
@@ -151,17 +226,20 @@ impl<A: Anmeldung> GraphClient<A> {
                 continue;
             }
 
-            // 429/503 mit Retry-After: einmal nach der genannten Zeit (höchstens 10 s).
-            if (status == reqwest::StatusCode::TOO_MANY_REQUESTS
-                || status == reqwest::StatusCode::SERVICE_UNAVAILABLE)
-                && !nach_warten
+            // 429/503 mit Retry-After: lesend höchstens zweimal erneut.
+            if wiederholbar
+                && wiederholungen < HOECHSTENS_WIEDERHOLUNGEN
+                && (status == reqwest::StatusCode::TOO_MANY_REQUESTS
+                    || status == reqwest::StatusCode::SERVICE_UNAVAILABLE)
             {
                 if let Some(warten) = wartezeit(antwort.headers()) {
-                    nach_warten = true;
+                    wiederholungen += 1;
                     tracing::info!(
-                        "Graph antwortet {} – neuer Versuch in {} s",
+                        "Graph antwortet {} – neuer Versuch in {} s ({} von {})",
                         status.as_u16(),
-                        warten.as_secs()
+                        warten.as_secs(),
+                        wiederholungen,
+                        HOECHSTENS_WIEDERHOLUNGEN
                     );
                     tokio::time::sleep(warten).await;
                     continue;

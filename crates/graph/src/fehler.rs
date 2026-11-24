@@ -29,3 +29,23 @@ pub enum GraphFehler {
     #[error("Antwort von Graph unbrauchbar: {0}")]
     Antwort(String),
 }
+
+impl GraphFehler {
+    /// Fehlt die Zustimmung für einen neuen Scope (Teams)?
+    ///
+    /// Zwei Wege führen hierher: der Token-Endpunkt sagt `AADSTS65001` /
+    /// `consent_required` (dann steht das schon in der Anmeldung), oder Graph
+    /// antwortet mit 403 und `Missing scope`. Beides ist kein Fehler im Ablauf,
+    /// sondern eine Aufgabe für den User (Aufgabe 05).
+    pub fn zustimmung_fehlt(&self) -> bool {
+        match self {
+            GraphFehler::Anmeldung(AnmeldeFehler::ZustimmungFehlt) => true,
+            GraphFehler::Graph { status, code, text } => {
+                *status == 403
+                    && (code.to_lowercase().contains("missingscope")
+                        || text.to_lowercase().contains("missing scope"))
+            }
+            _ => false,
+        }
+    }
+}

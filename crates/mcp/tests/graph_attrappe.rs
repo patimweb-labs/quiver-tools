@@ -186,6 +186,17 @@ impl GraphAttrappe {
         });
     }
 
+    /// Ab jetzt antwortet jede Anfrage mit 429 und `Retry-After` – dafür, dass
+    /// ein lesender Aufruf höchstens zweimal wiederholt.
+    pub fn ab_jetzt_429(&self, sekunden: u64) {
+        *fach(&self.zustand.dauerhaft) = Some(Fehlerantwort {
+            status: 429,
+            kopfzeilen: vec![("retry-after".to_string(), sekunden.to_string())],
+            code: "TooManyRequests".to_string(),
+            text: "Please retry.".to_string(),
+        });
+    }
+
     /// Ab jetzt scheitert jede Anfrage so (Graph-Fehler).
     pub fn dauerfehler(&self, status: u16, code: &str, text: &str) {
         *fach(&self.zustand.dauerhaft) = Some(Fehlerantwort {
@@ -212,6 +223,12 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
     let methode = request.method().to_string();
     let pfad = request.uri().path().to_string();
     let abfrage = felder(request.uri().query().unwrap_or_default());
+    let host = request
+        .headers()
+        .get(axum::http::header::HOST)
+        .and_then(|wert| wert.to_str().ok())
+        .unwrap_or("127.0.0.1")
+        .to_string();
     let kopfzeilen: Vec<(String, String)> = request
         .headers()
         .iter()
@@ -235,7 +252,7 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
     fach(&zustand.aufzeichnungen).push(Aufzeichnung {
         methode: methode.clone(),
         pfad: pfad.clone(),
-        abfrage,
+        abfrage: abfrage.clone(),
         kopfzeilen,
         body: body.clone(),
     });
@@ -253,6 +270,7 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
         ("POST", "/me/sendMail") => return StatusCode::ACCEPTED.into_response(),
         ("POST", "/me/events") => ereignis_aus(&body),
         ("GET", "/me") => json!({
+            "id": "u-anna",
             "displayName": "Anna Muster",
             "mail": "anna@firma.de",
             "userPrincipalName": "anna@firma.de",
@@ -341,6 +359,51 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
                 "parentReference": {"path": "/drive/root:/Projekte"},
             }]
         }),
+        // ------------------------------------------------------------------
+        // Teams (docs/aufgaben/05-teams.md)
+        // ------------------------------------------------------------------
+        ("GET", "/me/joinedTeams") => json!({
+            "value": [
+                {"id": "team-1", "displayName": "Entwicklung", "description": "Software"},
+                {"id": "team-2", "displayName": "Vertrieb", "description": "Verkauf"},
+            ]
+        }),
+        ("GET", "/me/chats") => chats(),
+        ("GET", "/users") => json!({"value": personen()}),
+        ("GET", pfad) if pfad.starts_with("/teams/") && pfad.ends_with("/channels") => {
+            json!({"value": kanaele()})
+        }
+        ("GET", pfad)
+            if pfad.starts_with("/teams/")
+                && pfad.contains("/channels/")
+                && pfad.ends_with("/members") =>
+        {
+            json!({"value": kanal_mitglieder()})
+        }
+        ("GET", pfad) if pfad.starts_with("/teams/") && pfad.ends_with("/members") => {
+            json!({"value": team_mitglieder()})
+        }
+        ("GET", pfad) if pfad.ends_with("/replies") => json!({"value": antworten(pfad)}),
+        ("GET", pfad) if pfad.contains("/messages/") => nachricht(pfad),
+        ("GET", pfad) if pfad.starts_with("/teams/") && pfad.ends_with("/messages") => {
+            kanal_seite(pfad, &abfrage, &host)
+        }
+        ("GET", pfad) if pfad.starts_with("/chats/") && pfad.ends_with("/messages") => {
+            json!({"value": chat_nachrichten()})
+        }
+        ("POST", "/chats") => chat_aus(&body),
+        ("POST", "/search/query") => suchergebnis(),
+        ("POST", pfad) if pfad.ends_with("/setReaction") || pfad.ends_with("/unsetReaction") => {
+            json!({})
+        }
+        ("POST", pfad)
+            if pfad.ends_with("/markChatReadForUser")
+                || pfad.ends_with("/markChatUnreadForUser") =>
+        {
+            json!({})
+        }
+        ("POST", pfad) if pfad.ends_with("/replies") => gesendete_nachricht("neu-antwort"),
+        ("POST", pfad) if pfad.ends_with("/messages") => gesendete_nachricht("neu-nachricht"),
         _ => {
             return (
                 StatusCode::NOT_FOUND,
@@ -379,4 +442,315 @@ fn felder(abfrage: &str) -> Vec<(String, String)> {
             (entkodieren(name), entkodieren(wert))
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Teams-Daten. Zeiten sind relativ zu „jetzt“, damit `teams_eingang` (letzte
+// `tage`) unabhängig vom Kalender des Testrechners prüfbar ist.
+// ---------------------------------------------------------------------------
+
+/// Ids und Namen, die die Tests erwarten.
+pub const TEAM_ENTWICKLUNG: &str = "team-1";
+pub const KANAL_ALLGEMEIN: &str = "19:kanal-allgemein@thread.tacv2";
+pub const CHAT_PROJEKT: &str = "19:chat-projekt@thread.v2";
+pub const CHAT_MITTAG: &str = "19:chat-mittag@thread.v2";
+pub const CHAT_REISE: &str = "19:chat-reise@thread.v2";
+
+fn vor_stunden(stunden: i64) -> String {
+    let sekunden = jiff::Timestamp::now().as_second() - stunden * 3_600;
+    jiff::Timestamp::from_second(sekunden)
+        .expect("Zeitpunkt")
+        .to_string()
+}
+
+fn person_anna() -> Value {
+    json!({"displayName": "Anna Muster", "email": "anna@firma.de", "userId": "u-anna"})
+}
+
+fn person_bert() -> Value {
+    json!({"displayName": "Bert Beispiel", "email": "bert@firma.de", "userId": "u-bert"})
+}
+
+fn person_clara() -> Value {
+    json!({"displayName": "Clara Claudia", "email": "clara@firma.de", "userId": "u-clara"})
+}
+
+fn chats() -> Value {
+    json!({
+        "value": [
+            {
+                "id": CHAT_PROJEKT,
+                "topic": "Projekt Nord",
+                "chatType": "group",
+                "members": [person_anna(), person_bert()],
+                "lastMessagePreview": {
+                    "id": "c1",
+                    "createdDateTime": vor_stunden(1),
+                    "body": {"contentType": "html", "content": "<p>Kurze Frage <b>zum Plan</b></p>"},
+                    "from": {"user": {"id": "u-bert", "displayName": "Bert Beispiel"}},
+                },
+                "viewpoint": {"lastMessageReadDateTime": vor_stunden(2)},
+            },
+            {
+                "id": CHAT_MITTAG,
+                "topic": "Mittagessen",
+                "chatType": "group",
+                "members": [person_anna(), person_clara()],
+                "lastMessagePreview": {
+                    "id": "c2",
+                    "createdDateTime": vor_stunden(3),
+                    "body": {"contentType": "html", "content": "<p>Bis gleich</p>"},
+                    "from": {"user": {"id": "u-anna", "displayName": "Anna Muster"}},
+                },
+                "viewpoint": {"lastMessageReadDateTime": vor_stunden(1)},
+            },
+            {
+                "id": CHAT_REISE,
+                "topic": "Reisekosten",
+                "chatType": "oneOnOne",
+                "members": [person_anna(), person_bert()],
+                "lastMessagePreview": {
+                    "id": "c3",
+                    "createdDateTime": vor_stunden(5),
+                    "body": {"contentType": "html", "content": "<p>Beleg fehlt noch</p>"},
+                    "from": {"user": {"id": "u-bert", "displayName": "Bert Beispiel"}},
+                },
+            }
+        ]
+    })
+}
+
+fn kanaele() -> Value {
+    json!([
+        {
+            "id": KANAL_ALLGEMEIN,
+            "displayName": "Allgemein",
+            "description": "Alles zum Team",
+            "membershipType": "standard",
+        },
+        {
+            "id": "19:kanal-zufall@thread.tacv2",
+            "displayName": "Zufall",
+            "membershipType": "standard",
+        }
+    ])
+}
+
+fn team_mitglieder() -> Value {
+    json!([person_anna(), person_bert()])
+}
+
+fn kanal_mitglieder() -> Value {
+    json!([person_anna(), person_bert(), person_clara()])
+}
+
+fn personen() -> Value {
+    json!([
+        {"id": "u-bert", "displayName": "Bert Beispiel", "mail": "bert@firma.de", "userPrincipalName": "bert@firma.de"},
+        {"id": "u-clara", "displayName": "Clara Claudia", "mail": "clara@firma.de", "userPrincipalName": "clara@firma.de"},
+        // Zwei Annas: „Anna“ ist mehrdeutig, „anna@firma.de“ nicht.
+        {"id": "u-anna", "displayName": "Anna Muster", "mail": "anna@firma.de", "userPrincipalName": "anna@firma.de"},
+        {"id": "u-anna2", "displayName": "Anna Anders", "mail": "anna.anders@firma.de", "userPrincipalName": "anna.anders@firma.de"},
+    ])
+}
+
+/// Ein Kanalbeitrag mit HTML, Absender, Anhang und Web-Link.
+fn beitrag_m1() -> Value {
+    json!({
+        "id": "m1",
+        "messageType": "message",
+        "createdDateTime": vor_stunden(2),
+        "subject": "Status",
+        "webUrl": "https://teams.example/m1",
+        "from": {"user": {"id": "u-bert", "displayName": "Bert Beispiel"}},
+        "body": {"contentType": "html", "content": "<p>Status <b>grün</b></p>"},
+        "attachments": [{"id": "a1", "contentType": "reference", "name": "Anhang.pdf"}],
+    })
+}
+
+fn beitrag_m3() -> Value {
+    let lang = (1..=120)
+        .map(|nummer| format!("Wort{nummer}"))
+        .collect::<Vec<String>>()
+        .join(" ");
+    json!({
+        "id": "m3",
+        "messageType": "message",
+        "createdDateTime": vor_stunden(4),
+        "from": {"user": {"id": "u-clara", "displayName": "Clara Claudia"}},
+        "body": {"contentType": "html", "content": format!("<p>{lang}</p>")},
+    })
+}
+
+fn system_nachricht() -> Value {
+    json!({
+        "id": "m2",
+        "messageType": "systemEventMessage",
+        "createdDateTime": vor_stunden(3),
+        "body": {"contentType": "html", "content": "Bert ist dem Team beigetreten"},
+    })
+}
+
+fn geloeschte_nachricht() -> Value {
+    json!({
+        "id": "m4",
+        "messageType": "message",
+        "createdDateTime": vor_stunden(5),
+        "deletedDateTime": vor_stunden(1),
+        "body": {"contentType": "html", "content": "weg"},
+    })
+}
+
+fn antworten(pfad: &str) -> Vec<Value> {
+    if pfad.contains("/messages/m3/") {
+        return vec![json!({
+            "id": "r3",
+            "messageType": "message",
+            "createdDateTime": vor_stunden(1),
+            "from": {"user": {"id": "u-bert", "displayName": "Bert Beispiel"}},
+            "body": {"contentType": "html", "content": "<p>Danke</p>"},
+        })];
+    }
+    vec![
+        json!({
+            "id": "r1",
+            "messageType": "message",
+            "replyToId": "m1",
+            "createdDateTime": vor_stunden(1),
+            "from": {"user": {"id": "u-clara", "displayName": "Clara Claudia"}},
+            "body": {"contentType": "html", "content": "<p>Alles gut.</p>"},
+        }),
+        // System-Antworten gehören nicht in die Antwort.
+        json!({
+            "id": "r2",
+            "messageType": "systemEventMessage",
+            "replyToId": "m1",
+            "createdDateTime": vor_stunden(1),
+            "body": {"contentType": "html", "content": "Clara hat reagiert"},
+        }),
+    ]
+}
+
+fn nachricht(pfad: &str) -> Value {
+    let id = pfad.rsplit("/messages/").next().unwrap_or("m1");
+    match id {
+        "m3" => beitrag_m3(),
+        _ => beitrag_m1(),
+    }
+}
+
+/// Eine Seite Kanalbeiträge. Seite 1 hat zwei Beiträge und einen `nextLink`,
+/// Seite 2 die übrigen – so prüfen die Tests, dass nicht mehr Seiten als nötig
+/// geholt werden.
+fn kanal_seite(pfad: &str, abfrage: &[(String, String)], host: &str) -> Value {
+    let seite: u32 = abfrage
+        .iter()
+        .find(|(name, _)| name == "seite")
+        .and_then(|(_, wert)| wert.parse().ok())
+        .unwrap_or(1);
+
+    if seite == 1 {
+        json!({
+            "value": [beitrag_m1(), system_nachricht()],
+            "@odata.nextLink": format!("http://{host}/v1.0{pfad}?seite=2"),
+        })
+    } else {
+        json!({"value": [beitrag_m3(), geloeschte_nachricht()]})
+    }
+}
+
+fn chat_nachrichten() -> Vec<Value> {
+    vec![
+        json!({
+            "id": "n1",
+            "messageType": "message",
+            "createdDateTime": vor_stunden(1),
+            "from": {"user": {"id": "u-bert", "displayName": "Bert Beispiel"}},
+            "body": {"contentType": "html", "content": "<p>Kurze Frage <b>zum Plan</b></p>"},
+        }),
+        json!({
+            "id": "n2",
+            "messageType": "systemEventMessage",
+            "createdDateTime": vor_stunden(2),
+            "body": {"contentType": "html", "content": "Chat erstellt"},
+        }),
+    ]
+}
+
+fn gesendete_nachricht(id: &str) -> Value {
+    json!({
+        "id": id,
+        "messageType": "message",
+        "createdDateTime": vor_stunden(0),
+        "body": {"contentType": "html", "content": ""},
+        "webUrl": format!("https://teams.example/{id}"),
+    })
+}
+
+fn chat_aus(body: &Option<Value>) -> Value {
+    let body = body.clone().unwrap_or(Value::Null);
+    json!({
+        "id": "19:chat-neu@thread.v2",
+        "chatType": body.get("chatType").cloned().unwrap_or(Value::Null),
+        "topic": body.get("topic").cloned().unwrap_or(Value::Null),
+        "members": body.get("members").cloned().unwrap_or(Value::Null),
+    })
+}
+
+fn suchergebnis() -> Value {
+    json!({
+        "value": [{
+            "hitsContainers": [{
+                "hits": [
+                    {
+                        "hitId": "h1",
+                        "summary": "Ein <c0>Plan</c0>",
+                        "resource": {
+                            "id": "s1",
+                            "messageType": "message",
+                            "createdDateTime": vor_stunden(2),
+                            "body": {"contentType": "html", "content": "<p>Der <b>Plan</b> steht</p>"},
+                            "from": {"user": {"id": "u-bert", "displayName": "Bert Beispiel"}},
+                            "chatId": CHAT_PROJEKT,
+                            "mentions": [{
+                                "id": 0,
+                                "mentionText": "Anna Muster",
+                                "mentioned": {"user": {"id": "u-anna", "displayName": "Anna Muster"}},
+                            }],
+                        },
+                    },
+                    {
+                        "hitId": "h2",
+                        "summary": "Ein alter Treffer",
+                        "resource": {
+                            "id": "s2",
+                            "messageType": "message",
+                            "createdDateTime": vor_stunden(10 * 24),
+                            "body": {"contentType": "html", "content": "<p>Alt</p>"},
+                            "from": {"user": {"id": "u-clara", "displayName": "Clara Claudia"}},
+                            "channelIdentity": {"teamId": TEAM_ENTWICKLUNG, "channelId": KANAL_ALLGEMEIN},
+                            "mentions": [{
+                                "id": 0,
+                                "mentionText": "Anna Muster",
+                                "mentioned": {"user": {"id": "u-anna", "displayName": "Anna Muster"}},
+                            }],
+                        },
+                    },
+                    {
+                        "hitId": "h3",
+                        "summary": "Ohne Erwähnung",
+                        "resource": {
+                            "id": "s3",
+                            "messageType": "message",
+                            "createdDateTime": vor_stunden(1),
+                            "body": {"contentType": "html", "content": "<p>Nur so</p>"},
+                            "from": {"user": {"id": "u-clara", "displayName": "Clara Claudia"}},
+                            "chatId": CHAT_PROJEKT,
+                        },
+                    },
+                ],
+                "total": 3,
+            }],
+        }],
+    })
 }

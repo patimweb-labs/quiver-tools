@@ -85,9 +85,46 @@ Ablauf der Anmeldung (`quiver-m365 anmelden`):
 In mcp-quiver: Eintrag mit Laufzeit `stdio` → `quiver-m365`, ohne Pflichtfelder. Optional Feld
 `tenant` (Quelle `server`, Standard `organizations`) → `M365_TENANT=${tenant}`.
 
-## 4. Tools (MVP)
+## 4. Tools (MVP und Teams)
 
-Delegierte Berechtigungen: `User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.Read.All offline_access`.
+Delegierte Berechtigungen (Mail, Kalender, Dateien):
+`User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.Read.All offline_access`.
+
+**Teams (Aufgabe 05, 2026-11-24)** ergänzt delegiert:
+`Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send
+Chat.ReadWrite User.ReadBasic.All`.
+*Begründung:* Alle Teams-Tools handeln **als der User**; es gibt bewusst keine App-Berechtigung
+(`*.All` mit Application-Rechten), weil sie jedes Postfach und jeden Chat lesen dürfte.
+*Preis:* `ChannelMessage.Read.All` und `ChannelMessage.Send` verlangen in vielen Tenants eine
+Admin-Zustimmung. Kommt ein Scope später dazu, antwortet der Token-Endpunkt einmal mit
+`AADSTS65001`/`consent_required`; das Tool sagt dann, der User solle im quiver-Fenster erneut auf
+„Anmelden“ klicken – es öffnet keinen Browser und löscht das Refresh-Token nicht.
+
+### Teams-Tools
+
+| Tool | Annotation | Graph |
+|---|---|---|
+| `teams_eingang` | lesend | `/me/chats?$expand=lastMessagePreview` (Lesemarke `viewpoint`), Erwähnungen über `/search/query` |
+| `teams_liste` | lesend | `GET /me/joinedTeams` |
+| `teams_kanaele` | lesend | `GET /teams/{team}/channels` |
+| `teams_kanal_lesen` | lesend | `GET …/channels/{kanal}/messages?$top=` (Standard 20, max. 50) |
+| `teams_thread_lesen` | lesend | `GET …/messages/{id}` und `…/replies` |
+| `teams_kanal_senden` | destruktiv | `POST …/channels/{kanal}/messages` |
+| `teams_kanal_antworten` | destruktiv | `POST …/messages/{id}/replies` |
+| `teams_chats` | lesend | `GET /me/chats?$expand=members&$top=` |
+| `teams_chat_lesen` | lesend | `GET /chats/{chat}/messages?$top=` |
+| `teams_chat_senden` | destruktiv | `POST /chats/{chat}/messages` |
+| `teams_chat_anlegen` | destruktiv | `POST /chats` |
+| `teams_suchen` | lesend | `POST /search/query` (`entityTypes: ["chatMessage"]`) |
+| `teams_mitglieder` | lesend | `GET /teams/{team}/members` bzw. `…/channels/{kanal}/members` |
+| `teams_person_finden` | lesend | `GET /users?$search="displayName:…" OR "mail:…"` |
+| `teams_reagieren` | destruktiv | `POST …/setReaction` bzw. `unsetReaction` |
+| `teams_als_gelesen` | weder lesend noch destruktiv | `POST /chats/{chat}/markChatReadForUser` bzw. `markChatUnreadForUser` |
+
+Festlegungen dazu: Namen werden zu Ids aufgelöst (mehrdeutig → Kandidaten, keine Aktion);
+Nachrichten werden HTML→Text gewandelt und auf `max_zeichen` (Standard 2000) gekürzt; gelöschte und
+System-Nachrichten fehlen; Senden escaped Text und wiederholt **nie** automatisch (429 beim Lesen
+schon, höchstens zweimal).
 
 | Tool | Graph | Hinweis |
 |---|---|---|
@@ -123,5 +160,7 @@ Der „Browser“ ist im Test eine Funktion, die die Authorize-URL direkt aufruf
 
 1. Admin-Freigabe im Tenant von neoimpulse.de für den ersten echten Test (`quiver-m365 freigeben`).
 4. Herausgeber-Verifizierung (Verified Publisher) – macht die Zustimmungsseite vertrauenswürdiger und erlaubt in vielen Tenants die User-Zustimmung.
-2. Teams-Chats und Kanäle (`Chat.ReadWrite`, `ChannelMessage.Send`) – nach dem MVP.
+2. ~~Teams-Chats und Kanäle (`Chat.ReadWrite`, `ChannelMessage.Send`) – nach dem MVP.~~
+   → Aufgabe 05: 16 Tools, siehe `docs/offen.md` für den Rest (Dateien in Kanälen, Präsenz,
+   Bearbeiten/Löschen von Nachrichten).
 3. Übergabe der Anmeldung an den quiver-Client (§2 „Später“).

@@ -7,16 +7,23 @@
 use serde::{Deserialize, Serialize};
 
 /// Eine Liste von Graph: `{"value": [...]}`.
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+#[serde(bound(deserialize = "T: serde::de::Deserialize<'de>"))]
 pub struct Sammlung<T> {
     #[serde(default)]
     pub value: Vec<T>,
+    /// Nächste Seite (`@odata.nextLink`), wenn Graph mehr hat.
+    #[serde(default, rename = "@odata.nextLink")]
+    pub next_link: Option<String>,
 }
 
 /// `GET /me`
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Profil {
+    #[serde(default)]
+    pub id: Option<String>,
     #[serde(default)]
     pub display_name: Option<String>,
     #[serde(default)]

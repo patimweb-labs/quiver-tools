@@ -2,7 +2,7 @@
 
 > **Status: in Arbeit.** Spezifikation in [SPEC.md](SPEC.md).
 
-**Microsoft 365 für jeden Agenten** – ein MCP-Server für Mail, Kalender und Dateien über
+**Microsoft 365 für jeden Agenten** – ein MCP-Server für Mail, Kalender, Dateien und Teams über
 Microsoft Graph. Der User meldet sich **im Browser** an seinem Konto an (inkl. MFA); alle Aufrufe
 laufen mit seinen eigenen Rechten. Reines Rust, ein Programm, MCP über stdio.
 
@@ -52,6 +52,49 @@ Rückgabe von `termin_anlegen`. Ganztägige Termine tragen nur ein Datum (`2026-
 `ganztags: true`. Eingaben (`von`, `bis`, `start`, `ende`) sind Ortszeit in dieser Zone, dürfen jetzt
 aber auch einen Versatz tragen (`…+01:00`, `…Z`) – der Zeitpunkt bleibt dabei derselbe.
 
+## Teams
+
+Die Teams-Tools handeln **als der User**: Sie lesen, was er lesen darf, und was sie senden, kommt von
+ihm. Delegierte Rechte: `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`,
+`ChannelMessage.Send`, `Chat.ReadWrite`, `User.ReadBasic.All` (in der App-Registrierung eingetragen,
+Admin-Zustimmung für neoimpulse.de erteilt – siehe [docs/entra-app.md](docs/entra-app.md)).
+
+| Tool | Was es tut | Graph |
+|---|---|---|
+| `teams_eingang` | Chats mit ungelesenen Nachrichten und Erwähnungen der letzten `tage` (Standard 3) | `GET /me/chats?$expand=lastMessagePreview`, `POST /search/query` |
+| `teams_liste` | Teams, in denen der User Mitglied ist | `GET /me/joinedTeams` |
+| `teams_kanaele` | Kanäle eines Teams | `GET /teams/{team}/channels` |
+| `teams_kanal_lesen` | Beiträge eines Kanals (Standard 20, höchstens 50), je Beitrag die Anzahl der Antworten | `GET …/channels/{kanal}/messages` |
+| `teams_thread_lesen` | ein Beitrag und alle Antworten | `GET …/messages/{id}`, `GET …/replies` |
+| `teams_kanal_senden` | Beitrag in einen Kanal schreiben (**verändernd**) | `POST …/channels/{kanal}/messages` |
+| `teams_kanal_antworten` | auf einen Beitrag antworten (**verändernd**) | `POST …/messages/{id}/replies` |
+| `teams_chats` | Chats mit Thema, Art, Mitgliedern und Vorschau | `GET /me/chats?$expand=members` |
+| `teams_chat_lesen` | Nachrichten eines Chats | `GET /chats/{chat}/messages` |
+| `teams_chat_senden` | Nachricht in einen Chat senden (**verändernd**) | `POST /chats/{chat}/messages` |
+| `teams_chat_anlegen` | 1:1- oder Gruppenchat anlegen, optional mit erster Nachricht (**verändernd**) | `POST /chats` |
+| `teams_suchen` | alle Teams-Nachrichten durchsuchen | `POST /search/query` (`chatMessage`) |
+| `teams_mitglieder` | Mitglieder eines Teams oder Kanals | `GET /teams/{team}/members`, `…/channels/{kanal}/members` |
+| `teams_person_finden` | Personen über Name, E-Mail oder UPN finden | `GET /users?$search=…` (`ConsistencyLevel: eventual`) |
+| `teams_reagieren` | auf eine Nachricht reagieren oder die Reaktion entfernen (**verändernd**) | `POST …/setReaction`, `…/unsetReaction` |
+| `teams_als_gelesen` | Chat als gelesen oder wieder ungelesen markieren | `POST /chats/{chat}/markChatReadForUser`, `…/markChatUnreadForUser` |
+
+- **Namen statt Ids:** `team`, `kanal` und `chat` dürfen Id **oder** Name sein, bei Chats auch das
+  Thema oder ein Mitglied. Aufgelöst wird über die Listen. Passen mehrere, nennt das Tool die
+  Kandidaten und **tut nichts** – „Nachricht an Anna“ landet nie im falschen Chat.
+- **Nachrichten** kommen als Text (HTML wird umgewandelt), je Nachricht höchstens `max_zeichen`
+  (Standard 2000); wird gekürzt, steht `"gekuerzt": true` und `"laenge_gesamt"` dabei. Absender, Zeit
+  (RFC 3339 mit Versatz) und Anhänge nur als Name. Gelöschte und System-Nachrichten fehlen.
+- **Senden** nimmt `text` (Pflicht) und `als_html` (Standard `false`: der Text wird HTML-escaped,
+  Zeilenumbrüche werden zu `<br>`). Die Antwort enthält die Id der neuen Nachricht und, falls
+  vorhanden, einen Web-Link.
+- **Seiten** über `@odata.nextLink`, aber nie mehr als für `anzahl` nötig. **429/503** mit
+  `Retry-After` werden bei lesenden Aufrufen höchstens zweimal wiederholt – ein Senden **nie**,
+  sonst gäbe es doppelte Nachrichten.
+- **Fehlt die Zustimmung** für die Teams-Rechte (`AADSTS65001`, `consent_required` oder Graph 403
+  „Missing scope“), antwortet das Tool mit: „Für Teams fehlt die Zustimmung – im quiver-Fenster unter
+  Tools → Microsoft 365 erneut auf ‚Anmelden‘ klicken.“ Es öffnet **keinen** Browser und löscht das
+  Refresh-Token **nicht**.
+
 ## Anmeldung
 
 Drei Unterbefehle erledigen alles, was zum Anmelden gehört. mcp-quiver ruft sie mit derselben
@@ -65,6 +108,10 @@ Umgebung wie den MCP-Prozess auf (siehe [Eintrag für mcp-quiver](#eintrag-für-
 
 Ein von außen gereichtes `M365_ACCESS_TOKEN` gilt nur im MCP-Betrieb; die Unterbefehle verwalten
 das eigene Refresh-Token im Tresor.
+
+Kommt ein neuer Scope dazu (wie die Teams-Rechte), verlangt der Token-Endpunkt einmal eine neue
+Zustimmung: Der User klickt im quiver-Fenster erneut auf „Anmelden“. Die Tools sagen das, öffnen
+aber keinen Browser und löschen das Refresh-Token nicht.
 
 Im MCP-Betrieb (Aufruf ohne Unterbefehl) wird nie ein Browser geöffnet: fehlt ein gültiges
 Refresh-Token, antworten die Tools mit dem Hinweis oben. Wer `quiver-m365` ohne quiver benutzt und
@@ -99,7 +146,7 @@ Alles über Umgebung, alles optional:
 |---|---|---|
 | `M365_CLIENT_ID` | eingebaute Client-ID | eigene App-Registrierung (siehe [docs/entra-app.md](docs/entra-app.md)) |
 | `M365_TENANT` | `organizations` | Tenant-ID oder Domain |
-| `M365_SCOPES` | `User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.Read.All offline_access` | delegierte Rechte |
+| `M365_SCOPES` | `User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.Read.All Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send Chat.ReadWrite User.ReadBasic.All offline_access` | delegierte Rechte |
 | `M365_AUTHORITY` | `https://login.microsoftonline.com` | Anmeldedienst (Tests: Attrappe) |
 | `M365_GRAPH_URL` | `https://graph.microsoft.com/v1.0` | Graph (Tests: Attrappe) |
 | `M365_ZEITZONE` | `Europe/Berlin` | Zeitzone für Termine und alle Zeiten in Antworten |

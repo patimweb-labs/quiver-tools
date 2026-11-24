@@ -57,6 +57,9 @@ struct Zustand {
     widerrufen: Mutex<HashSet<String>>,
     /// Wenn gesetzt, antwortet `/token` immer mit `invalid_request`.
     fehler: AtomicBool,
+    /// Wenn gesetzt, lehnt `/token` das Refresh-Token mit `AADSTS65001`
+    /// (`consent_required`) ab – ein neuer Scope braucht eine Zustimmung.
+    zustimmung_fehlt: AtomicBool,
     /// Die letzte Anfrage an `/adminconsent` (nur die Felder, die der Test prüft).
     freigabe: Mutex<Option<FreigabeAnfrage>>,
     freigabe_abgelehnt: AtomicBool,
@@ -74,6 +77,7 @@ impl Zustand {
             gueltigkeit: AtomicU64::new(3600),
             widerrufen: Mutex::new(HashSet::new()),
             fehler: AtomicBool::new(false),
+            zustimmung_fehlt: AtomicBool::new(false),
             freigabe: Mutex::new(None),
             freigabe_abgelehnt: AtomicBool::new(false),
         }
@@ -148,6 +152,12 @@ impl Attrappe {
     /// `/token` antwortet ab jetzt immer mit einem Fehler.
     pub fn fehler_im_token_endpunkt(&self) {
         self.zustand.fehler.store(true, Ordering::SeqCst);
+    }
+
+    /// Das Refresh-Token wird mit `AADSTS65001` abgelehnt: für einen neuen Scope
+    /// (Teams) fehlt die Zustimmung. Das Token ist **nicht** widerrufen.
+    pub fn zustimmung_fehlt(&self) {
+        self.zustand.zustimmung_fehlt.store(true, Ordering::SeqCst);
     }
 
     /// Die letzte Anfrage an `/adminconsent`, falls eine kam.
@@ -289,6 +299,12 @@ async fn token(
             let Some(refresh) = anfrage.refresh_token.as_deref() else {
                 return token_fehler("invalid_request", "refresh_token fehlt");
             };
+            if zustand.zustimmung_fehlt.load(Ordering::SeqCst) {
+                return token_fehler(
+                    "invalid_grant",
+                    "AADSTS65001: The user or administrator has not consented to use the application with ID 'test-client'.",
+                );
+            }
             if Zustand::fach(&zustand.widerrufen).contains(refresh) {
                 return token_fehler("invalid_grant", "Refresh-Token widerrufen");
             }

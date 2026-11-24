@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Die MCP-Tools aus SPEC.md §4 – genau die acht der Tabelle.
+//! Die MCP-Tools aus SPEC.md §4 und docs/aufgaben/05-teams.md.
 //!
 //! Regeln: Antworten sind knappes JSON als Text; `AnmeldungLaeuft` ist **kein**
 //! Fehler, sondern der Hinweistext aus SPEC.md §2; fehlt die Anmeldung ganz, sagt
 //! das Tool dem Agenten, er solle den User auf den quiver-Knopf schicken
-//! (Aufgabe 03); Fehler von Graph werden zu MCP-Fehlern mit Graph-Code und Text –
-//! ohne Token.
+//! (Aufgabe 03); fehlt die Zustimmung für einen neuen Scope (Teams), sagt es
+//! dasselbe (Aufgabe 05); Fehler von Graph werden zu MCP-Fehlern mit Graph-Code
+//! und Text – ohne Token.
 
 use m365_anmeldung::{AnmeldeFehler, Anmeldung};
 use m365_graph::{
@@ -33,6 +34,11 @@ pub const ANMELDUNG_HINWEIS: &str =
 /// (Aufgabe 03). **Kein** MCP-Fehler, damit der Agent es dem User sagen kann.
 pub const NICHT_ANGEMELDET_HINWEIS: &str =
     "Nicht angemeldet – bitte im quiver-Fenster unter Tools → Microsoft 365 auf „Anmelden“ klicken.";
+
+/// Der Satz, wenn die Zustimmung für die Teams-Rechte fehlt (Aufgabe 05).
+/// **Kein** MCP-Fehler, kein Browser, das Refresh-Token bleibt.
+pub const ZUSTIMMUNG_HINWEIS: &str =
+    "Für Teams fehlt die Zustimmung – im quiver-Fenster unter Tools → Microsoft 365 erneut auf „Anmelden“ klicken.";
 
 /// Kopfzeile für `mail_lesen`: Text statt HTML (SPEC.md §4).
 const PREFER_TEXT: &str = "outlook.body-content-type=\"text\"";
@@ -152,22 +158,26 @@ pub struct DateienSuchenAnfrage {
 // Der Server
 // ---------------------------------------------------------------------------
 
-/// Der MCP-Server mit den acht Tools.
+/// Der MCP-Server mit den Tools aus SPEC.md §4 und Aufgabe 05.
 pub struct Quiver<A: Anmeldung> {
-    graph: GraphClient<A>,
+    pub(crate) graph: GraphClient<A>,
     /// Zeitzone für Termine und alle Zeiten in Antworten (`M365_ZEITZONE`,
     /// Standard `Europe/Berlin`).
-    zeitzone: Zeitzone,
+    pub(crate) zeitzone: Zeitzone,
     tool_router: ToolRouter<Self>,
 }
 
 impl<A: Anmeldung + 'static> Quiver<A> {
     /// Baut den Server aus Graph-Client und Zeitzone.
     pub fn neu(graph: GraphClient<A>, zeitzone: impl Into<String>) -> Self {
+        // Mail/Kalender/Dateien (SPEC.md §4) und Teams (Aufgabe 05) sind zwei
+        // Router, damit die Dateien nicht ins Unermessliche wachsen.
+        let mut tool_router = Self::tool_router();
+        tool_router.merge(Self::teams_router());
         Self {
             graph,
             zeitzone: Zeitzone::neu(zeitzone),
-            tool_router: Self::tool_router(),
+            tool_router,
         }
     }
 
@@ -474,19 +484,64 @@ impl<A: Anmeldung + 'static> ServerHandler for Quiver<A> {}
 // Reine Hilfen: Antwortform und Grenzen
 // ---------------------------------------------------------------------------
 
-/// `AnmeldungLaeuft` wird zum Hinweistext, ebenso eine fehlende Anmeldung;
-/// jeder andere Fehler wird zum MCP-Fehler.
+/// Was im Inneren eines Teams-Tools schiefgehen kann: ein Hinweis für den User
+/// (wird Text, kein Fehler) oder ein echter Fehler.
+#[derive(Debug)]
+pub(crate) enum ToolFehler {
+    Hinweis(String),
+    Fehler(ErrorData),
+}
+
+impl From<GraphFehler> for ToolFehler {
+    fn from(fehler: GraphFehler) -> Self {
+        match fehler {
+            GraphFehler::AnmeldungLaeuft => ToolFehler::Hinweis(ANMELDUNG_HINWEIS.to_string()),
+            GraphFehler::Anmeldung(AnmeldeFehler::NichtAngemeldet) => {
+                ToolFehler::Hinweis(NICHT_ANGEMELDET_HINWEIS.to_string())
+            }
+            GraphFehler::Anmeldung(AnmeldeFehler::ZustimmungFehlt) => {
+                ToolFehler::Hinweis(ZUSTIMMUNG_HINWEIS.to_string())
+            }
+            GraphFehler::Graph { status: 403, .. } if fehler.zustimmung_fehlt() => {
+                ToolFehler::Hinweis(ZUSTIMMUNG_HINWEIS.to_string())
+            }
+            anderes => ToolFehler::Fehler(mcp_fehler(anderes)),
+        }
+    }
+}
+
+impl From<ErrorData> for ToolFehler {
+    fn from(fehler: ErrorData) -> Self {
+        ToolFehler::Fehler(fehler)
+    }
+}
+
+/// Ergebnis eines Teams-Tools: Hinweise werden Text, Fehler bleiben Fehler.
+pub(crate) fn ergebnis(inner: Result<String, ToolFehler>) -> Result<String, ErrorData> {
+    match inner {
+        Ok(text) => Ok(text),
+        Err(ToolFehler::Hinweis(text)) => Ok(text),
+        Err(ToolFehler::Fehler(fehler)) => Err(fehler),
+    }
+}
+
+/// Ungültiger Parameter als [`ToolFehler`].
+pub(crate) fn ungueltig_tool(text: impl Into<String>) -> ToolFehler {
+    ToolFehler::Fehler(ErrorData::invalid_params(text.into(), None))
+}
+
+/// `AnmeldungLaeuft` wird zum Hinweistext, ebenso eine fehlende Anmeldung oder
+/// Zustimmung; jeder andere Fehler wird zum MCP-Fehler.
 fn aus_ergebnis<T>(
     ergebnis: Result<T, GraphFehler>,
     weiter: impl FnOnce(T) -> Result<String, ErrorData>,
 ) -> Result<String, ErrorData> {
     match ergebnis {
         Ok(wert) => weiter(wert),
-        Err(GraphFehler::AnmeldungLaeuft) => Ok(ANMELDUNG_HINWEIS.to_string()),
-        Err(GraphFehler::Anmeldung(AnmeldeFehler::NichtAngemeldet)) => {
-            Ok(NICHT_ANGEMELDET_HINWEIS.to_string())
-        }
-        Err(fehler) => Err(mcp_fehler(fehler)),
+        Err(fehler) => match ToolFehler::from(fehler) {
+            ToolFehler::Hinweis(text) => Ok(text),
+            ToolFehler::Fehler(fehler) => Err(fehler),
+        },
     }
 }
 
@@ -499,7 +554,7 @@ fn ungueltig(text: String) -> ErrorData {
     ErrorData::invalid_params(text, None)
 }
 
-fn als_json<T: serde::Serialize>(wert: &T) -> Result<String, ErrorData> {
+pub(crate) fn als_json<T: serde::Serialize>(wert: &T) -> Result<String, ErrorData> {
     serde_json::to_string(wert)
         .map_err(|fehler| ErrorData::internal_error(format!("JSON: {fehler}"), None))
 }

@@ -3,6 +3,8 @@
 
 //! Abnahme: was ein Agent nacheinander tut.
 
+mod common;
+
 use quiver_diagramm::ablage::Ablage;
 
 #[test]
@@ -53,6 +55,25 @@ fn beispielbild() {
     ] {
         let d = quiver_diagramm::Diagramm::aus_json(text).unwrap();
         let png = quiver_diagramm::Szene::aus_zeichnung(&quiver_diagramm::layout(&d).unwrap())
+            .png(1200)
+            .unwrap();
+        std::fs::write(format!("{ziel}/{name}.png"), png).unwrap();
+    }
+}
+
+/// Beispielbilder für die Abnahme: `TMP_BILD=<ordner>`.
+#[test]
+fn weitere_beispielbilder() {
+    let Ok(ziel) = std::env::var("TMP_BILD") else {
+        return;
+    };
+    for (name, diagramm) in [
+        ("weit", common::modell_weit()),
+        ("kreis", common::modell_kreis()),
+    ] {
+        diagramm.pruefen().expect("Modell ist gültig");
+        let zeichnung = quiver_diagramm::layout(&diagramm).expect("Layout");
+        let png = quiver_diagramm::Szene::aus_zeichnung(&zeichnung)
             .png(1200)
             .unwrap();
         std::fs::write(format!("{ziel}/{name}.png"), png).unwrap();

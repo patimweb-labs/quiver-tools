@@ -99,16 +99,33 @@ umgebrochene `zeilen`, `schriftgroesse`), `kanten: Vec<KantenLauf>` (Stützpunkt
 `beschriftung`) und `gruppen: Vec<GruppenRahmen>`.
 
 - **Geschichtet:** Ränge über den längsten Weg, Kreise über Rückkanten, Reihenfolge über
-  Baryzentrum (8 Runden, Gleichstand entscheidet der Modellindex).
+  Baryzentrum (8 Runden, Gleichstand entscheidet der Modellindex). Gerechnet wird in einem
+  Raster aus **Fluss** (in Leserichtung) und **Quere** (quer dazu); derselbe Code gilt für
+  `unten` und `rechts`.
 - **Textmaß** aus der eingebetteten Schrift; die Knotengröße folgt dem Text. Die Form
   vergrößert den Kasten (Raute ×2,0/×2,1, Ellipse ×1,45/×1,5, Zylinder +24,
   Notiz +12), damit der Text hineinpasst.
 - **Keine überlappenden Knoten** (Test über viele zufällige Graphen mit festem Startwert).
-- **Gruppen** umschließen ihre Knoten mit Rand und Kopfzeile; eine leere Gruppe bekommt
-  einen kleinen Rahmen unter dem Diagramm.
-- **Kanten** laufen in den Zwischenräumen der Schichten; Rückkanten und Sprünge außen
-  herum (Kanal rechts bei `unten`, Kanal unten bei `rechts`). Kein Weg führt durch einen
-  Knoten.
+- **Schichtdicke = breitester Knoten der Schicht** (nicht die Summe): zwischen zwei
+  Schichten bleibt nur der Abstand, der wirklich nötig ist.
+- **Gruppen sind Bänder.** Jede Gruppe belegt einen Streifen quer zur Leserichtung, der in
+  ihren Schichten reserviert bleibt. Daraus folgen drei Zusagen, die Tests über viele
+  zufällige Graphen prüfen: ein Rahmen **umschließt nur seine Mitglieder** (kein fremder
+  Knoten berührt ihn), **zwei Rahmen überlappen sich nie**, und die Mitglieder liegen
+  zusammen. Bänder, deren Schichten sich nicht überlappen, teilen sich einen Streifen –
+  so bleibt das Bild kurz. Eine leere Gruppe bekommt einen kleinen Rahmen unter dem
+  Diagramm.
+- **Kanten** verlassen ihren Knoten an einer **eigenen Stelle** (parallele Kanten treten
+  getrennt aus, je Kante eine Bahn im Zwischenraum), laufen zwischen den Schichten und
+  steigen dort in den Zielknoten – bei Raute und Ellipse auf der schrägen bzw. runden
+  Fläche, nicht am Kastenrand. Kein Weg führt durch einen fremden Knoten und keiner durch
+  einen fremden Rahmen: ist ein Rahmen im Weg, sucht der Router im Raster einen Weg außen
+  herum. Rückkanten und Sprünge laufen um den ganzen Inhalt (Kanal rechts bei `unten`,
+  Kanal unten bei `rechts`).
+- **Kantenbeschriftungen** sitzen mittig auf einem Stück **ihrer** Kante, weichen fremden
+  Knoten, fremden Linien und anderen Beschriftungen aus und werden notfalls schmaler
+  umbrochen. Reichlich Platz ist knapp: in sehr dichten Diagrammen kann eine Beschriftung
+  eine fremde Linie kreuzen (der deckende Hintergrund hält sie lesbar).
 - **Gleiche Eingabe → gleiche Ausgabe:** kein Zufall, keine Hash-Reihenfolge.
 - Konstanten (`SCHRIFTGROESSE`, `ZEILENHOEHE`, Abstände, Ränder) sind öffentlich, damit
   Werkzeuge dieselben Maße verwenden.
@@ -133,6 +150,8 @@ let png = szene.png(2000)?;  // Vec<u8>, PNG
 - **Figuren:** `Rechteck` (mit Radius), `Ellipse`, `Raute`, `Zylinder`, `Notiz`,
   `Container` (Rahmen mit Kopfzeile, z. B. Schwimmbahn/Frame), `Text`, `Linie` (gestrichelt,
   mit Pfeilspitze), `Platzhalter` (Bild, das die Bibliothek nicht zeichnet).
+- **`Szene::aus_zeichnung`** legt hinter jede Kantenbeschriftung ein deckendes Rechteck
+  (`BESCHRIFTUNG_RAND`), damit sie auf ihrer Linie lesbar bleibt.
 - **SVG:** `&`, `<`, `>`, `"`, `'` werden maskiert, Steuerzeichen fallen weg; kein
   `<script>`, kein `<image>`, kein `href`, keine `url(…)`, kein externer Verweis. Ein
   Knotentext kann also kein Markup einschleusen.
@@ -171,6 +190,11 @@ CARGO_TARGET_DIR=target-pi cargo test -p quiver-diagramm
 - `tests/layout.rs`: **80 zufällige Graphen** (fester Startwert, beide Richtungen, alle
   Formen und Farben, Gruppen, Kreise): keine überlappenden Knoten, Text passt, Gruppen
   umschließen, kein Kantenpunkt in einem Knoten, gleiches Layout bei gleicher Eingabe.
+  Dazu die Zusagen der Abnahme: Rahmen umschließen nur ihre Mitglieder und überlappen sich
+  nie, Kanten meiden fremde Knoten und fremde Rahmen, parallele Kanten treten getrennt aus,
+  Beschriftungen liegen frei auf ihrer Kante (mit deckendem Hintergrund), die Schichtdicke
+  folgt dem breitesten Knoten – und alle Zusagen auf einmal für die beiden großen
+  Abnahmebilder (`tests/common`, 25 Knoten mit drei Gruppen, Kreis mit Mehrfachkanten).
 - `tests/zeichnen.rs`: XML-/SVG-Einschleusung über Texte, wohlgeformtes SVG ohne
   Ereignis-/Verweisattribute, PNG-Maße und -Grenze, eingebettete Schrift wird wirklich
   gezeichnet (dunkle Bildpunkte), Umbruch hält die Breite ein.
@@ -178,6 +202,7 @@ CARGO_TARGET_DIR=target-pi cargo test -p quiver-diagramm
 
 ## Grenzen
 
-Kein freies Layout, keine Ports, keine Kreuzungsoptimierung über das Baryzentrum hinaus,
-keine Bilder, keine Farbverläufe, kein Löschen. Was fehlt, steht in
-[docs/offen.md](../../docs/offen.md) und im ADR.
+Kein freies Layout, keine frei wählbaren Ports, keine Kreuzungsoptimierung über das
+Baryzentrum hinaus, keine Bilder, keine Farbverläufe, kein Löschen. Beschriftungen werden
+nach bestem Bemühen gesetzt: in sehr dichten Diagrammen kann eine fremde Linie unter einer
+Beschriftung liegen. Was fehlt, steht in [docs/offen.md](../../docs/offen.md) und im ADR.

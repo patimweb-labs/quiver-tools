@@ -25,6 +25,12 @@ use std::fmt::Write as _;
 /// Größte Kantenlänge eines PNG in Pixeln (Aufgabe 16).
 pub const MAX_PNG_KANTE: u32 = 2000;
 
+/// Rand um eine Kantenbeschriftung (deckender Hintergrund).
+pub const BESCHRIFTUNG_RAND: f32 = 3.0;
+
+/// Eckenradius des Beschriftungshintergrunds.
+pub const BESCHRIFTUNG_ECKEN: f32 = 4.0;
+
 /// Die eingebettete Schrift: Kennung für SVG und `fontdb`.
 pub const SCHRIFT_FAMILIE: &str = "IBM Plex Sans";
 
@@ -256,13 +262,21 @@ impl Szene {
 
         for kante in &zeichnung.kanten {
             if let Some(beschriftung) = &kante.beschriftung {
+                let mass = Rechteck::neu(
+                    beschriftung.position.x,
+                    beschriftung.position.y,
+                    beschriftung.breite,
+                    hoechste_zeile(&beschriftung.zeilen),
+                );
+                // Deckender Hintergrund: die Beschriftung liegt auf ihrer
+                // eigenen Linie und verdeckt sie sauber.
+                szene.formen.push(Figur::Rechteck {
+                    mass: mass.erweitert(BESCHRIFTUNG_RAND),
+                    radius: BESCHRIFTUNG_ECKEN,
+                    farbe: None,
+                });
                 szene.formen.push(Figur::Text {
-                    mass: Rechteck::neu(
-                        beschriftung.position.x,
-                        beschriftung.position.y,
-                        beschriftung.breite,
-                        hoechste_zeile(&beschriftung.zeilen),
-                    ),
+                    mass,
                     text: Text {
                         zeilen: beschriftung.zeilen.clone(),
                         groesse: crate::layout::SCHRIFTGROESSE,

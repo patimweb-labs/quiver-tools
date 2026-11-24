@@ -71,11 +71,10 @@ impl Werkzeug for Drawio {
             Feld {
                 name: ORDNER,
                 titel: "Arbeitsordner",
-                art: FeldArt::Text,
+                art: FeldArt::Ordner,
                 pflicht: true,
                 standard: None,
-                hilfe: "Absoluter Pfad, z. B. ~/Diagramme – wird angelegt. Alle Dateien liegen \
-                        darin; Pfade nach außen sind gesperrt.",
+                hilfe: "In diesem Ordner liegen die Diagramme; Pfade nach außen sind gesperrt.",
                 link: None,
             },
             Feld {
@@ -134,9 +133,8 @@ mod tests {
             felder.iter().map(|feld| feld.name).collect::<Vec<_>>(),
             vec!["ordner", "schreiben"]
         );
-        assert_eq!(felder[0].art, FeldArt::Text);
+        assert_eq!(felder[0].art, FeldArt::Ordner);
         assert!(felder[0].pflicht);
-        assert!(felder[0].hilfe.contains("~/"));
         assert_eq!(felder[1].art, FeldArt::Schalter);
         assert!(!felder[1].pflicht);
         // Standard an (Aufgabe 16).

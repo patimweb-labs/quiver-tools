@@ -31,6 +31,8 @@ pub enum FeldArt {
     Zahl,
     Schalter,
     Url,
+    /// Ein Ordner auf dem Gerät; quiver öffnet dafür den Datei-Dialog.
+    Ordner,
     /// Feste Auswahl (Wert, Anzeige).
     Auswahl(Vec<(String, String)>),
 }

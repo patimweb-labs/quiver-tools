@@ -73,6 +73,7 @@ pub enum Art {
     Zahl,
     Schalter,
     Url,
+    Ordner,
     Auswahl { optionen: Vec<Wahl> },
 }
 
@@ -193,6 +194,7 @@ fn als_art(art: FeldArt) -> Art {
         FeldArt::Zahl => Art::Zahl,
         FeldArt::Schalter => Art::Schalter,
         FeldArt::Url => Art::Url,
+        FeldArt::Ordner => Art::Ordner,
         FeldArt::Auswahl(optionen) => Art::Auswahl {
             optionen: optionen
                 .into_iter()

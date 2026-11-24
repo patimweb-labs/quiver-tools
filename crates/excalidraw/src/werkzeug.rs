@@ -46,11 +46,10 @@ impl Werkzeug for Excalidraw {
             Feld {
                 name: ORDNER,
                 titel: "Arbeitsordner",
-                art: FeldArt::Text,
+                art: FeldArt::Ordner,
                 pflicht: true,
                 standard: None,
-                hilfe: "Voller Pfad, z. B. ~/Diagramme. Der Ordner wird angelegt; alle Pfade im \
-                        Werkzeug sind relativ dazu und verlassen ihn nie.",
+                hilfe: "In diesem Ordner liegen die Diagramme; Pfade nach außen sind gesperrt.",
                 link: None,
             },
             Feld {
@@ -133,7 +132,7 @@ mod tests {
             felder.iter().map(|feld| feld.name).collect::<Vec<_>>(),
             vec!["ordner", "schreiben"]
         );
-        assert_eq!(felder[0].art, FeldArt::Text);
+        assert_eq!(felder[0].art, FeldArt::Ordner);
         assert!(felder[0].pflicht);
         assert_eq!(felder[1].art, FeldArt::Schalter);
         assert_eq!(felder[1].standard, Some("an"));

@@ -21,6 +21,8 @@ selbst auf – es läuft mit jedem MCP-Client.
 | `mail_senden` | Mail senden (**verändernd**) | `POST /me/sendMail` |
 | `termine` | Termine eines Zeitraums | `GET /me/calendarView` |
 | `termin_anlegen` | Termin anlegen (**verändernd**) | `POST /me/events` |
+| `termin_loeschen` | Termin endgültig löschen (**verändernd**) | `DELETE /me/events/{id}` |
+| `mail_loeschen` | Mail in den Papierkorb legen, nicht endgültig (**verändernd**) | `POST /me/messages/{id}/move` |
 | `dateien_suchen` | Dateien in OneDrive suchen | `GET /me/drive/root/search(q='…')` |
 | `abmelden` | Refresh-Token löschen | – |
 
@@ -78,6 +80,7 @@ Admin-Zustimmung für neoimpulse.de erteilt – siehe [docs/entra-app.md](docs/e
 | `teams_person_finden` | Personen über Name, E-Mail oder UPN finden | `GET /users?$search=…` (`ConsistencyLevel: eventual`) |
 | `teams_reagieren` | auf eine Nachricht reagieren oder die Reaktion entfernen (**verändernd**) | `POST …/setReaction`, `…/unsetReaction` |
 | `teams_als_gelesen` | Chat als gelesen oder wieder ungelesen markieren | `POST /chats/{chat}/markChatReadForUser`, `…/markChatUnreadForUser` |
+| `teams_nachricht_loeschen` | eine **eigene** Nachricht löschen (softDelete, wiederherstellbar) (**verändernd**) | `POST …/messages/{id}/softDelete` |
 
 - **Namen statt Ids:** `team`, `kanal` und `chat` dürfen Id **oder** Name sein, bei Chats auch das
   Thema oder ein Mitglied. Aufgelöst wird über die Listen. Passen mehrere, nennt das Tool die
@@ -129,6 +132,8 @@ neoimpulse.de erteilt): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.Rea
 | `sharepoint_listeneintraege` | Einträge einer Liste samt Spalten | `GET …/lists/{liste}/items?$expand=fields` |
 | `sharepoint_listeneintrag_anlegen` | Eintrag anlegen (**verändernd**) | `POST …/lists/{liste}/items` |
 | `sharepoint_listeneintrag_aendern` | Spaltenwerte ändern (**verändernd**) | `PATCH …/items/{id}/fields` |
+| `datei_loeschen` | Datei oder Ordner in den Papierkorb legen (**verändernd**) | `DELETE /me/drive/items/{id}`, `DELETE /drives/{d}/items/{id}` |
+| `sharepoint_listeneintrag_loeschen` | Listeneintrag löschen (**verändernd**) | `DELETE …/lists/{liste}/items/{id}` |
 
 - **Wo liegt die Datei?** Ohne `site` arbeiten die Datei-Tools im OneDrive des Users (`/me/drive`).
   Mit `site` (Id oder Name) in einer Bibliothek; ohne `bibliothek` in der Dokumente-Bibliothek.
@@ -153,6 +158,8 @@ neoimpulse.de erteilt): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.Rea
 | `todo_aufgaben` | Aufgaben einer Liste, optional nur offene | `GET /me/todo/lists/{liste}/tasks` |
 | `todo_aufgabe_anlegen` | Aufgabe anlegen (**verändernd**) | `POST /me/todo/lists/{liste}/tasks` |
 | `todo_aufgabe_erledigen` | Aufgabe erledigen oder wieder öffnen (**verändernd**) | `PATCH …/tasks/{id}` |
+| `planner_aufgabe_loeschen` | Aufgabe endgültig löschen – **mit ETag** (**verändernd**) | `DELETE /planner/tasks/{id}` (`If-Match`) |
+| `todo_aufgabe_loeschen` | Aufgabe aus einer To-Do-Liste löschen (**verändernd**) | `DELETE /me/todo/lists/{liste}/tasks/{id}` |
 
 - **Planner verlangt ein ETag:** Erst wird die Aufgabe gelesen, dann mit `If-Match` geändert. Liefert
   Graph kein ETag, gibt es **keinen** PATCH – das Tool meldet es und ändert nichts.
@@ -166,6 +173,7 @@ neoimpulse.de erteilt): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.Rea
 |---|---|---|
 | `kontakte_suchen` | Adressbuch des Users durchsuchen | `GET /me/contacts?$search=` |
 | `kontakt_anlegen` | Kontakt anlegen (**verändernd**) | `POST /me/contacts` |
+| `kontakt_loeschen` | Kontakt löschen (**verändernd**) | `DELETE /me/contacts/{id}` |
 | `personen_suchen` | Kollegen mit Abteilung, Telefon und Mail | `GET /me/people?$search=` |
 
 ### OneNote
@@ -177,6 +185,7 @@ neoimpulse.de erteilt): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.Rea
 | `onenote_seiten` | Seiten eines Abschnitts | `GET …/sections/{id}/pages` |
 | `onenote_seite_lesen` | Seite als Text (HTML → Text, `max_zeichen`) | `GET …/pages/{id}`, `…/pages/{id}/content` |
 | `onenote_seite_anlegen` | Seite anlegen (**verändernd**) | `POST …/sections/{id}/pages` |
+| `onenote_seite_loeschen` | Seite löschen (**verändernd**) | `DELETE /me/onenote/pages/{id}` |
 
 Bei `onenote_seite_anlegen` werden Titel und Text **HTML-escaped** eingesetzt: ein `<b>` im Text
 bleibt Text und wird nicht zu Markup.
@@ -192,11 +201,59 @@ kommen ohne `$select`, `$top` ist dort erlaubt (`docs/aufgaben/07-fehler-aus-dem
 - **Namen statt Ids.** Site, Bibliothek, Liste, Plan, Bucket, To-Do-Liste, Abschnitt und Notizbuch
   dürfen Id **oder** Name sein. Passen mehrere, nennt das Tool die Kandidaten und **tut nichts**.
 - **429/503** mit `Retry-After` werden bei **lesenden** Aufrufen höchstens zweimal wiederholt. Ein
-  POST, PATCH oder PUT wird **nie** automatisch wiederholt – sonst entstünden doppelte Einträge.
+  POST, PATCH, PUT oder DELETE wird **nie** automatisch wiederholt – sonst entstünden doppelte
+  Einträge.
 - **Fehlt die Zustimmung** für die neuen Rechte, antwortet das Tool mit einem Hinweis (kein Fehler):
   „Für SharePoint, Planner, To Do, Kontakte oder OneNote fehlt die Zustimmung – im quiver-Fenster
   unter Tools → Microsoft 365 erneut auf ‚Anmelden‘ klicken.“ Es öffnet **keinen** Browser und
   löscht das Refresh-Token **nicht**. Der Teams-Hinweis bleibt unverändert.
+
+### Leere Antworten sind Erfolg (204)
+
+Microsoft Graph antwortet auf `PATCH`, `setReaction`, `markChatReadForUser`, `softDelete` und
+`DELETE` mit **204 und leerem Rumpf**. Das ist der Erfolg, kein Fehler. Der Graph-Client trennt
+deshalb „Antwort mit Inhalt“ von „Antwort ohne Inhalt“: `patch_ohne_antwort`, `post_ohne_antwort`
+und `delete` lesen nichts aus dem Rumpf – ein 2xx ist Erfolg, ein 4xx/5xx bleibt ein Fehler
+(`docs/aufgaben/09-leere-antworten-und-loeschen.md`).
+
+Die Tool-Antworten bleiben trotzdem vollständig: wo der neue Stand gebraucht wird, liest das Tool ihn
+mit **einem GET** danach (`planner_aufgabe_aendern`, `todo_aufgabe_erledigen`,
+`sharepoint_listeneintrag_aendern`). Vorher sah das aus wie ein Fehlschlag – „invalid type: null,
+expected struct PlannerAufgabe“ –, obwohl die Änderung längst geschrieben war.
+
+### Löschen
+
+Für alles, was m365 anlegen kann, gibt es ein Löschen-Tool. Alle sind **destruktiv**
+(`destructiveHint`), nehmen eine Id (Dateien auch einen Pfad, To-Do-Aufgaben auch einen Titel in
+der genannten Liste), werden nie wiederholt und melden genau, was verschwunden ist (Titel bzw.
+Name):
+
+| Tool | Graph | Was passiert mit den Daten |
+|---|---|---|
+| `termin_loeschen` | `DELETE /me/events/{id}` | endgültig weg; Absagen an Teilnehmer verschickt Graph dabei **nicht** |
+| `mail_loeschen` | `POST /me/messages/{id}/move` → `deleteditems` | Papierkorb, **nicht** endgültig |
+| `datei_loeschen` | `DELETE /drives/{d}/items/{id}` (bzw. `/me/drive/items/{id}`) | Papierkorb von OneDrive/SharePoint, gilt auch für Ordner |
+| `planner_aufgabe_loeschen` | `DELETE /planner/tasks/{id}` mit `If-Match` | endgültig weg; ohne ETag **kein** DELETE |
+| `todo_aufgabe_loeschen` | `DELETE /me/todo/lists/{l}/tasks/{t}` | gelöscht (To Do führt keinen Papierkorb für Aufgaben) |
+| `onenote_seite_loeschen` | `DELETE /me/onenote/pages/{id}` | in den Papierkorb des Notizbuchs |
+| `kontakt_loeschen` | `DELETE /me/contacts/{id}` | endgültig weg |
+| `sharepoint_listeneintrag_loeschen` | `DELETE /sites/{s}/lists/{l}/items/{id}` | in den Papierkorb der Liste |
+| `teams_nachricht_loeschen` | `POST …/messages/{id}/softDelete` | nur **eigene** Nachrichten; wiederherstellbar |
+
+Jedes Löschen-Tool liest zuerst (Titel/Name für die Meldung, und damit eine falsche Id keinen DELETE
+auslöst). Erst danach geht der schreibende Aufruf an Graph.
+
+### Listeneinträge: schreibgeschützte Spalten und 403
+
+`sharepoint_listeneintrag_aendern` schreibt nach `…/items/{id}/fields` (nicht auf `…/items/{id}`).
+Spalten, die SharePoint selbst führt – `LinkTitle`, `ID`, `Created`, `Modified`, `Author`, `Editor`
+und alles mit `_` am Anfang –, werden **vor dem Senden herausgefiltert**; die Antwort nennt sie
+unter `ignoriert` und sagt mit `hinweis`, warum. Bleibt danach nichts übrig, geht **keine** Anfrage
+an Graph.
+
+Antwortet Graph mit **403 `accessDenied`**, ist das kein Fehler im Code, sondern das Schreibrecht der
+Liste: das Tool antwortet dann mit „Kein Schreibrecht auf diese Liste (SharePoint-Rechte der Liste).“
+statt mit dem Rohfehler.
 
 ## Anmeldung
 

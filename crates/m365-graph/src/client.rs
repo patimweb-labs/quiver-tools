@@ -15,6 +15,13 @@
 //! * Graph leitet `/content` mit 302 auf eine vor-signierte Adresse um. Dieses
 //!   eine Ziel wird **ohne** Token geholt – der Link selbst ist die Erlaubnis.
 //!
+//! Aufgabe 09: Graph antwortet auf `PATCH` und `DELETE` oft mit **204 und leerem
+//! Rumpf**, ebenso auf `setReaction`, `markChatReadForUser` und `softDelete`. Ein
+//! leerer Rumpf ist bei diesen Aufrufen ein **Erfolg**, kein Grund, ein Modell zu
+//! erwarten. Dafür stehen [`GraphClient::patch_ohne_antwort`],
+//! [`GraphClient::post_ohne_antwort`] und [`GraphClient::delete`] bereit – sie
+//! lesen nichts aus dem Rumpf.
+//!
 //! Tokens stehen nie in einem Fehlertext und nie in einem Log.
 
 use std::time::Duration;
@@ -44,6 +51,7 @@ enum Methode {
     Post,
     Patch,
     Put,
+    Delete,
 }
 
 /// Ein Körper für Graph: JSON oder reiner Text (Dateiinhalt, OneNote-HTML).
@@ -249,20 +257,41 @@ impl<A: Anmeldung> GraphClient<A> {
         Self::lesen(wert)
     }
 
-    /// `PATCH <pfad>` mit JSON-Körper und zusätzlichen Kopfzeilen (`If-Match`).
+    /// `PATCH <pfad>` ohne erwartete Antwort (Planner, To Do, Listenfelder).
     ///
-    /// Wird nie automatisch wiederholt: ein zweites PATCH könnte eine Änderung
-    /// doppelt anwenden.
-    pub async fn patch_mit_kopf<T: DeserializeOwned>(
+    /// Graph antwortet hier mit **204 und leerem Rumpf**. Genau das ist der
+    /// Erfolg: es wird nichts gelesen, ein 4xx/5xx bleibt ein Fehler. Wird nie
+    /// automatisch wiederholt.
+    ///
+    /// Einen PATCH, der ein Modell zurückgibt, gibt es bei Graph nicht – deshalb
+    /// **nur** diese Fassung (Aufgabe 09).
+    pub async fn patch_ohne_antwort(
         &self,
         pfad: &str,
         body: &Value,
         kopfzeilen: &[(&str, &str)],
-    ) -> Result<T, GraphFehler> {
-        let wert = self
-            .anfrage(Methode::Patch, pfad, &[], &Koerper::Json(body), kopfzeilen)
-            .await?;
-        Self::lesen(wert)
+    ) -> Result<(), GraphFehler> {
+        self.anfrage_ohne_inhalt(Methode::Patch, pfad, &Koerper::Json(body), kopfzeilen)
+            .await
+    }
+
+    /// `POST <pfad>` ohne erwartete Antwort (`setReaction`, `markChatReadForUser`,
+    /// `softDelete`, `move`).
+    ///
+    /// 204 oder leerer Rumpf ist Erfolg; ein 2xx mit Inhalt wird ebenfalls
+    /// angenommen, nur eben nicht gelesen. Wird nie automatisch wiederholt.
+    pub async fn post_ohne_antwort(&self, pfad: &str, body: &Value) -> Result<(), GraphFehler> {
+        self.anfrage_ohne_inhalt(Methode::Post, pfad, &Koerper::Json(body), &[])
+            .await
+    }
+
+    /// `DELETE <pfad>` – mit optionalen Kopfzeilen (`If-Match` bei Planner).
+    ///
+    /// Graph antwortet mit **204 und leerem Rumpf**; das ist der Erfolg. Wird nie
+    /// automatisch wiederholt: ein zweites DELETE würde nur noch 404 liefern.
+    pub async fn delete(&self, pfad: &str, kopfzeilen: &[(&str, &str)]) -> Result<(), GraphFehler> {
+        self.anfrage_ohne_inhalt(Methode::Delete, pfad, &Koerper::Kein, kopfzeilen)
+            .await
     }
 
     /// `PUT <pfad>?...` mit einem Textkörper (einfacher Upload bis 4 MB).
@@ -313,6 +342,26 @@ impl<A: Anmeldung> GraphClient<A> {
         self.anfrage_url(methode, ziel, koerper, kopfzeilen).await
     }
 
+    /// Wie [`GraphClient::anfrage`], aber der Rumpf wird nicht gelesen: 204 und
+    /// leerer Rumpf sind Erfolg (Aufgabe 09).
+    async fn anfrage_ohne_inhalt(
+        &self,
+        methode: Methode,
+        pfad: &str,
+        koerper: &Koerper<'_>,
+        kopfzeilen: &[(&str, &str)],
+    ) -> Result<(), GraphFehler> {
+        let ziel = reqwest::Url::parse(&format!("{}{}", self.basis, pfad))
+            .map_err(|fehler| GraphFehler::Antwort(format!("Adresse unbrauchbar: {fehler}")))?;
+        // 429/503 nur bei lesenden Aufrufen wiederholen: ein zweiter POST,
+        // PATCH, PUT oder DELETE könnte doppelt wirken (Aufgabe 05/06/09).
+        let wiederholbar = methode == Methode::Get;
+        let antwort = self
+            .anfrage_roh(methode, ziel, koerper, kopfzeilen, wiederholbar)
+            .await?;
+        auswerten_ohne_inhalt(antwort)
+    }
+
     async fn anfrage_url(
         &self,
         methode: Methode,
@@ -346,6 +395,7 @@ impl<A: Anmeldung> GraphClient<A> {
                 Methode::Post => self.http.post(ziel.clone()),
                 Methode::Patch => self.http.patch(ziel.clone()),
                 Methode::Put => self.http.put(ziel.clone()),
+                Methode::Delete => self.http.delete(ziel.clone()),
             }
             .bearer_auth(&token);
             for (name, wert) in kopfzeilen {
@@ -470,6 +520,16 @@ fn auswerten(antwort: RoheAntwort) -> Result<Value, GraphFehler> {
             .map_err(|fehler| GraphFehler::Antwort(format!("kein JSON: {fehler}")));
     }
     Err(fehler_aus(&antwort))
+}
+
+/// Antwort ohne Inhalt auswerten: 2xx ist Erfolg, egal ob ein Rumpf dabei ist
+/// (Aufgabe 09). Alles andere wird zum Graph-Fehler.
+fn auswerten_ohne_inhalt(antwort: RoheAntwort) -> Result<(), GraphFehler> {
+    if antwort.erfolg() {
+        Ok(())
+    } else {
+        Err(fehler_aus(&antwort))
+    }
 }
 
 /// Liest höchstens [`HOECHSTENS_ANTWORT`] Bytes; mehr landet nicht im Speicher.
@@ -653,6 +713,28 @@ mod tests {
         assert!(antwort(204).erfolg());
         assert!(!antwort(302).erfolg());
         assert!(!antwort(404).erfolg());
+    }
+
+    #[test]
+    fn leerer_rumpf_ist_bei_aenderungen_ein_erfolg() {
+        let antwort = |status, text: &str| RoheAntwort {
+            status,
+            location: None,
+            text: text.to_string(),
+            abgeschnitten: false,
+        };
+        // 204 ohne Rumpf: Erfolg, kein Modell erwartet (Aufgabe 09).
+        assert!(auswerten_ohne_inhalt(antwort(204, "")).is_ok());
+        // 200 mit Rumpf: wird nicht gelesen, ist aber auch Erfolg.
+        assert!(auswerten_ohne_inhalt(antwort(200, r#"{"ok":true}"#)).is_ok());
+        // Ein Fehler bleibt ein Fehler.
+        assert!(matches!(
+            auswerten_ohne_inhalt(antwort(403, r#"{"error":{"code":"accessDenied"}}"#)),
+            Err(GraphFehler::Graph { status: 403, .. })
+        ));
+        // Und ein leerer Rumpf ist als JSON `Null` – genau das war der Fehler:
+        // daraus lässt sich kein `PlannerAufgabe` bauen.
+        assert_eq!(auswerten(antwort(204, "")).expect("Erfolg"), Value::Null);
     }
 
     #[test]

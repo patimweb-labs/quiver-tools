@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! SharePoint- und OneDrive-Tools (docs/aufgaben/06-graph-erweiterung.md).
+//! SharePoint- und OneDrive-Tools (docs/aufgaben/06-graph-erweiterung.md,
+//! docs/aufgaben/09-leere-antworten-und-loeschen.md).
 //!
 //! Regeln wie bei Teams: Namen dürfen Ids ersetzen (aufgelöst über die Listen,
 //! mehrdeutig → Kandidaten und keine Aktion), Antworten sind knappes JSON, und
@@ -10,6 +11,11 @@
 //! Dateiinhalt: Textdateien werden gelesen und auf `max_zeichen` gekürzt;
 //! Office-Dateien kann Graph nur als PDF ausgeben (kein Text), PDF und Binäres
 //! liefern nur Metadaten. Das sagt die Antwort mit `hinweis`.
+//!
+//! Aufgabe 09: `PATCH` auf Listenfelder antwortet mit **204 und leerem Rumpf** –
+//! Erfolg, den neuen Stand holt ein GET. Schreibgeschützte Spalten fliegen vor dem
+//! Senden raus, ein 403 auf einer Liste wird zum Hinweis auf die Listenrechte.
+//! Löschen geht in den Papierkorb von OneDrive/SharePoint, nie endgültig.
 
 use m365_anmeldung::Anmeldung;
 use m365_graph::{GraphFehler, Laufwerk, LaufwerkEintrag, Liste, Listeneintrag, Website};
@@ -33,6 +39,14 @@ const HOECHSTENS_LISTE: usize = 200;
 /// `$select` für Laufwerkseinträge.
 const EINTRAG_FELDER: &str =
     "id,name,size,webUrl,createdDateTime,lastModifiedDateTime,folder,file,parentReference";
+
+/// Der Satz bei 403 auf einer Liste: die Rechte liegen bei SharePoint, nicht am Code.
+pub const KEIN_SCHREIBRECHT_HINWEIS: &str =
+    "Kein Schreibrecht auf diese Liste (SharePoint-Rechte der Liste).";
+
+/// Spalten, die SharePoint selbst führt – sie werden **vor** dem Senden
+/// herausgefiltert (Aufgabe 09), sonst antwortet Graph mit `accessDenied`.
+const NUR_LESEN_FELDER: &[&str] = &["LinkTitle", "ID", "Created", "Modified", "Author", "Editor"];
 
 // ---------------------------------------------------------------------------
 // Parameter der Tools
@@ -173,6 +187,30 @@ pub struct SharepointListeneintragAendernAnfrage {
     pub felder: Value,
 }
 
+/// Parameter für `datei_loeschen`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DateiLoeschenAnfrage {
+    /// Datei oder Ordner als Pfad (`Projekte/Nord/Notiz.md`) oder Id.
+    pub datei: String,
+    /// Site als Id oder Name. Ohne `site`: das OneDrive des Users.
+    #[serde(default)]
+    pub site: Option<String>,
+    /// Bibliothek als Id oder Name (optional).
+    #[serde(default)]
+    pub bibliothek: Option<String>,
+}
+
+/// Parameter für `sharepoint_listeneintrag_loeschen`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SharepointListeneintragLoeschenAnfrage {
+    /// Site als Id oder Name.
+    pub site: String,
+    /// Liste als Id oder Anzeigename.
+    pub liste: String,
+    /// Id des Eintrags (aus `sharepoint_listeneintraege`).
+    pub eintrag: String,
+}
+
 // ---------------------------------------------------------------------------
 // Wo liegen die Dateien?
 // ---------------------------------------------------------------------------
@@ -260,6 +298,45 @@ fn felder_pruefen(felder: &Value) -> Result<Value, ToolFehler> {
         _ => Err(ungueltig_tool(
             "felder muss ein JSON-Objekt mit mindestens einer Spalte sein, z. B. {\"Titel\": \"Erster\"}",
         )),
+    }
+}
+
+/// Ist die Spalte eine, die SharePoint selbst führt (`LinkTitle`, `ID`, `Created`,
+/// `Modified`, `Author`, `Editor` oder etwas mit `_` am Anfang)?
+fn ist_nur_lesen(spalte: &str) -> bool {
+    spalte.starts_with('_')
+        || NUR_LESEN_FELDER
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(spalte))
+}
+
+/// Schreibgeschützte Spalten herausnehmen: was zu ändern bleibt, und was
+/// ignoriert wurde (für den Hinweis in der Antwort).
+fn schreibbare_felder(felder: &Value) -> (Value, Vec<String>) {
+    let mut bleibt = serde_json::Map::new();
+    let mut ignoriert = Vec::new();
+    if let Value::Object(karte) = felder {
+        for (spalte, wert) in karte {
+            if ist_nur_lesen(spalte) {
+                ignoriert.push(spalte.clone());
+            } else {
+                bleibt.insert(spalte.clone(), wert.clone());
+            }
+        }
+    }
+    (Value::Object(bleibt), ignoriert)
+}
+
+/// Ein 403 auf einer Liste heißt „die Liste ist schreibgeschützt“ – nicht „kaputt“.
+fn liste_fehler(fehler: GraphFehler) -> ToolFehler {
+    if fehler.zustimmung_fehlt() {
+        return ToolFehler::from(fehler);
+    }
+    match &fehler {
+        GraphFehler::Graph { status: 403, .. } => {
+            ToolFehler::Hinweis(KEIN_SCHREIBRECHT_HINWEIS.to_string())
+        }
+        _ => ToolFehler::from(fehler),
     }
 }
 
@@ -391,7 +468,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
 
     /// Einen Listeneintrag ändern.
     #[tool(
-        description = "Die Spaltenwerte eines SharePoint-Listeneintrags ändern. Verändert die Liste.",
+        description = "Die Spaltenwerte eines SharePoint-Listeneintrags ändern. Schreibgeschützte Spalten (LinkTitle, ID, Created, Modified, Author, Editor, _…) werden vorher herausgefiltert. Verändert die Liste.",
         annotations(destructive_hint = true)
     )]
     pub async fn sharepoint_listeneintrag_aendern(
@@ -399,6 +476,30 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         Parameters(anfrage): Parameters<SharepointListeneintragAendernAnfrage>,
     ) -> Result<String, ErrorData> {
         ergebnis_erweitert(self.sharepoint_listeneintrag_aendern_lauf(anfrage).await)
+    }
+
+    /// Eine Datei oder einen Ordner löschen.
+    #[tool(
+        description = "Eine Datei oder einen Ordner löschen – in den Papierkorb von OneDrive/SharePoint, nicht endgültig. Verändert den Speicher des Users.",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn datei_loeschen(
+        &self,
+        Parameters(anfrage): Parameters<DateiLoeschenAnfrage>,
+    ) -> Result<String, ErrorData> {
+        ergebnis_erweitert(self.datei_loeschen_lauf(anfrage).await)
+    }
+
+    /// Einen Listeneintrag löschen.
+    #[tool(
+        description = "Einen Eintrag aus einer SharePoint-Liste löschen (in den Papierkorb der Liste). Verändert die Liste.",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn sharepoint_listeneintrag_loeschen(
+        &self,
+        Parameters(anfrage): Parameters<SharepointListeneintragLoeschenAnfrage>,
+    ) -> Result<String, ErrorData> {
+        ergebnis_erweitert(self.sharepoint_listeneintrag_loeschen_lauf(anfrage).await)
     }
 }
 
@@ -820,34 +921,127 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         &self,
         anfrage: SharepointListeneintragAendernAnfrage,
     ) -> Result<String, ToolFehler> {
-        let felder = felder_pruefen(&anfrage.felder)?;
+        let (felder, ignoriert) = schreibbare_felder(&felder_pruefen(&anfrage.felder)?);
+        if felder.as_object().is_some_and(|karte| karte.is_empty()) {
+            return Err(ungueltig_tool(format!(
+                "nur schreibgeschützte Spalten genannt ({}) – SharePoint führt sie selbst, es wurde nichts geändert.",
+                ignoriert.join(", ")
+            )));
+        }
         let eintrag = anfrage.eintrag.trim();
         if eintrag.is_empty() {
             return Err(ungueltig_tool("eintrag fehlt"));
         }
         let site = self.site_finden(&anfrage.site).await?;
         let liste = self.liste_finden(&site, &anfrage.liste).await?;
-        let geaendert: Value = self
+        let felder_pfad = format!(
+            "/sites/{}/lists/{}/items/{}/fields",
+            kodieren(&site.id),
+            kodieren(&liste.id),
+            kodieren(eintrag)
+        );
+        // Graph antwortet mit 204 und leerem Rumpf (Aufgabe 09): Erfolg. Den
+        // Stand danach holt der GET auf dieselben Felder.
+        self.graph
+            .patch_ohne_antwort(&felder_pfad, &felder, &[])
+            .await
+            .map_err(liste_fehler)?;
+        let stand: Value = self
             .graph
-            .patch_mit_kopf(
-                &format!(
-                    "/sites/{}/lists/{}/items/{}/fields",
-                    kodieren(&site.id),
-                    kodieren(&liste.id),
-                    kodieren(eintrag)
-                ),
-                &felder,
-                &[],
-            )
-            .await?;
-        als_json(&json!({
+            .get(&felder_pfad, &[])
+            .await
+            .map_err(liste_fehler)?;
+
+        let mut antwort = json!({
             "liste": liste.text(),
             "eintrag": eintrag,
             "geaendert": true,
-            "felder": geaendert,
+            "felder": stand,
+        });
+        if !ignoriert.is_empty() {
+            antwort["ignoriert"] = json!(ignoriert);
+            antwort["hinweis"] = json!(
+                "Schreibgeschützte Spalten wurden vor dem Senden herausgefiltert (SharePoint führt sie selbst)."
+            );
+        }
+        als_json(&antwort).map_err(ToolFehler::from)
+    }
+
+    async fn datei_loeschen_lauf(
+        &self,
+        anfrage: DateiLoeschenAnfrage,
+    ) -> Result<String, ToolFehler> {
+        let datei = anfrage.datei.trim();
+        if datei.is_empty() {
+            return Err(ungueltig_tool("datei fehlt"));
+        }
+        let ort = self
+            .ort_finden(anfrage.site.as_deref(), anfrage.bibliothek.as_deref())
+            .await?;
+        let pfad = eintrag_pfad(&ort, datei);
+        // Erst die Metadaten: der Name gehört in die Meldung, und eine falsche Id
+        // soll keinen DELETE auslösen.
+        let eintrag: LaufwerkEintrag = self
+            .graph
+            .get(&pfad, &[("$select", EINTRAG_FELDER.to_string())])
+            .await?;
+        // `DELETE …/items/{id}` legt in den Papierkorb – für Dateien und Ordner.
+        let loesch_pfad = format!("{}/items/{}", ort.basis(), kodieren(&eintrag.id));
+        self.graph.delete(&loesch_pfad, &[]).await?;
+        als_json(&json!({
+            "geloescht": true,
+            "name": eintrag.name,
+            "id": eintrag.id,
+            "art": if eintrag.ist_ordner() { "ordner" } else { "datei" },
+            "ort": ort.name(),
+            "papierkorb": true,
         }))
         .map_err(ToolFehler::from)
     }
+
+    async fn sharepoint_listeneintrag_loeschen_lauf(
+        &self,
+        anfrage: SharepointListeneintragLoeschenAnfrage,
+    ) -> Result<String, ToolFehler> {
+        let eintrag = anfrage.eintrag.trim();
+        if eintrag.is_empty() {
+            return Err(ungueltig_tool("eintrag fehlt"));
+        }
+        let site = self.site_finden(&anfrage.site).await?;
+        let liste = self.liste_finden(&site, &anfrage.liste).await?;
+        let basis = format!(
+            "/sites/{}/lists/{}/items/{}",
+            kodieren(&site.id),
+            kodieren(&liste.id),
+            kodieren(eintrag)
+        );
+        // Erst lesen: Titel und Link gehören in die Meldung, und ein 404 soll
+        // keinen DELETE auslösen.
+        let aktuell: Listeneintrag = self
+            .graph
+            .get(&basis, &[("$expand", "fields".to_string())])
+            .await
+            .map_err(liste_fehler)?;
+        self.graph.delete(&basis, &[]).await.map_err(liste_fehler)?;
+        als_json(&json!({
+            "geloescht": true,
+            "liste": liste.text(),
+            "eintrag": eintrag,
+            "titel": listeneintrag_titel(&aktuell),
+            "link": aktuell.web_url,
+        }))
+        .map_err(ToolFehler::from)
+    }
+}
+
+/// Der Titel eines Listeneintrags: `Title`, `Titel` oder `LinkTitle` aus den
+/// Spalten – sonst nichts.
+fn listeneintrag_titel(eintrag: &Listeneintrag) -> Option<String> {
+    let felder = eintrag.fields.as_ref()?.as_object()?;
+    ["Title", "Titel", "LinkTitle"]
+        .iter()
+        .find_map(|name| felder.get(*name).and_then(Value::as_str))
+        .map(str::to_string)
 }
 
 /// Die Leseart als Wort für die Antwort.

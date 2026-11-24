@@ -12,6 +12,9 @@
 //! * Gesendet wird genau einmal – kein Wiederholen nach 429 (doppelte Nachricht).
 //! * Antworten sind knappes JSON: HTML→Text, Länge begrenzt, Anhänge nur als Name,
 //!   gelöschte und System-Nachrichten weg.
+//! * Aufgabe 09: `setReaction`, `markChatReadForUser` und `softDelete` antworten mit
+//!   **204 und leerem Rumpf** – Erfolg, ohne Modell zu erwarten. Löschen heißt bei
+//!   Teams `softDelete`: nur eigene Nachrichten, wiederherstellbar.
 
 use jiff::Timestamp;
 use m365_anmeldung::{Anmeldung, Token};
@@ -238,6 +241,22 @@ pub struct TeamsAlsGelesenAnfrage {
     /// `true` (Standard): als gelesen markieren. `false`: wieder ungelesen.
     #[serde(default)]
     pub gelesen: Option<bool>,
+}
+
+/// Parameter für `teams_nachricht_loeschen`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TeamsNachrichtLoeschenAnfrage {
+    /// Chat als Id, Thema oder Mitgliedsname – **oder** `team` + `kanal`.
+    #[serde(default)]
+    pub chat: Option<String>,
+    /// Team als Id oder Name (zusammen mit `kanal` statt `chat`).
+    #[serde(default)]
+    pub team: Option<String>,
+    /// Kanal als Id oder Name (zusammen mit `team`).
+    #[serde(default)]
+    pub kanal: Option<String>,
+    /// Id der Nachricht, die gelöscht wird.
+    pub nachricht: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -557,6 +576,18 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         Parameters(anfrage): Parameters<TeamsAlsGelesenAnfrage>,
     ) -> Result<String, ErrorData> {
         ergebnis(self.teams_als_gelesen_lauf(anfrage).await)
+    }
+
+    /// Eine eigene Nachricht löschen (softDelete, wiederherstellbar).
+    #[tool(
+        description = "Eine eigene Teams-Nachricht löschen (softDelete – wiederherstellbar, fremde Nachrichten lehnt Graph ab). Verändert den Chat bzw. Kanal.",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn teams_nachricht_loeschen(
+        &self,
+        Parameters(anfrage): Parameters<TeamsNachrichtLoeschenAnfrage>,
+    ) -> Result<String, ErrorData> {
+        ergebnis(self.teams_nachricht_loeschen_lauf(anfrage).await)
     }
 }
 
@@ -1362,45 +1393,14 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             }
         })?;
 
-        let basis = match anfrage
-            .chat
-            .as_deref()
-            .map(str::trim)
-            .filter(|c| !c.is_empty())
-        {
-            Some(chat) => {
-                let chat = self.chat_finden(chat).await?;
-                format!("/chats/{}/messages/{nachricht}", chat.id)
-            }
-            None => {
-                let team = anfrage
-                    .team
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|t| !t.is_empty())
-                    .ok_or_else(|| {
-                        ungueltig_tool(
-                            "chat fehlt – oder team und kanal nennen (genau eines von beidem)",
-                        )
-                    })?;
-                let kanal = anfrage
-                    .kanal
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|k| !k.is_empty())
-                    .ok_or_else(|| {
-                        ungueltig_tool(
-                            "kanal fehlt – zusammen mit team (oder stattdessen chat nennen)",
-                        )
-                    })?;
-                let team = self.team_finden(team).await?;
-                let kanal = self.kanal_finden(&team, kanal).await?;
-                format!(
-                    "/teams/{}/channels/{}/messages/{nachricht}",
-                    team.id, kanal.id
-                )
-            }
-        };
+        let basis = self
+            .nachricht_basis(
+                anfrage.chat.as_deref(),
+                anfrage.team.as_deref(),
+                anfrage.kanal.as_deref(),
+                nachricht,
+            )
+            .await?;
 
         let entfernen = anfrage.entfernen.unwrap_or(false);
         let aktion = if entfernen {
@@ -1408,9 +1408,9 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         } else {
             "setReaction"
         };
-        let _: Value = self
-            .graph
-            .post(
+        // 204 mit leerem Rumpf: der Aufruf ist erfolgreich (Aufgabe 09).
+        self.graph
+            .post_ohne_antwort(
                 &format!("{basis}/{aktion}"),
                 &json!({"reactionType": reaktion}),
             )
@@ -1421,6 +1421,35 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             "entfernt": entfernen,
             "reaktion": reaktion,
             "nachricht": nachricht,
+        }))
+        .map_err(ToolFehler::from)
+    }
+
+    async fn teams_nachricht_loeschen_lauf(
+        &self,
+        anfrage: TeamsNachrichtLoeschenAnfrage,
+    ) -> Result<String, ToolFehler> {
+        let nachricht = anfrage.nachricht.trim();
+        if nachricht.is_empty() {
+            return Err(ungueltig_tool("nachricht fehlt"));
+        }
+        let basis = self
+            .nachricht_basis(
+                anfrage.chat.as_deref(),
+                anfrage.team.as_deref(),
+                anfrage.kanal.as_deref(),
+                nachricht,
+            )
+            .await?;
+        // `softDelete`: Graph markiert die Nachricht als gelöscht, sie bleibt
+        // wiederherstellbar. Fremde Nachrichten lehnt Graph ab (403).
+        self.graph
+            .post_ohne_antwort(&format!("{basis}/softDelete"), &Value::Null)
+            .await?;
+        als_json(&json!({
+            "geloescht": true,
+            "nachricht": nachricht,
+            "wiederherstellbar": true,
         }))
         .map_err(ToolFehler::from)
     }
@@ -1444,15 +1473,56 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         } else {
             "markChatUnreadForUser"
         };
-        let _: Value = self
-            .graph
-            .post(
+        // 204 mit leerem Rumpf: die Lesemarke ist gesetzt (Aufgabe 09).
+        self.graph
+            .post_ohne_antwort(
                 &format!("/chats/{}/{aktion}", chat.id),
                 &json!({"user": {"id": ich_id, "tenantId": mandant}}),
             )
             .await?;
 
         als_json(&json!({"chat": chat.id, "gelesen": gelesen})).map_err(ToolFehler::from)
+    }
+
+    /// Der Graph-Pfad einer Nachricht: über den Chat **oder** über Team und Kanal.
+    /// Genau eines von beidem, sonst eine Meldung ohne Anfrage.
+    async fn nachricht_basis(
+        &self,
+        chat: Option<&str>,
+        team: Option<&str>,
+        kanal: Option<&str>,
+        nachricht: &str,
+    ) -> Result<String, ToolFehler> {
+        match chat.map(str::trim).filter(|chat| !chat.is_empty()) {
+            Some(chat) => {
+                let chat = self.chat_finden(chat).await?;
+                Ok(format!("/chats/{}/messages/{nachricht}", chat.id))
+            }
+            None => {
+                let team = team
+                    .map(str::trim)
+                    .filter(|team| !team.is_empty())
+                    .ok_or_else(|| {
+                        ungueltig_tool(
+                            "chat fehlt – oder team und kanal nennen (genau eines von beidem)",
+                        )
+                    })?;
+                let kanal = kanal
+                    .map(str::trim)
+                    .filter(|kanal| !kanal.is_empty())
+                    .ok_or_else(|| {
+                        ungueltig_tool(
+                            "kanal fehlt – zusammen mit team (oder stattdessen chat nennen)",
+                        )
+                    })?;
+                let team = self.team_finden(team).await?;
+                let kanal = self.kanal_finden(&team, kanal).await?;
+                Ok(format!(
+                    "/teams/{}/channels/{}/messages/{nachricht}",
+                    team.id, kanal.id
+                ))
+            }
+        }
     }
 }
 

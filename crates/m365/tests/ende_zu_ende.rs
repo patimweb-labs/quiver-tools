@@ -75,6 +75,19 @@ const TOOLS_ERWEITERUNG: &[&str] = &[
     "onenote_seite_anlegen",
 ];
 
+/// Die neun Löschen-Tools aus docs/aufgaben/09-leere-antworten-und-loeschen.md.
+const TOOLS_LOESCHEN: &[&str] = &[
+    "termin_loeschen",
+    "mail_loeschen",
+    "datei_loeschen",
+    "planner_aufgabe_loeschen",
+    "todo_aufgabe_loeschen",
+    "onenote_seite_loeschen",
+    "kontakt_loeschen",
+    "sharepoint_listeneintrag_loeschen",
+    "teams_nachricht_loeschen",
+];
+
 /// Verändert das Tool etwas bei Graph?
 fn ist_destruktiv(name: &str) -> bool {
     matches!(
@@ -96,6 +109,16 @@ fn ist_destruktiv(name: &str) -> bool {
             | "todo_aufgabe_erledigen"
             | "kontakt_anlegen"
             | "onenote_seite_anlegen"
+            // Die neun Löschen-Tools aus Aufgabe 09 – alle destruktiv.
+            | "termin_loeschen"
+            | "mail_loeschen"
+            | "datei_loeschen"
+            | "planner_aufgabe_loeschen"
+            | "todo_aufgabe_loeschen"
+            | "onenote_seite_loeschen"
+            | "kontakt_loeschen"
+            | "sharepoint_listeneintrag_loeschen"
+            | "teams_nachricht_loeschen"
     )
 }
 
@@ -139,20 +162,42 @@ async fn list_tools_hat_alle_tools_und_profil_liefert_den_namen() {
         .iter()
         .chain(TOOLS_TEAMS.iter())
         .chain(TOOLS_ERWEITERUNG.iter())
+        .chain(TOOLS_LOESCHEN.iter())
         .copied()
         .collect();
     erwartet.sort_unstable();
     assert_eq!(
         namen, erwartet,
-        "die acht Tools aus SPEC.md §4, die 16 aus Aufgabe 05 und die 26 aus Aufgabe 06"
+        "die acht Tools aus SPEC.md §4, die 16 aus Aufgabe 05, die 26 aus Aufgabe 06 und die neun Löschen-Tools aus Aufgabe 09"
     );
 
-    // Regression: die bisherigen 24 Tools stehen weiter mit denselben Namen in
-    // der Liste (nichts umbenannt, nichts entfernt).
-    for alt in TOOLS_SPEC.iter().chain(TOOLS_TEAMS.iter()) {
+    // Regression: die bisherigen 50 Tools stehen weiter mit denselben Namen in
+    // der Liste (nichts umbenannt, nichts entfernt) – Aufgabe 09 ergänzt nur.
+    for alt in TOOLS_SPEC
+        .iter()
+        .chain(TOOLS_TEAMS.iter())
+        .chain(TOOLS_ERWEITERUNG.iter())
+    {
         assert!(
             tools.iter().any(|tool| tool.name == *alt),
             "{alt} fehlt – bestehende Tools dürfen nicht verschwinden"
+        );
+    }
+
+    // Die Löschen-Tools nehmen eine Id und sind destruktiv.
+    for loeschen in TOOLS_LOESCHEN {
+        let tool = tools
+            .iter()
+            .find(|tool| tool.name == *loeschen)
+            .unwrap_or_else(|| panic!("{loeschen} fehlt"));
+        let eigenschaften = tool
+            .input_schema
+            .get("properties")
+            .and_then(|wert| wert.as_object())
+            .expect("inputSchema hat properties");
+        assert!(
+            !eigenschaften.is_empty(),
+            "{loeschen} nimmt mindestens eine Angabe"
         );
     }
 

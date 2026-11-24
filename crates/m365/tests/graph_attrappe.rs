@@ -9,6 +9,7 @@
 
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -128,6 +129,9 @@ struct Zustand {
     einmal: Mutex<Option<Fehlerantwort>>,
     /// Gilt ab jetzt für jede Anfrage.
     dauerhaft: Mutex<Option<Fehlerantwort>>,
+    /// Was ein PATCH geändert hat (Pfad ohne `/v1.0` → Rumpf). Ein GET danach
+    /// zeigt den neuen Stand – wie bei Graph (Aufgabe 09).
+    geaendert: Mutex<HashMap<String, Value>>,
 }
 
 /// Der Graph-Mock.
@@ -144,6 +148,7 @@ impl GraphAttrappe {
             aufzeichnungen: Mutex::new(Vec::new()),
             einmal: Mutex::new(None),
             dauerhaft: Mutex::new(None),
+            geaendert: Mutex::new(HashMap::new()),
         });
         let app = Router::new()
             .fallback(dienen)
@@ -233,6 +238,39 @@ fn fach<T>(fach: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|vergiftet| vergiftet.into_inner())
 }
 
+/// Hat ein PATCH diesen Pfad geändert? Dann zeigt der GET danach den neuen Stand.
+fn gemerkt(zustand: &Zustand, pfad: &str) -> Option<Value> {
+    fach(&zustand.geaendert).get(pfad).cloned()
+}
+
+/// Den Rumpf eines PATCH über einen Grundwert legen – flach, wie Graph es tut.
+fn ueberlagern(mut basis: Value, aenderung: Option<Value>) -> Value {
+    if let (Value::Object(ziel), Some(Value::Object(quelle))) = (&mut basis, aenderung) {
+        for (name, wert) in quelle {
+            ziel.insert(name, wert);
+        }
+    }
+    basis
+}
+
+/// Die Id des Eintrags aus `…/items/{id}` bzw. `…/items/{id}/fields`.
+fn eintrag_id(pfad: &str) -> &str {
+    pfad.split("/items/")
+        .nth(1)
+        .unwrap_or_default()
+        .trim_end_matches("/fields")
+        .trim_end_matches('/')
+}
+
+/// Die Spalten eines Listeneintrags (Grundstand der Attrappe).
+fn listeneintrag_felder(id: &str) -> Value {
+    listeneintraege()
+        .into_iter()
+        .find(|eintrag| eintrag["id"] == id)
+        .and_then(|eintrag| eintrag.get("fields").cloned())
+        .unwrap_or_else(|| json!({}))
+}
+
 async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Response {
     let methode = request.method().to_string();
     let pfad = request.uri().path().to_string();
@@ -293,6 +331,15 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
     // so fallen dieselben Fehler schon im Test auf.
     if let Some(antwort) = graph_regeln(&methode, ohne_basis, &abfrage, &body) {
         return antwort;
+    }
+
+    // `PATCH` antwortet bei Graph mit **204 und leerem Rumpf** (Aufgabe 09):
+    // die Änderung wird gemerkt, damit ein GET danach den neuen Stand zeigt.
+    if methode == "PATCH" {
+        if let Some(wert) = body.as_ref() {
+            fach(&zustand.geaendert).insert(ohne_basis.to_string(), wert.clone());
+        }
+        return StatusCode::NO_CONTENT.into_response();
     }
 
     let antwort = match (methode.as_str(), ohne_basis) {
@@ -424,13 +471,29 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
         ("POST", "/chats") => chat_aus(&body),
         ("POST", "/search/query") => suchergebnis(),
         ("POST", pfad) if pfad.ends_with("/setReaction") || pfad.ends_with("/unsetReaction") => {
-            json!({})
+            return StatusCode::NO_CONTENT.into_response()
         }
         ("POST", pfad)
             if pfad.ends_with("/markChatReadForUser")
                 || pfad.ends_with("/markChatUnreadForUser") =>
         {
-            json!({})
+            return StatusCode::NO_CONTENT.into_response()
+        }
+        // `softDelete` (Aufgabe 09) und `move` (Mail → Papierkorb) antworten
+        // ohne Rumpf bzw. mit dem verschobenen Objekt.
+        ("POST", pfad) if pfad.ends_with("/softDelete") => {
+            return StatusCode::NO_CONTENT.into_response()
+        }
+        ("POST", pfad) if pfad.ends_with("/move") => {
+            return (
+                StatusCode::CREATED,
+                axum::Json(json!({
+                    "id": "m1-papierkorb",
+                    "subject": "Lage",
+                    "parentFolderId": "deleteditems",
+                })),
+            )
+                .into_response()
         }
         ("POST", pfad) if pfad.ends_with("/replies") => gesendete_nachricht("neu-antwort"),
         ("POST", pfad) if pfad.ends_with("/messages") => gesendete_nachricht("neu-nachricht"),
@@ -460,7 +523,44 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
                 "fields": felder,
             })
         }
-        ("PATCH", pfad) if pfad.ends_with("/fields") => body.clone().unwrap_or(Value::Null),
+        //
+        // Ein einzelner Listeneintrag: seine Spalten (ggf. mit gemerktem PATCH)
+        // und der Eintrag selbst (Aufgabe 09).
+        ("GET", pfad) if pfad.contains("/lists/") && pfad.ends_with("/fields") => ueberlagern(
+            listeneintrag_felder(eintrag_id(pfad)),
+            gemerkt(&zustand, pfad),
+        ),
+        ("GET", pfad)
+            if pfad.contains("/lists/")
+                && pfad.contains("/items/")
+                && !pfad.ends_with("/fields") =>
+        {
+            let id = eintrag_id(pfad);
+            let felder = ueberlagern(
+                listeneintrag_felder(id),
+                gemerkt(&zustand, &format!("{pfad}/fields")),
+            );
+            json!({
+                "id": id,
+                "webUrl": format!("https://contoso.sharepoint.com/sites/projekt-nord/Lists/Aufgaben/{id}"),
+                "lastModifiedDateTime": "2026-11-27T09:00:00Z",
+                "fields": felder,
+            })
+        }
+        ("DELETE", pfad)
+            if pfad.starts_with("/me/events/")
+                || pfad.starts_with("/planner/tasks/")
+                || pfad.starts_with("/me/contacts/")
+                || pfad.starts_with("/me/onenote/pages/")
+                || pfad.starts_with("/me/drive/items/")
+                || pfad.starts_with("/drives/")
+                || (pfad.starts_with("/me/todo/lists/") && pfad.contains("/tasks/"))
+                || (pfad.starts_with("/sites/")
+                    && pfad.contains("/lists/")
+                    && pfad.contains("/items/")) =>
+        {
+            return StatusCode::NO_CONTENT.into_response()
+        }
         ("GET", pfad) if pfad.ends_with("/children") => json!({"value": kinder()}),
         // Ein einzelner Eintrag (Metadaten) – nicht der Inhalt, nicht die Kinder.
         ("GET", pfad) if pfad.contains("/items/") && !pfad.ends_with("/content") => {
@@ -528,7 +628,7 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
         ("GET", "/me/planner/tasks") => json!({"value": planner_aufgaben()}),
         ("GET", pfad) if pfad.starts_with("/planner/tasks/") => {
             let id = pfad.trim_start_matches("/planner/tasks/");
-            planner_aufgabe(id)
+            ueberlagern(planner_aufgabe(id), gemerkt(&zustand, pfad))
         }
         ("POST", "/planner/tasks") => {
             let body = body.unwrap_or(Value::Null);
@@ -543,20 +643,15 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
                 "@odata.etag": "W/\"neu\"",
             })
         }
-        ("PATCH", pfad) if pfad.starts_with("/planner/tasks/") => {
-            let id = pfad.trim_start_matches("/planner/tasks/");
-            let mut aufgabe = planner_aufgabe(id);
-            if let (Some(Value::Object(quelle)), Value::Object(ziel)) = (&body, &mut aufgabe) {
-                for (name, wert) in quelle {
-                    ziel.insert(name.clone(), wert.clone());
-                }
-            }
-            aufgabe["@odata.etag"] = json!("W/\"2\"");
-            aufgabe
-        }
         ("GET", "/me/todo/lists") => todo_listen_seite(&abfrage, &host),
         ("GET", pfad) if pfad.starts_with("/me/todo/lists/") && pfad.ends_with("/tasks") => {
             json!({"value": todo_aufgaben()})
+        }
+        // Eine einzelne To-Do-Aufgabe: der Stand nach einem PATCH (Aufgabe 09),
+        // und vor dem Löschen der Titel.
+        ("GET", pfad) if pfad.starts_with("/me/todo/lists/") && pfad.contains("/tasks/") => {
+            let id = pfad.rsplit('/').next().unwrap_or(TODO_AUFGABE);
+            ueberlagern(todo_aufgabe(id), gemerkt(&zustand, pfad))
         }
         ("POST", pfad) if pfad.starts_with("/me/todo/lists/") && pfad.ends_with("/tasks") => {
             let body = body.unwrap_or(Value::Null);
@@ -568,20 +663,26 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
             }
             aufgabe
         }
-        ("PATCH", pfad) if pfad.starts_with("/me/todo/lists/") && pfad.contains("/tasks/") => {
-            let id = pfad.rsplit('/').next().unwrap_or("todo-1");
-            let mut aufgabe = todo_aufgabe(id);
-            if let (Some(Value::Object(quelle)), Value::Object(ziel)) = (&body, &mut aufgabe) {
-                for (name, wert) in quelle {
-                    ziel.insert(name.clone(), wert.clone());
-                }
-            }
-            aufgabe
-        }
         // ------------------------------------------------------------------
         // Kontakte und Personen
         // ------------------------------------------------------------------
         ("GET", "/me/contacts") => json!({"value": kontakte()}),
+        ("GET", pfad) if pfad.starts_with("/me/events/") => {
+            let id = pfad.trim_start_matches("/me/events/");
+            json!({
+                "id": id,
+                "subject": "Jour fixe",
+                "start": {"dateTime": "2026-11-27T10:00:00.0000000", "timeZone": "Europe/Berlin"},
+                "end": {"dateTime": "2026-11-27T11:00:00.0000000", "timeZone": "Europe/Berlin"},
+                "webLink": format!("https://outlook.office365.com/calendar/{id}"),
+            })
+        }
+        ("GET", pfad) if pfad.starts_with("/me/contacts/") => {
+            let id = pfad.trim_start_matches("/me/contacts/");
+            let mut kontakt = kontakte()[0].clone();
+            kontakt["id"] = json!(id);
+            kontakt
+        }
         ("POST", "/me/contacts") => {
             let body = body.unwrap_or(Value::Null);
             let mut kontakt = kontakte()[0].clone();

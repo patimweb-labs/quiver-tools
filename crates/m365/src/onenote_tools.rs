@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! OneNote-Tools (docs/aufgaben/06-graph-erweiterung.md).
+//! OneNote-Tools (docs/aufgaben/06-graph-erweiterung.md,
+//! docs/aufgaben/09-leere-antworten-und-loeschen.md).
 //!
 //! Gelesen wird mit `html_zu_text` (dieselbe Umwandlung wie bei Teams),
 //! geschrieben als HTML mit escaptem Titel und Text. Namen (Notizbuch,
 //! Abschnitt) dürfen Ids ersetzen; mehrdeutig → Kandidaten und keine Aktion.
+//! `onenote_seite_loeschen` nimmt eine Id, nennt den Titel und wiederholt sich nie.
 
 use m365_anmeldung::Anmeldung;
 use m365_graph::{Abschnitt, Notizbuch, Seite};
@@ -84,6 +86,13 @@ fn anzahl_mit(anzahl: Option<u32>, standard: u32) -> u32 {
     anzahl.unwrap_or(standard).clamp(1, 100)
 }
 
+/// Parameter für `onenote_seite_loeschen`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct OneNoteSeiteLoeschenAnfrage {
+    /// Id der Seite (aus `onenote_seiten`).
+    pub seite: String,
+}
+
 // ---------------------------------------------------------------------------
 // Die Tools
 // ---------------------------------------------------------------------------
@@ -145,6 +154,18 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         Parameters(anfrage): Parameters<OneNoteSeiteAnlegenAnfrage>,
     ) -> Result<String, ErrorData> {
         ergebnis_erweitert(self.onenote_seite_anlegen_lauf(anfrage).await)
+    }
+
+    /// Eine Seite löschen.
+    #[tool(
+        description = "Eine OneNote-Seite löschen (in den Papierkorb des Notizbuchs). Verändert das Notizbuch.",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn onenote_seite_loeschen(
+        &self,
+        Parameters(anfrage): Parameters<OneNoteSeiteLoeschenAnfrage>,
+    ) -> Result<String, ErrorData> {
+        ergebnis_erweitert(self.onenote_seite_loeschen_lauf(anfrage).await)
     }
 }
 
@@ -336,5 +357,28 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         antwort["abschnitt"] = serde_json::json!(abschnitt.text());
         antwort["angelegt"] = serde_json::json!(true);
         als_json(&antwort).map_err(ToolFehler::from)
+    }
+
+    async fn onenote_seite_loeschen_lauf(
+        &self,
+        anfrage: OneNoteSeiteLoeschenAnfrage,
+    ) -> Result<String, ToolFehler> {
+        let seite = anfrage.seite.trim();
+        if seite.is_empty() {
+            return Err(ungueltig_tool("seite fehlt"));
+        }
+        let pfad = format!("/me/onenote/pages/{}", kodieren(seite));
+        // Erst lesen: der Titel gehört in die Meldung, ein 404 soll keinen DELETE auslösen.
+        let aktuell: Seite = self
+            .graph
+            .get(&pfad, &[("$select", PAGE_FELDER.to_string())])
+            .await?;
+        self.graph.delete(&pfad, &[]).await?;
+        als_json(&serde_json::json!({
+            "geloescht": true,
+            "seite": seite,
+            "titel": aktuell.title,
+        }))
+        .map_err(ToolFehler::from)
     }
 }

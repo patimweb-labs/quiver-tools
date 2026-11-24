@@ -1,11 +1,16 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Planner- und To-Do-Tools (docs/aufgaben/06-graph-erweiterung.md).
+//! Planner- und To-Do-Tools (docs/aufgaben/06-graph-erweiterung.md,
+//! docs/aufgaben/09-leere-antworten-und-loeschen.md).
 //!
 //! Planner verlangt bei jeder Änderung `If-Match` mit dem ETag der Aufgabe.
 //! Ohne ETag gibt es **keinen** PATCH – lieber eine Meldung als ein blindes
 //! Überschreiben. To Do kommt ohne ETag aus.
+//!
+//! Graph antwortet auf `PATCH` mit **204 und leerem Rumpf** (Aufgabe 09): der
+//! Aufruf ist damit erfolgreich, den neuen Stand holt das Tool mit einem GET.
+//! Löschen ist immer destruktiv, nimmt eine Id und wiederholt sich nie.
 //!
 //! Namen (Plan, Bucket, Liste, Aufgabe) dürfen Ids ersetzen; mehrdeutig →
 //! Kandidaten und keine Aktion.
@@ -21,6 +26,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::aufloesen::{ist_graph_id, ist_guid, person_finden, waehlen, Anzeige};
+use crate::kodierung::kodieren;
 use crate::planner::{
     aufgabe_json, bucket_finden, bucket_json, faelligkeit, fortschritt_pruefen, patch_koerper,
     plan_json, todo_aufgabe_json, todo_faelligkeit, todo_liste_json, todo_status, zuweisung,
@@ -106,6 +112,13 @@ pub struct PlannerAufgabeAendernAnfrage {
     pub zugewiesen: Option<String>,
 }
 
+/// Parameter für `planner_aufgabe_loeschen`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct PlannerAufgabeLoeschenAnfrage {
+    /// Id der Aufgabe (aus `planner_aufgaben`) – löschen nur mit Id, nie über einen Namen.
+    pub aufgabe: String,
+}
+
 /// Parameter für `todo_aufgaben`.
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct TodoAufgabenAnfrage {
@@ -147,6 +160,15 @@ pub struct TodoAufgabeErledigenAnfrage {
     /// `true` (Standard): erledigen. `false`: wieder öffnen.
     #[serde(default)]
     pub erledigt: Option<bool>,
+}
+
+/// Parameter für `todo_aufgabe_loeschen`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TodoAufgabeLoeschenAnfrage {
+    /// Liste als Id oder Name.
+    pub liste: String,
+    /// Aufgabe als Id oder Titel.
+    pub aufgabe: String,
 }
 
 fn anzahl_mit(anzahl: Option<u32>, standard: u32) -> u32 {
@@ -250,6 +272,30 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         Parameters(anfrage): Parameters<TodoAufgabeErledigenAnfrage>,
     ) -> Result<String, ErrorData> {
         ergebnis_erweitert(self.todo_aufgabe_erledigen_lauf(anfrage).await)
+    }
+
+    /// Eine Planner-Aufgabe endgültig löschen.
+    #[tool(
+        description = "Eine Planner-Aufgabe endgültig löschen (mit If-Match, also nur auf dem Stand, den du gelesen hast). Nicht wiederherstellbar.",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn planner_aufgabe_loeschen(
+        &self,
+        Parameters(anfrage): Parameters<PlannerAufgabeLoeschenAnfrage>,
+    ) -> Result<String, ErrorData> {
+        ergebnis_erweitert(self.planner_aufgabe_loeschen_lauf(anfrage).await)
+    }
+
+    /// Eine To-Do-Aufgabe löschen (in den Papierkorb von To Do).
+    #[tool(
+        description = "Eine Aufgabe aus einer Microsoft-To-Do-Liste löschen. Verändert die Liste.",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn todo_aufgabe_loeschen(
+        &self,
+        Parameters(anfrage): Parameters<TodoAufgabeLoeschenAnfrage>,
+    ) -> Result<String, ErrorData> {
+        ergebnis_erweitert(self.todo_aufgabe_loeschen_lauf(anfrage).await)
     }
 }
 
@@ -396,6 +442,38 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             .map(|aufgabe| Anzeige::neu(aufgabe.id, aufgabe.title.as_deref()))
             .collect();
         waehlen(kandidaten, referenz, "To-Do-Aufgabe")
+    }
+
+    /// Eine Planner-Aufgabe lesen – mit ETag (nötig für `If-Match` beim Ändern und
+    /// Löschen) und Titel (für die Meldung nach dem Löschen).
+    async fn planner_aufgabe_laden(&self, id: &str) -> Result<PlannerAufgabe, ToolFehler> {
+        Ok(self
+            .graph
+            .get(
+                &format!("/planner/tasks/{}", kodieren(id)),
+                &[("$select", AUFGABE_FELDER.to_string())],
+            )
+            .await?)
+    }
+
+    /// Eine To-Do-Aufgabe lesen – den Stand nach einer Änderung bzw. den Titel
+    /// vor dem Löschen.
+    async fn todo_aufgabe_laden(
+        &self,
+        liste: &Anzeige,
+        aufgabe: &Anzeige,
+    ) -> Result<ToDoAufgabe, ToolFehler> {
+        Ok(self
+            .graph
+            .get(
+                &format!(
+                    "/me/todo/lists/{}/tasks/{}",
+                    kodieren(&liste.id),
+                    kodieren(&aufgabe.id)
+                ),
+                &[],
+            )
+            .await?)
     }
 }
 
@@ -600,27 +678,23 @@ impl<A: Anmeldung + 'static> Quiver<A> {
 
         // Planner verlangt `If-Match` mit dem aktuellen ETag. Erst lesen, dann
         // ändern – und ohne ETag gar nicht ändern.
-        let aktuell: PlannerAufgabe = self
-            .graph
-            .get(
-                &format!("/planner/tasks/{aufgabe}"),
-                &[("$select", AUFGABE_FELDER.to_string())],
-            )
-            .await?;
+        let aktuell = self.planner_aufgabe_laden(aufgabe).await?;
         let Some(etag) = aktuell.etag.clone() else {
             return Err(ungueltig_tool(format!(
                 "Planner-Aufgabe {aufgabe:?} kommt ohne ETag – ohne If-Match ändert Planner nichts. Es wurde nichts geändert."
             )));
         };
 
-        let geaendert: PlannerAufgabe = self
-            .graph
-            .patch_mit_kopf(
-                &format!("/planner/tasks/{aufgabe}"),
+        // Graph antwortet auf diesen PATCH mit 204 und leerem Rumpf (Aufgabe 09):
+        // das ist der Erfolg. Den neuen Stand holt der GET danach.
+        self.graph
+            .patch_ohne_antwort(
+                &format!("/planner/tasks/{}", kodieren(aufgabe)),
                 &patch_koerper(felder),
                 &[("If-Match", etag.as_str())],
             )
             .await?;
+        let geaendert = self.planner_aufgabe_laden(aufgabe).await?;
 
         let mut antwort = aufgabe_json(&geaendert, None, &self.zeitzone);
         antwort["geaendert"] = json!(true);
@@ -716,17 +790,79 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         let erledigt = anfrage.erledigt.unwrap_or(true);
         let liste = self.todo_liste_finden(&anfrage.liste).await?;
         let aufgabe = self.todo_aufgabe_finden(&liste, &anfrage.aufgabe).await?;
-        let geaendert: ToDoAufgabe = self
-            .graph
-            .patch_mit_kopf(
-                &format!("/me/todo/lists/{}/tasks/{}", liste.id, aufgabe.id),
+        // To Do antwortet auf den PATCH mit 204 und leerem Rumpf (Aufgabe 09).
+        self.graph
+            .patch_ohne_antwort(
+                &format!(
+                    "/me/todo/lists/{}/tasks/{}",
+                    kodieren(&liste.id),
+                    kodieren(&aufgabe.id)
+                ),
                 &json!({"status": todo_status(erledigt)}),
                 &[],
             )
             .await?;
+        let geaendert = self.todo_aufgabe_laden(&liste, &aufgabe).await?;
         let mut antwort = todo_aufgabe_json(&geaendert, &self.zeitzone);
         antwort["liste"] = json!(liste.text());
         antwort["erledigt"] = json!(erledigt);
         als_json(&antwort).map_err(ToolFehler::from)
+    }
+
+    async fn planner_aufgabe_loeschen_lauf(
+        &self,
+        anfrage: PlannerAufgabeLoeschenAnfrage,
+    ) -> Result<String, ToolFehler> {
+        let aufgabe = anfrage.aufgabe.trim();
+        if aufgabe.is_empty() {
+            return Err(ungueltig_tool("aufgabe fehlt"));
+        }
+        // Erst lesen: der Titel gehört in die Meldung, und Planner löscht nur mit
+        // `If-Match`. Ohne ETag gibt es **kein** DELETE.
+        let aktuell = self.planner_aufgabe_laden(aufgabe).await?;
+        let Some(etag) = aktuell.etag.clone() else {
+            return Err(ungueltig_tool(format!(
+                "Planner-Aufgabe {aufgabe:?} kommt ohne ETag – ohne If-Match löscht Planner nichts. Es wurde nichts gelöscht."
+            )));
+        };
+        self.graph
+            .delete(
+                &format!("/planner/tasks/{}", kodieren(aufgabe)),
+                &[("If-Match", etag.as_str())],
+            )
+            .await?;
+        als_json(&json!({
+            "geloescht": true,
+            "aufgabe": aufgabe,
+            "titel": aktuell.title,
+        }))
+        .map_err(ToolFehler::from)
+    }
+
+    async fn todo_aufgabe_loeschen_lauf(
+        &self,
+        anfrage: TodoAufgabeLoeschenAnfrage,
+    ) -> Result<String, ToolFehler> {
+        let liste = self.todo_liste_finden(&anfrage.liste).await?;
+        let aufgabe = self.todo_aufgabe_finden(&liste, &anfrage.aufgabe).await?;
+        // Der Titel kommt vor dem Löschen – danach ist er weg.
+        let aktuell = self.todo_aufgabe_laden(&liste, &aufgabe).await?;
+        self.graph
+            .delete(
+                &format!(
+                    "/me/todo/lists/{}/tasks/{}",
+                    kodieren(&liste.id),
+                    kodieren(&aufgabe.id)
+                ),
+                &[],
+            )
+            .await?;
+        als_json(&json!({
+            "geloescht": true,
+            "liste": liste.text(),
+            "aufgabe": aufgabe.id,
+            "titel": aktuell.title,
+        }))
+        .map_err(ToolFehler::from)
     }
 }

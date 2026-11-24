@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: MIT
 // Copyright (C) 2026 Patrick Weppelmann
 
-//! Kontakt- und Personentools (docs/aufgaben/06-graph-erweiterung.md).
+//! Kontakt- und Personentools (docs/aufgaben/06-graph-erweiterung.md,
+//! docs/aufgaben/09-leere-antworten-und-loeschen.md).
 //!
 //! `kontakte_suchen` liest das Adressbuch des Users (`/me/contacts`),
 //! `personen_suchen` das, was Microsoft über Kollegen weiß (`/me/people`:
 //! Abteilung, Telefon, Mail). `kontakt_anlegen` schreibt ins Adressbuch und ist
-//! deshalb verändernd.
+//! deshalb verändernd, `kontakt_loeschen` ebenso – es nennt den Namen dessen, was
+//! verschwindet.
 
 use m365_anmeldung::Anmeldung;
 use m365_graph::{Kontakt, Person, Sammlung};
@@ -17,6 +19,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::kodierung::kodieren;
 use crate::kontakte::{kontakt_json, person_json};
 use crate::server::{als_json, ergebnis_erweitert, ungueltig_tool, Quiver, ToolFehler};
 
@@ -78,6 +81,13 @@ pub struct PersonenSuchenAnfrage {
     pub anzahl: Option<u32>,
 }
 
+/// Parameter für `kontakt_loeschen`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct KontaktLoeschenAnfrage {
+    /// Id des Kontakts (aus `kontakte_suchen`).
+    pub kontakt: String,
+}
+
 fn anzahl_mit(anzahl: Option<u32>, standard: u32) -> u32 {
     anzahl.unwrap_or(standard).clamp(1, 50)
 }
@@ -132,6 +142,18 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         Parameters(anfrage): Parameters<PersonenSuchenAnfrage>,
     ) -> Result<String, ErrorData> {
         ergebnis_erweitert(self.personen_suchen_lauf(anfrage).await)
+    }
+
+    /// Einen Kontakt aus dem Adressbuch löschen.
+    #[tool(
+        description = "Einen Kontakt aus dem Adressbuch des Users löschen. Verändert das Adressbuch.",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn kontakt_loeschen(
+        &self,
+        Parameters(anfrage): Parameters<KontaktLoeschenAnfrage>,
+    ) -> Result<String, ErrorData> {
+        ergebnis_erweitert(self.kontakt_loeschen_lauf(anfrage).await)
     }
 }
 
@@ -241,5 +263,28 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             .map(person_json)
             .collect();
         als_json(&liste).map_err(ToolFehler::from)
+    }
+
+    async fn kontakt_loeschen_lauf(
+        &self,
+        anfrage: KontaktLoeschenAnfrage,
+    ) -> Result<String, ToolFehler> {
+        let kontakt = anfrage.kontakt.trim();
+        if kontakt.is_empty() {
+            return Err(ungueltig_tool("kontakt fehlt"));
+        }
+        let pfad = format!("/me/contacts/{}", kodieren(kontakt));
+        // Erst lesen: der Name gehört in die Meldung, ein 404 soll keinen DELETE auslösen.
+        let aktuell: Kontakt = self
+            .graph
+            .get(&pfad, &[("$select", KONTAKT_FELDER.to_string())])
+            .await?;
+        self.graph.delete(&pfad, &[]).await?;
+        als_json(&json!({
+            "geloescht": true,
+            "kontakt": kontakt,
+            "name": aktuell.display_name,
+        }))
+        .map_err(ToolFehler::from)
     }
 }

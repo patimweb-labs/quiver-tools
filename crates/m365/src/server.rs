@@ -9,6 +9,10 @@
 //! (Aufgabe 03); fehlt die Zustimmung für einen neuen Scope (Teams), sagt es
 //! dasselbe (Aufgabe 05); Fehler von Graph werden zu MCP-Fehlern mit Graph-Code
 //! und Text – ohne Token.
+//!
+//! Aufgabe 09: `termin_loeschen` und `mail_loeschen` sind destruktiv, nehmen eine
+//! Id und melden, was verschwindet. Eine Mail wandert in den Papierkorb
+//! (`POST …/move`), sie wird nie endgültig gelöscht.
 
 use m365_anmeldung::{AnmeldeFehler, Anmeldung};
 use m365_graph::{
@@ -158,6 +162,20 @@ pub struct DateienSuchenAnfrage {
     /// Wie viele Treffer (Standard 10, höchstens 50).
     #[serde(default)]
     pub anzahl: Option<u32>,
+}
+
+/// Parameter für `termin_loeschen`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TerminLoeschenAnfrage {
+    /// Id des Termins (aus `termine`).
+    pub id: String,
+}
+
+/// Parameter für `mail_loeschen`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MailLoeschenAnfrage {
+    /// id der Mail (aus `mails_suchen`).
+    pub id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -486,6 +504,87 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             .map_err(|fehler| ErrorData::internal_error(format!("Abmelden: {fehler}"), None))?;
         als_json(&json!({"abgemeldet": true}))
     }
+
+    /// Einen Termin löschen.
+    #[tool(
+        description = "Einen Termin aus dem Kalender löschen. Absagen an Teilnehmer verschickt Graph dabei nicht. Verändert den Kalender.",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn termin_loeschen(
+        &self,
+        Parameters(anfrage): Parameters<TerminLoeschenAnfrage>,
+    ) -> Result<String, ErrorData> {
+        let id = anfrage.id.trim();
+        if id.is_empty() {
+            return Err(ErrorData::invalid_params("id fehlt", None));
+        }
+        let pfad = format!("/me/events/{}", kodieren(id));
+        // Erst lesen: der Betreff gehört in die Meldung, und eine falsche Id soll
+        // keinen DELETE auslösen.
+        let abfrage = self
+            .graph
+            .get::<Termin>(
+                &pfad,
+                &[("$select", "id,subject,start,webLink".to_string())],
+            )
+            .await;
+        let termin = match abfrage {
+            Ok(termin) => termin,
+            Err(fehler) => return hinweis_oder_fehler(fehler),
+        };
+        // 204 mit leerem Rumpf: der Termin ist weg (Aufgabe 09).
+        match self.graph.delete(&pfad, &[]).await {
+            Ok(()) => als_json(&json!({
+                "geloescht": true,
+                "id": id,
+                "betreff": termin.subject,
+                "start": zeit_text(termin.start.as_ref(), &self.zeitzone, false),
+            })),
+            Err(fehler) => hinweis_oder_fehler(fehler),
+        }
+    }
+
+    /// Eine Mail in den Papierkorb legen.
+    #[tool(
+        description = "Eine Mail in den Papierkorb legen (nicht endgültig löschen – wiederherstellbar). Verändert das Postfach.",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn mail_loeschen(
+        &self,
+        Parameters(anfrage): Parameters<MailLoeschenAnfrage>,
+    ) -> Result<String, ErrorData> {
+        let id = anfrage.id.trim();
+        if id.is_empty() {
+            return Err(ErrorData::invalid_params("id fehlt", None));
+        }
+        let pfad = format!("/me/messages/{}", kodieren(id));
+        // Erst lesen: der Betreff gehört in die Meldung.
+        let abfrage = self
+            .graph
+            .get::<Nachricht>(&pfad, &[("$select", "id,subject".to_string())])
+            .await;
+        let mail = match abfrage {
+            Ok(mail) => mail,
+            Err(fehler) => return hinweis_oder_fehler(fehler),
+        };
+        // `move` nach `deleteditems` ist der Papierkorb – nicht `DELETE`.
+        match self
+            .graph
+            .post_ohne_antwort(
+                &format!("{pfad}/move"),
+                &json!({"destinationId": "deleteditems"}),
+            )
+            .await
+        {
+            Ok(()) => als_json(&json!({
+                "geloescht": true,
+                "papierkorb": true,
+                "id": id,
+                "betreff": mail.subject,
+            })),
+            Err(fehler) => hinweis_oder_fehler(fehler),
+        }
+    }
 }
 
 #[tool_handler(router = self.tool_router, name = "quiver-m365")]
@@ -567,10 +666,16 @@ fn aus_ergebnis<T>(
 ) -> Result<String, ErrorData> {
     match ergebnis {
         Ok(wert) => weiter(wert),
-        Err(fehler) => match ToolFehler::from(fehler) {
-            ToolFehler::Hinweis(text) => Ok(text),
-            ToolFehler::Fehler(fehler) => Err(fehler),
-        },
+        Err(fehler) => hinweis_oder_fehler(fehler),
+    }
+}
+
+/// Ein Graph-Fehler, der **kein** Modell mehr liefert: Hinweise (Anmeldung,
+/// Zustimmung) werden Text, alles andere ein MCP-Fehler.
+pub(crate) fn hinweis_oder_fehler(fehler: GraphFehler) -> Result<String, ErrorData> {
+    match ToolFehler::from(fehler) {
+        ToolFehler::Hinweis(text) => Ok(text),
+        ToolFehler::Fehler(fehler) => Err(fehler),
     }
 }
 

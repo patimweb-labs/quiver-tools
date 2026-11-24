@@ -466,7 +466,10 @@ async fn listeneintrag_anlegen_und_aendern() {
     assert_eq!(wert["felder"]["Status"], "fertig");
 
     let alle = graph.aufzeichnungen();
-    let patch = alle.last().expect("PATCH");
+    let patch = alle
+        .iter()
+        .find(|anfrage| anfrage.methode == "PATCH")
+        .expect("PATCH");
     assert_eq!(patch.methode, "PATCH");
     assert!(
         patch.pfad.ends_with("/items/1/fields"),
@@ -474,6 +477,12 @@ async fn listeneintrag_anlegen_und_aendern() {
         patch.pfad
     );
     assert_eq!(patch.body()["Status"], "fertig");
+    // Nach dem PATCH (204 ohne Rumpf) liest das Tool den Stand per GET (Aufgabe 09).
+    assert_eq!(
+        alle.last().expect("GET danach").methode,
+        "GET",
+        "der Stand kommt aus einem GET: {alle:#?}"
+    );
 }
 
 #[tokio::test]
@@ -625,7 +634,7 @@ async fn planner_aufgabe_aendern_mit_etag_setzt_if_match() {
     assert_eq!(wert["fortschritt"], 100);
 
     let alle = graph.aufzeichnungen();
-    assert_eq!(alle.len(), 2, "erst lesen, dann ändern: {alle:#?}");
+    assert_eq!(alle.len(), 3, "lesen, ändern, den Stand lesen: {alle:#?}");
     assert_eq!(alle[0].pfad, "/v1.0/planner/tasks/task-1");
     let patch = &alle[1];
     assert_eq!(patch.methode, "PATCH");
@@ -636,6 +645,9 @@ async fn planner_aufgabe_aendern_mit_etag_setzt_if_match() {
     );
     assert_eq!(patch.body()["percentComplete"], 100);
     assert_eq!(patch.body()["dueDateTime"], "2026-12-01T00:00:00Z");
+    // Der PATCH antwortet mit 204 und leerem Rumpf; den Stand holt ein GET.
+    assert_eq!(alle[2].methode, "GET");
+    assert_eq!(alle[2].pfad, "/v1.0/planner/tasks/task-1");
 }
 
 #[tokio::test]
@@ -834,8 +846,10 @@ async fn todo_aufgabe_anlegen_und_erledigen() {
     assert_eq!(wert["status"], "completed");
 
     let alle = graph.aufzeichnungen();
-    let patch = alle.last().expect("PATCH");
-    assert_eq!(patch.methode, "PATCH");
+    let patch = alle
+        .iter()
+        .find(|anfrage| anfrage.methode == "PATCH")
+        .expect("PATCH");
     assert_eq!(
         patch.pfad,
         format!(
@@ -845,6 +859,8 @@ async fn todo_aufgabe_anlegen_und_erledigen() {
         )
     );
     assert_eq!(patch.body()["status"], "completed");
+    // Nach dem PATCH (204 ohne Rumpf) liest das Tool den Stand per GET (Aufgabe 09).
+    assert_eq!(alle.last().expect("GET danach").methode, "GET");
 }
 
 // ---------------------------------------------------------------------------

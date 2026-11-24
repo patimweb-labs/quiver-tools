@@ -26,7 +26,7 @@ use std::sync::Arc;
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine as _;
-use quiver_diagramm::ablage::{Ablage, AblageFehler, Inhalt, Stand};
+use quiver_diagramm::ablage::{mit_hinweis, Ablage, AblageFehler, Inhalt, Stand};
 use quiver_diagramm::modell::{Diagramm, Farbe};
 use quiver_tools_kern::mcp::profile_tool;
 use quiver_tools_kern::{antwort, kuerzen, zugang, OhneProfil, Profil, Zugang};
@@ -251,19 +251,25 @@ impl DrawioServer {
         let _: LeerParam = argumente(roh)?;
         let profil = oder_hinweis!(self.profil());
         let ablage = oder_hinweis!(ablage_aus(&profil));
-        let dateien = ablage.liste().map_err(ablage_fehler)?;
-        Ok(antwort(format::status(
-            ablage.wurzel(),
-            dateien.len(),
-            werkzeug::schreiben_erlaubt(&profil),
+        let suche = ablage.suche().map_err(ablage_fehler)?;
+        Ok(antwort(mit_hinweis(
+            format::status(
+                ablage.wurzel(),
+                suche.eintraege.len(),
+                werkzeug::schreiben_erlaubt(&profil),
+            ),
+            &suche,
         )))
     }
 
     fn liste(&self, roh: Option<JsonObject>) -> Ergebnis {
         let _: LeerParam = argumente(roh)?;
         let ablage = oder_hinweis!(self.ablage());
-        let eintraege = ablage.liste().map_err(ablage_fehler)?;
-        Ok(antwort(format::liste(ablage.wurzel(), &eintraege)))
+        let suche = ablage.suche().map_err(ablage_fehler)?;
+        Ok(antwort(mit_hinweis(
+            format::liste(ablage.wurzel(), &suche.eintraege),
+            &suche,
+        )))
     }
 
     fn seiten(&self, roh: Option<JsonObject>) -> Ergebnis {

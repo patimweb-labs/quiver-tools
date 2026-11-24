@@ -220,8 +220,12 @@ impl ExcalidrawServer {
             Ok(teile) => teile,
             Err(ohne) => return ohne.in_ergebnis(),
         };
-        let anzahl = ablage.liste().map_err(fehler_zu_mcp)?.len();
-        Ok(antwort(format::status(ablage.wurzel(), schreiben, anzahl)))
+        let suche = ablage.suche().map_err(fehler_zu_mcp)?;
+        let anzahl = suche.eintraege.len();
+        Ok(antwort(quiver_diagramm::ablage::mit_hinweis(
+            format::status(ablage.wurzel(), schreiben, anzahl),
+            &suche,
+        )))
     }
 
     fn liste(&self, roh: Option<JsonObject>) -> Ergebnis {

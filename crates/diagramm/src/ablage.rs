@@ -53,6 +53,33 @@ const MAX_TIEFE: usize = 16;
 /// Zähler für temporäre Namen (prozessweit eindeutig).
 static ZAEHLER: AtomicU64 = AtomicU64::new(0);
 
+/// So lange sucht [`Ablage::suche`] höchstens.
+pub const SUCHE_FRIST: std::time::Duration = std::time::Duration::from_secs(2);
+/// So viele Treffer nennt [`Ablage::suche`] höchstens.
+pub const SUCHE_MAX: usize = 2000;
+/// Hinweis, wenn die Suche vorzeitig endete.
+pub const SUCHE_HINWEIS: &str = "Die Suche wurde abgebrochen, die Liste ist unvollständig – bitte im quiver-Fenster einen kleineren Arbeitsordner wählen.";
+/// Ordner voller Fremddateien, in denen keine Diagramme gesucht werden.
+const UEBERGANGEN: &[&str] = &["node_modules", "target", "__pycache__", "venv", "Library"];
+
+/// Hängt [`SUCHE_HINWEIS`] an, wenn die Suche nicht vollständig war.
+pub fn mit_hinweis(text: String, suche: &Suche) -> String {
+    if suche.vollstaendig {
+        text
+    } else {
+        format!("{text}\n{SUCHE_HINWEIS}")
+    }
+}
+
+/// Ergebnis von [`Ablage::suche`].
+#[derive(Debug, Clone)]
+pub struct Suche {
+    /// Gefundene Dateien, nach Pfad sortiert.
+    pub eintraege: Vec<Eintrag>,
+    /// `false`: Frist oder Höchstzahl erreicht.
+    pub vollstaendig: bool,
+}
+
 /// Ein Arbeitsordner mit genau einer erlaubten Dateiendung.
 ///
 /// Für Excalidraw ist das `.excalidraw`, für draw.io `.drawio`. Ausgaben
@@ -284,66 +311,75 @@ impl Ablage {
 
     /// Alle Diagrammdateien im Arbeitsordner, Unterordner eingeschlossen.
     ///
-    /// Versteckte Namen, symbolische Links und Sicherungen (`.bak`) erscheinen
-    /// nicht. Sortiert nach Pfad, damit die Antwort immer gleich aussieht.
+    /// Ein großer Arbeitsordner (etwa „Dokumente“) darf kein Werkzeug minutenlang
+    /// aufhalten: gesucht wird von oben nach unten, höchstens
+    /// [`SUCHE_FRIST`] lang und [`SUCHE_MAX`] Treffer. [`Ablage::suche`] sagt, ob
+    /// etwas fehlt.
     pub fn liste(&self) -> Result<Vec<Eintrag>, AblageFehler> {
-        let mut eintraege = Vec::new();
-        self.sammle(&self.wurzel, "", 0, &mut eintraege)?;
-        eintraege.sort_by(|a, b| a.pfad.cmp(&b.pfad));
-        Ok(eintraege)
+        Ok(self.suche()?.eintraege)
     }
 
-    fn sammle(
-        &self,
-        ordner: &Path,
-        vorsatz: &str,
-        tiefe: usize,
-        ziel: &mut Vec<Eintrag>,
-    ) -> Result<(), AblageFehler> {
-        if tiefe > MAX_TIEFE {
-            return Ok(());
-        }
-        let verzeichnis = fs::read_dir(ordner).map_err(|fehler| AblageFehler::OrdnerLesen {
-            pfad: ordner.display().to_string(),
-            grund: fehler.to_string(),
-        })?;
-        for eintrag in verzeichnis {
-            let eintrag = eintrag.map_err(|fehler| AblageFehler::OrdnerLesen {
-                pfad: ordner.display().to_string(),
-                grund: fehler.to_string(),
-            })?;
-            let name = eintrag.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {
-                continue;
-            }
-            let art = match eintrag.file_type() {
-                Ok(art) => art,
+    /// Wie [`Ablage::liste`], mit der Auskunft, ob die Suche vollständig war.
+    pub fn suche(&self) -> Result<Suche, AblageFehler> {
+        self.suche_mit(SUCHE_FRIST)
+    }
+
+    fn suche_mit(&self, frist: std::time::Duration) -> Result<Suche, AblageFehler> {
+        let beginn = std::time::Instant::now();
+        let endung = format!(".{}", self.endung);
+        let mut eintraege = Vec::new();
+        let mut vollstaendig = true;
+        let mut offen = std::collections::VecDeque::new();
+        offen.push_back((self.wurzel.clone(), String::new(), 0usize));
+        'suche: while let Some((ordner, vorsatz, tiefe)) = offen.pop_front() {
+            let verzeichnis = match fs::read_dir(&ordner) {
+                Ok(verzeichnis) => verzeichnis,
+                // Der Arbeitsordner selbst muss lesbar sein; ein gesperrter
+                // Unterordner wird übergangen.
+                Err(fehler) if tiefe == 0 => {
+                    return Err(AblageFehler::OrdnerLesen {
+                        pfad: ordner.display().to_string(),
+                        grund: fehler.to_string(),
+                    })
+                }
                 Err(_) => continue,
             };
-            if art.is_symlink() {
-                continue;
-            }
-            let relativ = if vorsatz.is_empty() {
-                name.clone()
-            } else {
-                format!("{vorsatz}/{name}")
-            };
-            if art.is_dir() {
-                self.sammle(&eintrag.path(), &relativ, tiefe + 1, ziel)?;
-            } else if art.is_file()
-                && name
-                    .to_ascii_lowercase()
-                    .ends_with(&format!(".{}", self.endung))
-            {
-                let daten = eintrag.metadata().ok();
-                ziel.push(Eintrag {
-                    pfad: relativ,
-                    groesse: daten.as_ref().map(|d| d.len()).unwrap_or(0),
-                    geaendert: daten.and_then(|d| d.modified().ok()),
-                });
+            for eintrag in verzeichnis.flatten() {
+                if beginn.elapsed() > frist || eintraege.len() >= SUCHE_MAX {
+                    vollstaendig = false;
+                    break 'suche;
+                }
+                let name = eintrag.file_name().to_string_lossy().to_string();
+                let Ok(art) = eintrag.file_type() else {
+                    continue;
+                };
+                if name.starts_with('.') || art.is_symlink() {
+                    continue;
+                }
+                let relativ = if vorsatz.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{vorsatz}/{name}")
+                };
+                if art.is_dir() {
+                    if tiefe < MAX_TIEFE && !UEBERGANGEN.contains(&name.as_str()) {
+                        offen.push_back((eintrag.path(), relativ, tiefe + 1));
+                    }
+                } else if art.is_file() && name.to_ascii_lowercase().ends_with(&endung) {
+                    let daten = eintrag.metadata().ok();
+                    eintraege.push(Eintrag {
+                        pfad: relativ,
+                        groesse: daten.as_ref().map(|d| d.len()).unwrap_or(0),
+                        geaendert: daten.and_then(|d| d.modified().ok()),
+                    });
+                }
             }
         }
-        Ok(())
+        eintraege.sort_by(|a, b| a.pfad.cmp(&b.pfad));
+        Ok(Suche {
+            eintraege,
+            vollstaendig,
+        })
     }
 
     /// Prüft die Regeln für einen relativen Pfad und zerlegt ihn in Segmente.
@@ -811,4 +847,29 @@ fn ist_geraetename(teil: &str) -> bool {
             rest.len() == 1 && rest.starts_with(|z: char| ('1'..='9').contains(&z))
         })
     })
+}
+
+#[cfg(test)]
+mod suche_tests {
+    use super::*;
+
+    /// Frist und Höchstzahl begrenzen die Suche, und das steht dabei.
+    #[test]
+    fn die_suche_endet_mit_der_frist_und_sagt_es() {
+        let ordner = tempfile::tempdir().unwrap();
+        for nummer in 0..50 {
+            std::fs::create_dir_all(ordner.path().join(format!("o{nummer}"))).unwrap();
+            std::fs::write(ordner.path().join(format!("o{nummer}/a.drawio")), "x").unwrap();
+        }
+        std::fs::create_dir_all(ordner.path().join("node_modules/x")).unwrap();
+        std::fs::write(ordner.path().join("node_modules/x/b.drawio"), "x").unwrap();
+        let ablage = Ablage::neu(ordner.path().to_str().unwrap(), "drawio").unwrap();
+        let ganz = ablage.suche().unwrap();
+        assert!(ganz.vollstaendig);
+        assert_eq!(ganz.eintraege.len(), 50);
+        assert_eq!(mit_hinweis("x".into(), &ganz), "x");
+        let knapp = ablage.suche_mit(std::time::Duration::ZERO).unwrap();
+        assert!(!knapp.vollstaendig);
+        assert!(mit_hinweis("x".into(), &knapp).contains("unvollständig"));
+    }
 }

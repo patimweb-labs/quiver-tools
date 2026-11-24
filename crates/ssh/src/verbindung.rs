@@ -157,12 +157,9 @@ impl Verbindung {
 /// nichts anderes enthalten.
 pub fn name_gueltig(name: &str) -> bool {
     (1..=40).contains(&name.len())
-        && name.chars().all(|zeichen| {
-            zeichen.is_ascii_lowercase()
-                || zeichen.is_ascii_digit()
-                || zeichen == '-'
-                || zeichen == '_'
-        })
+        && name
+            .chars()
+            .all(|zeichen| zeichen.is_ascii_alphanumeric() || zeichen == '-' || zeichen == '_')
 }
 
 /// Alle Verbindungen, in der Reihenfolge der Liste.
@@ -191,7 +188,10 @@ impl Sammlung {
         let mut namen = BTreeMap::new();
         for zugang in &liste {
             let verbindung = Verbindung::aus_zugang(zugang)?;
-            if namen.insert(verbindung.name.clone(), ()).is_some() {
+            // Ohne Groß-/Kleinschreibung: so wird gewählt, und so unterscheiden
+            // macOS und Windows auch die Schlüsseldateien.
+            let schluessel = verbindung.name.to_ascii_lowercase();
+            if namen.insert(schluessel, ()).is_some() {
                 return Err(SammelFehler::Doppelt(verbindung.name));
             }
             verbindungen.push(verbindung);
@@ -241,7 +241,9 @@ impl Sammlung {
 /// Was an den Werten einer Verbindung nicht stimmt.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VerbindungsFehler {
-    #[error("Der Name „{0}“ ist nicht zulässig: erlaubt sind a–z, 0–9, - und _ (1–40 Zeichen).")]
+    #[error(
+        "Der Name „{0}“ ist nicht zulässig: erlaubt sind A–Z, a–z, 0–9, - und _ (1–40 Zeichen)."
+    )]
     Name(String),
     #[error(
         "Bei der Verbindung „{name}“ fehlt das Feld „{feld}“ – bitte im quiver-Fenster eintragen."
@@ -438,6 +440,16 @@ mod tests {
             zugang("a", &[("host", "h2"), ("benutzer", "u")]),
         ]);
         assert_eq!(doppelt, Err(SammelFehler::Doppelt("a".into())));
+
+        let nur_schreibweise = Sammlung::aus_zugaengen(vec![
+            zugang("Hera", &[("host", "h1"), ("benutzer", "u")]),
+            zugang("hera", &[("host", "h2"), ("benutzer", "u")]),
+        ]);
+        assert_eq!(nur_schreibweise, Err(SammelFehler::Doppelt("hera".into())));
+        assert!(name_gueltig("Artemis"));
+        for schlecht in ["", "../a", "a/b", "a b", "ä", "a.b"] {
+            assert!(!name_gueltig(schlecht), "{schlecht}");
+        }
 
         let kaputt = Sammlung::mit_umgebung(|_| Some("[{\"name\":".to_string()));
         assert!(matches!(kaputt, Err(SammelFehler::Zugaenge(_))));

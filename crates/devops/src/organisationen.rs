@@ -242,8 +242,9 @@ pub enum OrganisationsFehler {
     )]
     Feld { name: String, feld: &'static str },
     #[error(
-        "Bei der Organisation „{name}“ ist die Adresse „{url}“ keine DevOps-Adresse – sie muss \
-         mit http:// oder https:// beginnen."
+        "Bei der Organisation „{name}“ ist die Adresse „{url}“ nicht erlaubt: sie muss mit \
+         https:// beginnen. Für eine Adresse mit http:// bitte das Feld „Unverschlüsselt \
+         erlauben“ einschalten (das Token geht dann offen über das Netz)."
     )]
     Url { name: String, url: String },
 }

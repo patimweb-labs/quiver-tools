@@ -303,8 +303,9 @@ pub enum SystemFehler {
     )]
     Feld { name: String, feld: &'static str },
     #[error(
-        "Bei dem System „{name}“ ist die Adresse „{url}“ keine ADT-Adresse – sie muss mit \
-         http:// oder https:// beginnen."
+        "Bei dem System „{name}“ ist die Adresse „{url}“ nicht erlaubt: sie muss mit \
+         https:// beginnen. Für eine Adresse mit http:// bitte das Feld „Unverschlüsselt \
+         erlauben“ einschalten (Benutzer und Passwort gehen dann offen über das Netz)."
     )]
     Url { name: String, url: String },
 }

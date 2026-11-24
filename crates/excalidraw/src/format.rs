@@ -36,16 +36,20 @@ pub fn status(ordner: &Path, schreiben: bool, anzahl: usize) -> String {
 
 /// Antwort von `excalidraw_liste`.
 pub fn liste(ablage: &Ablage) -> Result<String, Fehler> {
-    let eintraege = ablage.liste()?;
+    let suche = ablage.suche()?;
+    let eintraege = &suche.eintraege;
     if eintraege.is_empty() {
-        return Ok(keine_dateien());
+        return Ok(quiver_diagramm::ablage::mit_hinweis(
+            keine_dateien(),
+            &suche,
+        ));
     }
     let mut text = format!(
         "{} Datei(en) in {}:",
         eintraege.len(),
         ablage.wurzel().display()
     );
-    for eintrag in &eintraege {
+    for eintrag in eintraege {
         text.push_str(&format!(
             "\n- {} ({}, {})",
             eintrag.pfad,
@@ -53,7 +57,7 @@ pub fn liste(ablage: &Ablage) -> Result<String, Fehler> {
             zeitpunkt(eintrag.geaendert)
         ));
     }
-    Ok(text)
+    Ok(quiver_diagramm::ablage::mit_hinweis(text, &suche))
 }
 
 /// Antwort von `excalidraw_lesen`.

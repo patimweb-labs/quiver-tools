@@ -11,6 +11,7 @@
 | Plattform | Public client/native, Redirects `http://127.0.0.1` und `http://localhost` (jeder Port) |
 | Öffentliche Client-Flows | **aus** (2026-11-24): keine Gerätecode-Anmeldung; Browser mit PKCE und Loopback braucht sie nicht |
 | Rechte (delegiert, Graph) | `User.Read`, `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `Files.Read.All`, `offline_access`; für Teams (2026-11-24): `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `ChannelMessage.Send`, `TeamMember.Read.All`, `Chat.ReadWrite`, `User.ReadBasic.All`; für SharePoint/OneDrive, Planner/To Do, Kontakte/Personen und OneNote (2026-11-24): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.ReadWrite`, `Group.Read.All`, `Contacts.ReadWrite`, `People.Read`, `Notes.ReadWrite.All` |
+| Zuweisung erforderlich (neoimpulse.de) | **an** (2026-11-24): nur zugewiesene User oder Gruppen dürfen sich anmelden; andere sehen AADSTS50105. Freischalten im Entra-Portal: Unternehmensanwendungen → quiver-m365 → Benutzer und Gruppen |
 | Azure DevOps | Recht am 2026-11-24 entfernt (quiver-devops nutzt PAT). **Offen:** die Admin-Zustimmung `user_impersonation` im Entra-Portal widerrufen |
 | Secret | keins |
 

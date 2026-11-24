@@ -318,14 +318,8 @@ pub fn objekt(xml: &str, objekt_url: &str) -> Result<Objekt, AdtFehler> {
     let includes: Vec<Include> = wurzel
         .kinder_mit("include")
         .map(|include| {
-            let url = include
-                .kinder_mit("link")
-                .find(|link| {
-                    let typ = link.attr("type").unwrap_or_default();
-                    typ == "text/plain" || typ.is_empty()
-                })
-                .and_then(|link| link.attr_gefuellt("href"))
-                .map(|href| folge_url(objekt_url, href))
+            let url = include_quelle(include)
+                .map(|quelle| folge_url(objekt_url, quelle))
                 .unwrap_or_default();
             Include {
                 art: attr(include, "includeType"),
@@ -359,15 +353,8 @@ fn quelltext_url(wurzel: &Knoten, objekt_url: &str) -> String {
         .kinder_mit("include")
         .find(|include| attr(include, "includeType") == "main")
     {
-        if let Some(href) = main
-            .kinder_mit("link")
-            .find(|link| {
-                let typ = link.attr("type").unwrap_or_default();
-                typ == "text/plain" || typ.is_empty()
-            })
-            .and_then(|link| link.attr_gefuellt("href"))
-        {
-            return folge_url(objekt_url, href);
+        if let Some(quelle) = include_quelle(main) {
+            return folge_url(objekt_url, quelle);
         }
     }
     // Programme und andere: `abapsource:sourceUri` oder ein Klartext-Link.
@@ -384,16 +371,33 @@ fn quelltext_url(wurzel: &Knoten, objekt_url: &str) -> String {
     format!("{}/source/main", objekt_url.trim_end_matches('/'))
 }
 
-/// Eine relative Adresse an der Objektadresse ausrichten.
+/// Wo der Quelltext eines Includes liegt: `sourceUri`, sonst der Klartext-Link.
+///
+/// Ein Include trägt auch Links **ohne** Typ, z. B. auf seine Versionen; die
+/// sind kein Quelltext.
+fn include_quelle(include: &Knoten) -> Option<&str> {
+    include.attr_gefuellt("sourceUri").or_else(|| {
+        include
+            .kinder_mit("link")
+            .find(|link| link.attr("type") == Some("text/plain"))
+            .and_then(|link| link.attr_gefuellt("href"))
+    })
+}
+
+/// Eine relative Adresse an der Objektadresse ausrichten, wie ADT sie meint:
+/// `source/main` liegt **unter** dem Objekt, `./t000/source/main` neben ihm.
 pub fn folge_url(objekt_url: &str, href: &str) -> String {
     let href = href.trim();
     if href.starts_with("http://") || href.starts_with("https://") || href.starts_with('/') {
         return href.to_string();
     }
     let basis = objekt_url.trim_end_matches('/');
-    match basis.rfind('/') {
-        Some(stelle) => format!("{}/{}", &basis[..stelle], href),
-        None => href.to_string(),
+    match href.strip_prefix("./") {
+        Some(rest) => match basis.rfind('/') {
+            Some(stelle) => format!("{}/{}", &basis[..stelle], rest),
+            None => rest.to_string(),
+        },
+        None => format!("{basis}/{href}"),
     }
 }
 
@@ -983,6 +987,48 @@ mod tests {
         );
     }
 
+    /// So antwortet ein echtes System (gekürzt): relative Adressen, dazu ein
+    /// Link ohne Typ auf die Versionen.
+    #[test]
+    fn echte_relative_adressen_fuehren_zum_quelltext() {
+        let klasse = r#"<class:abapClass xmlns:class="c" xmlns:adtcore="a"
+            xmlns:atom="http://www.w3.org/2005/Atom" xmlns:abapsource="s"
+            adtcore:name="CL_X" adtcore:type="CLAS/OC" abapsource:sourceUri="source/main">
+          <class:include class:includeType="main" abapsource:sourceUri="source/main">
+            <atom:link href="includes/main/versions" rel="http://www.sap.com/adt/relations/versions"/>
+            <atom:link href="source/main" rel="http://www.sap.com/adt/relations/source" type="text/plain"/>
+            <atom:link href="source/main" rel="http://www.sap.com/adt/relations/source" type="text/html"/>
+          </class:include>
+        </class:abapClass>"#;
+        let gelesen = objekt(klasse, "/sap/bc/adt/oo/classes/cl_x").unwrap();
+        assert_eq!(
+            gelesen.quelltext_url,
+            "/sap/bc/adt/oo/classes/cl_x/source/main"
+        );
+        assert_eq!(
+            gelesen.includes[0].url,
+            "/sap/bc/adt/oo/classes/cl_x/source/main"
+        );
+        // Nur ein Link ohne Typ: der ist kein Quelltext.
+        let ohne = klasse
+            .replace(r#" abapsource:sourceUri="source/main""#, "")
+            .replace(r#" type="text/plain""#, "");
+        assert_eq!(
+            objekt(&ohne, "/sap/bc/adt/oo/classes/cl_x")
+                .unwrap()
+                .quelltext_url,
+            "/sap/bc/adt/oo/classes/cl_x/source/main"
+        );
+        let tabelle = r#"<blue:blueSource xmlns:blue="b" xmlns:adtcore="a" xmlns:abapsource="s"
+            adtcore:name="T000" adtcore:type="TABL/DT" abapsource:sourceUri="./t000/source/main"/>"#;
+        assert_eq!(
+            objekt(tabelle, "/sap/bc/adt/ddic/tables/t000")
+                .unwrap()
+                .quelltext_url,
+            "/sap/bc/adt/ddic/tables/t000/source/main"
+        );
+    }
+
     #[test]
     fn ein_programm_bekommt_den_standardpfad_und_ein_paket_keinen() {
         let gelesen = objekt(PROGRAMM, "/sap/bc/adt/programs/programs/zreport").unwrap();
@@ -1000,7 +1046,9 @@ mod tests {
 
     #[test]
     fn relative_adressen_werden_ausgerichtet() {
-        assert_eq!(folge_url("/a/b/c", "d/e"), "/a/b/d/e");
+        assert_eq!(folge_url("/a/b/c", "d/e"), "/a/b/c/d/e");
+        assert_eq!(folge_url("/a/b/c/", "d/e"), "/a/b/c/d/e");
+        assert_eq!(folge_url("/a/b/c", "./c/d"), "/a/b/c/d");
         assert_eq!(folge_url("/a/b/c", "/x/y"), "/x/y");
         assert_eq!(
             folge_url("/a/b/c", "https://h/x"),

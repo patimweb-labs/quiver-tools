@@ -5,7 +5,8 @@
 ## 1. Zweck
 
 Eigene MCP-Tools für die [mcp-quiver](https://github.com/patimweb-labs/mcp-quiver)-Bibliothek, in Rust,
-als Nachfolger der pi-Erweiterungen `pi-outline-wiki`, `pi-email`, `pi-ssh` und `pi-abap-fs`.
+als Nachfolger der pi-Erweiterungen `pi-outline-wiki`, `pi-email`, `pi-ssh`, `pi-abap-fs` und
+`pi-azure-devops`.
 Jedes Tool ist ein eigenes Programm (MCP über stdio); alle teilen sich einen Kern.
 
 | Tool | Programm | Vorlage | Reihenfolge |
@@ -14,6 +15,7 @@ Jedes Tool ist ein eigenes Programm (MCP über stdio); alle teilen sich einen Ke
 | E-Mail (IMAP/SMTP) | `quiver-email` | `~/Documents/Workspaces/pi-email` | 2 |
 | SSH/SFTP | `quiver-ssh` | `~/Documents/Workspaces/pi-ssh` | 3 |
 | ABAP (SAP ADT) | `quiver-abap` | `~/Documents/Workspaces/pi-abap-fs` | 4 |
+| Azure DevOps | `quiver-devops` | `~/Documents/Workspaces/pi-azure-devops` | 5 |
 
 ## 2. Zugangsdaten gehen nie durch den Agenten
 
@@ -21,7 +23,8 @@ Jedes Tool ist ein eigenes Programm (MCP über stdio); alle teilen sich einen Ke
 User **im quiver-Fenster** ein – unter Tools → <Titel>. quiver liest die Feldbeschreibung aus dem
 Bibliothekseintrag (`Werkzeug::felder()`), der Client bleibt allgemein.
 *Begründung:* Passwörter und API-Keys erreichen nie ein Modell, und das Tool braucht dafür weder Seite
-noch Browser. *Preis:* vorerst genau ein Zugang je Tool (siehe unten).
+noch Browser. *Preis:* vorerst genau ein Zugang je Tool (siehe unten) – außer bei SSH, ABAP und
+DevOps, die eine Liste pflegen (§2a).
 
 - Die Felder eines Zugangs stehen im Bibliothekseintrag. Offene Felder (Quelle `client`, z. B. eine
   Adresse) liegen in der Client-Konfiguration, geheime Felder (`geheim`, Feldart `Passwort`) im
@@ -38,6 +41,21 @@ noch Browser. *Preis:* vorerst genau ein Zugang je Tool (siehe unten).
   Adresse oder Host) oder denselben Hinweis. Damit weiß der Agent, was es gibt.
 - *Preis:* mehrere Wikis, Postfächer oder Hosts je Tool sind nicht möglich; sie kämen als mehrere
   Bibliothekseinträge (eigene Crate-Instanz) oder später als zusätzliche Umgebungsnamen.
+
+### 2a. Ausnahme: mehrere gleichartige Zugänge
+
+`quiver-ssh`, `quiver-abap` und `quiver-devops` pflegen statt eines Zugangs eine Liste
+(`Werkzeug::mehrfach` = Titel und Einzahl, z. B. „Organisationen“/„Organisation“). Der Eintrag trägt
+die Felder dann unter `mehrfach` und hat selbst keine `felder` und keine `umgebung`; quiver übergibt
+alle Zugänge als JSON in `QUIVER_ZUGAENGE`. Jedes Werkzeug nimmt den Namen (`verbindung` bzw.
+`system`); bei genau einem Zugang darf er fehlen.
+
+*Begründung:* ein Nutzer arbeitet mit mehreren Hosts, SAP-Systemen oder DevOps-Organisationen (eigene
+und Kundenorganisationen, oft in fremden Tenants oder auf einem Server). Ein Bibliothekseintrag je
+Host wäre unübersichtlich. *Preis:* die Geheimnisse liegen als JSON in **einer** Umgebungsvariablen –
+der Kern liest sie also alle, nicht nur die des gewählten Zugangs; kaputtes JSON ist ein Fehler ohne
+Inhalt. Ein Feld `schreiben` (Schalter, Standard **aus**) erlaubt verändernde Werkzeuge je Zugang; ist
+es aus, antworten sie mit einem Hinweis **ohne** Anfrage.
 
 ## 3. Wo die Werte liegen
 
@@ -79,8 +97,9 @@ Der Eintrag hat das Format von `quiver_domain::Eintrag`:
 crates/kern       Werkzeug-Trait, Zugang aus der Umgebung, Bibliothekseintrag, MCP-Hilfen, Programm-Gerüst
 crates/outline    quiver-outline   (Aufgabe 02)
 crates/email      quiver-email     (später)
-crates/ssh        quiver-ssh       (später)
-crates/abap       quiver-abap      (später)
+crates/ssh        quiver-ssh       (Aufgabe 05)
+crates/abap       quiver-abap      (Aufgaben 07 und 08)
+crates/devops     quiver-devops    (Aufgabe 09)
 assets/           tokens.css und Schriften aus mcp-quiver (für die Oberfläche von quiver, nicht dieses Repos)
 ```
 

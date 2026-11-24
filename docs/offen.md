@@ -39,3 +39,13 @@
 - [ ] ABAP: CSRF-Token und Cookies leben nur im Prozess; jeder Start meldet sich neu an. Ein Token-Cache über Prozesse wäre eine Datei mit Geheimnis – nicht gewollt. Die Lock-Tabelle einer Sitzung geht mit dem Prozess verloren (siehe ADR 0006).
 
 - [ ] Tresor-Datei (ADR mcp-quiver 0001): optional Hauptpasswort (Argon2) beim Start.
+- [ ] DevOps: Testpläne (Pläne, Suiten, Punkte, Läufe, Ergebnisse), Kapazität, Board-Spalten, Branch-Policies (`policy-evaluations`), Auto-complete, Läufe **abbrechen** und **wiederholen**, Artefakte eines Laufs – die Vorlage `pi-azure-devops` hat sie, Aufgabe 09 nennt 26 Werkzeuge.
+- [ ] DevOps: `devops_pull_request_abstimmen` holt die Benutzer-ID mit einer zusätzlichen Anfrage (`_apis/connectionData`); mit einem Cache je Organisation wäre es eine Anfrage weniger.
+- [ ] DevOps: `ersteller` bei `devops_pull_requests` filtert lokal nach Anzeigename (Teiltreffer); DevOps selbst kennt nur `searchCriteria.creatorId` (GUID).
+- [ ] DevOps: Kommentar-Endpunkte laufen mit `api-version=7.1-preview.4` (DevOps führt sie noch als Vorschau); alle anderen mit `7.1`. Bei einer stabilen Fassung umstellen.
+- [ ] DevOps: `devops_workitem_anlegen` schreibt `System.Description` unverändert – der Agent muss HTML oder Text liefern; eine Umschreibung von Markdown nach HTML gibt es nicht.
+- [ ] DevOps: Arbeitsitem-Felder sind Text (auch Zahlen und Daten); ein Agent, der rechnen will, muss selbst wandeln.
+- [ ] DevOps: `devops_pull_request` zeigt höchstens 20 Commits (Aufgabe) und lädt keine Dateiänderungen (`iterations`/`changes`).
+- [ ] DevOps: nur Git-Repos – TFVC (`_apis/tfvc`) fehlt.
+- [ ] DevOps: `devops_lauf_log` liest das ganze Log und schneidet das Ende ab; ein `Range`-Kopf (DevOps kann Zeilenbereiche liefern) wäre bei großen Logs sparsamer.
+- [ ] DevOps: `tracing`-Ereignisse des Werkzeugs sind stumm, weil der Kern keinen Subscriber setzt.

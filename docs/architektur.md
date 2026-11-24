@@ -419,3 +419,80 @@ Regeln, die dort gelten:
   Anlegen und je Endpunkt eine Antwort. Sperren, Schreiben und Entsperren gehen dort nur
   mit dem Keks der Sitzung, die gesperrt hat; eine andere Sitzung bekommt `423`. Kein
   Test spricht mit einem echten SAP-System; das Passwort der Attrappe ist erfunden.
+
+## Ein sechstes Tool: `crates/devops`
+
+Die Vorlage `pi-azure-devops` (TypeScript, Bibliothek `azure-devops-node-api`) liefert
+die Semantik, nicht den Code (SPEC §6). Die Aufrufe sind an der REST-Dokumentation
+(Azure DevOps 7.1) und an der Vorlage abgelesen und in Rust mit `reqwest` neu gebaut
+([adr/0007-devops-mit-pat.md](adr/0007-devops-mit-pat.md)).
+
+| Modul | Aufgabe | Zustand |
+|---|---|---|
+| `werkzeug` | `Devops` (vier Felder, `mehrfach` = „Organisationen“, `testen`) | keiner |
+| `organisationen` | `QUIVER_ZUGAENGE` → geprüfte `Organisation`en, Auswahl (`waehlen`), Schalter `schreiben`, Projekt aus Zugang oder Aufruf | Umgebungsvariable |
+| `client` | der **einzige** Ort mit Netzverkehr: Basic-Auth (`":"` + PAT), `api-version`, `429` mit `Retry-After`, JSON-Patch-Kopf | keiner |
+| `fehler` | `DevopsFehler`: 401, 203 mit HTML, HTTP, Netz, JSON – nie mit PAT | keiner |
+| `daten` | JSON → Werte: Punktpfade (Felder mit Punkt!), Listen mit und ohne `value`, Datum | keiner |
+| `html` | HTML → Text für Beschreibungen, Kriterien und Kommentare | keiner |
+| `wiql` | WIQL aus den Komfort-Parametern (`text`, `status`, `typ`, `zugewiesen_an_mich`) | keiner |
+| `format` | reine Funktionen: Daten → knapper Text, gekürzt über `mcp::kuerzen` | keiner |
+| `server` | die 26 MCP-Werkzeuge (plus `devops_profile` aus dem Kern) | Organisationen aus der Umgebung |
+
+Datenfluss eines **lesenden** Aufrufs:
+
+```
+MCP tools/call
+  → server::aufrufen        Name → Werkzeug, Argumente → Parametertyp
+  → server::waehlen         Organisation aus QUIVER_ZUGAENGE (fehlt die Liste: Hinweistext)
+  → server::projekt         Projekt aus dem Aufruf, sonst aus dem Zugang, sonst Hinweis
+  → client::anfrage         Basic(":"+PAT), api-version; 401/203 → Fehler; 429 → höchstens 2×
+  → daten                   JSON → Werte
+  → format                  Werte → knapper Text
+  → CallToolResult
+```
+
+Datenfluss eines **verändernden** Aufrufs:
+
+```
+MCP tools/call
+  → server::schreiben_erlaubt  Schalter `schreiben`? Sonst Hinweis, **keine** Anfrage
+  → server::projekt            Projekt bekannt? Sonst Hinweis, **keine** Anfrage
+  → client::anfrage            POST/PATCH/PUT; bei 429 **kein** Wiederholen
+  → format                     kurze Bestätigung (angelegt/geändert/verknüpft …)
+  → CallToolResult
+```
+
+Regeln, die dort gelten:
+
+- **Der PAT steht nur in der Kopfzeile.** `Authorization: Basic base64(":" + PAT)`;
+  `Debug` von `Organisation` und `Client` zeigt höchstens, *ob* einer gesetzt ist.
+  Antworten, Fehlertexte und Logs nennen ihn nie.
+- **`api-version` an jeder Anfrage.** `7.1`; die Kommentar-Endpunkte (`…/comments`)
+  brauchen `7.1-preview.4`, weil DevOps sie noch als Vorschau führt. Eine eigene
+  `api-version` im Aufruf wird nicht verdoppelt.
+- **401 und 203 mit HTML sind endgültig.** DevOps leitet bei ungültigem PAT auf die
+  Anmeldung um; beides wird zu „PAT für <verbindung> ungültig oder abgelaufen“ und
+  **nicht** wiederholt.
+- **429 nur beim Lesen.** Höchstens zwei Wiederholungen, `Retry-After` beachtet (maximal
+  10 s). Ein Anlegen oder Ändern wird nie wiederholt: ob es ankam, weiß nur der Server.
+- **JSON-Patch mit eigenem Kopf.** `POST …/workitems/$Typ` und `PATCH …/workitems/{id}`
+  tragen `Content-Type: application/json-patch+json`; ein zweiter `Content-Type` entsteht
+  nicht.
+- **Projekt aus zwei Quellen.** `projekt` am Zugang oder am Aufruf; fehlt beides, kommt
+  ein Hinweis **ohne** Anfrage. Dasselbe gilt für `team` bei den Iterationen.
+- **Arbeitsitem-Felder enthalten Punkte.** `daten::wert` behandelt nach `fields.` den
+  Rest als **einen** Schlüssel (`System.Title`), nicht als Pfad.
+- **Texte kommen als HTML.** Beschreibungen, Akzeptanzkriterien und Kommentare werden zu
+  Text (`html`), dann über `max_zeichen` gekürzt (Standard 4000) – mit Hinweis, wie viel
+  fehlt. Ein Log zeigt das **Ende** (`zeilen`, Standard 200).
+- **System-Threads fallen weg.** `devops_pull_request_threads` lässt Threads aus, die
+  DevOps selbst anlegt (Abstimmungen, Pushes) – sie tragen `CodeReviewThreadType`.
+- **Ersteller-Filter lokal.** DevOps kennt in der Abfrage nur eine Ersteller-ID, keinen
+  Anzeigenamen; `ersteller` filtert darum nach dem Anzeigenamen (Teiltreffer).
+- **`devops_profile` kommt aus dem Kern.** Bei `mehrfach` gibt es kein einzelnes Profil;
+  das Werkzeug antwortet mit derselben Liste wie `devops_status` (ohne PAT).
+- `crates/devops/tests/attrappe` bildet eine Organisation nach: Basic-Anmeldung mit zwei
+  gültigen PATs, alle benutzten Endpunkte, auf Wunsch `401`, `203` mit HTML und `429` mit
+  `Retry-After`. Jeder Aufruf wird mitgeschrieben (Pfad, Methode, Abfrage, Rumpf,
+  Kopfzeilen); kein Test spricht mit einem echten Azure DevOps, alle Token sind erfunden.

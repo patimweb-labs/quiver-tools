@@ -3,8 +3,8 @@
 > **Status: in Arbeit.** Spezifikation in [SPEC.md](SPEC.md).
 
 Eigene MCP-Tools für [mcp-quiver](https://github.com/patimweb-labs/mcp-quiver) in reinem Rust:
-**Outline-Wiki**, **E-Mail** (IMAP/SMTP), **ZEP** (über den offiziellen ZEP-MCP), **SSH/SFTP** und
-**ABAP** (SAP ADT). Die Zugangsdaten trägt
+**Outline-Wiki**, **E-Mail** (IMAP/SMTP), **ZEP** (über den offiziellen ZEP-MCP), **SSH/SFTP**,
+**ABAP** (SAP ADT) und **Azure DevOps**. Die Zugangsdaten trägt
 der User **im quiver-Fenster** ein – unter Tools → <Titel>. quiver legt Geheimes in die Tresor-Datei
 und setzt beim Start die Umgebung des Tools; Passwörter und API-Keys gehen nie durch einen Agenten.
 
@@ -25,9 +25,9 @@ Beim Start setzt quiver die Umgebung: `OUTLINE_URL`, `OUTLINE_API_KEY` – also 
 Großbuchstaben. Der Kern liest nur diese Umgebung, kein Profil aus einer Datei, keine Seite im Browser.
 
 - Es gibt **einen** Zugang je Tool (`standard`). Wer zwei Wikis braucht, braucht zwei Einträge.
-  **Ausnahme: quiver-ssh und quiver-abap.** Dort pflegt der User eine Liste (`Eintrag.mehrfach`) –
-  Verbindungen bzw. SAP-Systeme; quiver übergibt sie als JSON in `QUIVER_ZUGAENGE`, die Felder
-  stehen im Eintrag unter `mehrfach`.
+  **Ausnahme: quiver-ssh, quiver-abap und quiver-devops.** Dort pflegt der User eine Liste
+  (`Eintrag.mehrfach`) – Verbindungen, SAP-Systeme bzw. DevOps-Organisationen; quiver übergibt sie
+  als JSON in `QUIVER_ZUGAENGE`, die Felder stehen im Eintrag unter `mehrfach`.
 - Fehlt ein Pflichtfeld, antwortet jedes Werkzeug mit dem Hinweis
   „Zugang fehlt – bitte im quiver-Fenster unter Tools → <Titel> die Angaben eintragen.“ – als Text,
   nicht als Fehler.
@@ -478,6 +478,107 @@ released, at most 5 s, errors only to the log.
 Decision record: [docs/adr/0005-adt-client-in-rust.md](docs/adr/0005-adt-client-in-rust.md)
 and [docs/adr/0006-abap-schreiben.md](docs/adr/0006-abap-schreiben.md).
 
+## quiver-devops (Azure DevOps)
+
+`quiver-devops` works with Azure DevOps over its REST API (version 7.1): it reads work
+items, comments, iterations, repositories, branches, pull requests, pipelines and runs,
+and it changes work items, comments, links, pull requests, votes and pipeline runs –
+but only after the user allowed writing, and only per organisation.
+
+Setup (once per organisation, in quiver): **Tools → DevOps → Organisationen** → add an
+organisation with its address (e.g. `https://dev.azure.com/neoimpulse` or an Azure DevOps
+Server like `https://tfs.customer.example/tfs/DefaultCollection`), an optional default
+project and a Personal Access Token (**User settings → Personal access tokens**; the
+entry carries a link to that page). quiver keeps the PAT in the encrypted vault file and
+passes every organisation to the tool as JSON in `QUIVER_ZUGAENGE`.
+
+### Organisations, one list
+
+```json
+{
+  "id": "devops",
+  "titel": "DevOps",
+  "herkunft": "eigen",
+  "laufzeit": { "art": "stdio", "befehl": "/pfad/zu/quiver-devops", "umgebung": {} },
+  "felder": [],
+  "mehrfach": {
+    "titel": "Organisationen",
+    "einzahl": "Organisation",
+    "felder": [
+      { "name": "url", "quelle": "client", "pflicht": true },
+      { "name": "projekt", "quelle": "client", "pflicht": false },
+      { "name": "pat", "quelle": "geheim", "pflicht": true, "link": { "text": "PAT erstellen", "url": "${url}/_usersSettings/tokens" } },
+      { "name": "schreiben", "quelle": "client", "pflicht": false, "standard": "aus" }
+    ]
+  }
+}
+```
+
+Every tool takes `verbindung`; with exactly one organisation the name may be omitted.
+`projekt` may be given per call; if neither the access nor the call names a project, the
+tool answers with a hint and sends **no** request. `devops_status` lists the
+organisations without a PAT, `devops_testen` logs on (`_apis/connectionData`) and tells
+who is signed in.
+
+### Token, errors and rate limits
+
+- **Auth** is HTTP Basic with an empty user and the PAT as password:
+  `Authorization: Basic base64(":" + PAT)`. That header is the only place the PAT ever
+  appears – no answer, error text, log or test output contains it.
+- **`api-version`** rides on every request (`7.1`; the comment endpoints use
+  `7.1-preview.4`, where DevOps still requires the preview).
+- **401, or 203 with an HTML login page** (DevOps redirects a rejected token), becomes
+  „PAT für <verbindung> ungültig oder abgelaufen – im quiver-Fenster unter Tools → DevOps
+  erneuern.“ and is **not** retried.
+- **429** is retried at most twice, honouring `Retry-After`, and **only for reading
+  calls**. A create or update is never repeated: only the server knows whether it landed.
+- Work item fields, descriptions and comments are HTML; the tools turn them into text
+  and shorten them via `max_zeichen` (default 4000) with a note on what was dropped.
+
+### Tools
+
+Eighteen tools are read-only (`read_only_hint`), eight change something
+(`destructive_hint`) and need the `schreiben` switch.
+
+| Tool | Kind | What it does |
+|---|---|---|
+| `devops_status` | read | The organisations from the quiver window: name, address, default project, writing on/off. No request, no PAT |
+| `devops_testen` | read | Log on and report who is signed in and in which organisation |
+| `devops_projekte` | read | Projects with state and visibility |
+| `devops_workitems_suchen` | read | WIQL search (`wiql`) or the convenient `text`, `status`, `typ`, `zugewiesen_an_mich`; `top` default 50, max 200. Fields come from `workitemsbatch` |
+| `devops_workitem` | read | One work item with description, acceptance criteria and links (`$expand=relations`) |
+| `devops_workitem_kommentare` | read | All comments with author and date |
+| `devops_workitem_typen` | read | The project's work item types with their states |
+| `devops_iterationen` | read | A team's sprints (`team` required), optionally only the current one (`aktuell`) |
+| `devops_iteration_workitems` | read | The work items of one iteration |
+| `devops_repos` | read | Git repositories with default branch and size |
+| `devops_branches` | read | Branches of a repository with short SHA and creator |
+| `devops_pull_requests` | read | Pull requests (`status` default `active`), optionally per repo or creator |
+| `devops_pull_request` | read | One pull request with reviewers and votes, linked work items and at most 20 commits |
+| `devops_pull_request_threads` | read | Comment threads, without the system threads DevOps creates for votes and pushes |
+| `devops_pipelines` | read | YAML pipelines with folder |
+| `devops_laeufe` | read | The latest runs (`top` default 10), filtered by pipeline and branch |
+| `devops_lauf` | read | One run with state, times and the failed steps from the timeline (with log number) |
+| `devops_lauf_log` | read | The **end** of a step's log, default the last 200 lines |
+| `devops_workitem_anlegen` | write | Create a work item: type, title, description, assignee, area, iteration, parent |
+| `devops_workitem_aendern` | write | Change fields as a list `{feld, wert}` or via `status`, `titel`, `zugewiesen` |
+| `devops_workitem_kommentieren` | write | Add a comment to a work item |
+| `devops_workitem_verknuepfen` | write | Link two work items (`art` `eltern`, `kind`, `verwandt`) or remove the link again |
+| `devops_pull_request_anlegen` | write | Create a pull request: source, target, title, description, draft, optional work items (linked as `ArtifactLink`) |
+| `devops_pull_request_kommentieren` | write | A new comment thread, or a reply in an existing one (`thread`) |
+| `devops_pull_request_abstimmen` | write | Vote `approve`, `approve-with-suggestions`, `wait`, `reject` or `reset` as the signed-in user |
+| `devops_pipeline_starten` | write | Queue a pipeline run with branch, variables and template parameters |
+| `devops_profile` | read | The organisations of the entry, without PATs |
+
+### Writing: one guard before any request
+
+`schreiben` is **off** by default, per organisation. While it is off, every one of the
+eight writing tools answers „Schreiben ist für <verbindung> aus – im quiver-Fenster
+einschalten.“ and **no request goes to DevOps**. A customer organisation stays read-only
+until someone switches it on in the quiver window.
+
+Decision record: [docs/adr/0007-devops-mit-pat.md](docs/adr/0007-devops-mit-pat.md).
+
 ## Entwickeln
 
 ```bash
@@ -499,7 +600,9 @@ Tests laufen nur gegen Attrappen – bei Outline ein axum-Server auf `127.0.0.1`
 E-Mail die Traits `Postfach`/`Versand`, bei ZEP eine axum-Attrappe mit Metadaten, DCR,
 Anmelde- und Zustimmungsseite, Token-Endpunkt und einem Mini-MCP-Server hinter Bearer,
 bei ABAP eine ADT-Attrappe mit CSRF, Cookies, Sperren (nur die Sitzung, die gesperrt
-hat, darf schreiben), Quelltext-PUT, Aktivierung und Anlegen –
+hat, darf schreiben), Quelltext-PUT, Aktivierung und Anlegen, bei DevOps eine
+Organisations-Attrappe mit Basic-Anmeldung, zwei Organisationen, 401 und 203 mit
+Anmeldeseite sowie 429 nur für lesende Aufrufe –
 und setzen die Umgebung als Paare im Speicher;
 kein Test spricht mit einem echten Dienst, kein Test braucht eine Tresor-Datei. Der
 SMTP-Teil wird zusätzlich gegen `lettre`s Stub-Transport geprüft (Kopfzeilen, Threading,

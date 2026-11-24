@@ -11,7 +11,8 @@
 
 ## 1. Worum es geht
 
-Eigene MCP-Tools für mcp-quiver in Rust (Outline, E-Mail, SSH, ABAP), Nachfolger der pi-Erweiterungen.
+Eigene MCP-Tools für mcp-quiver in Rust (Outline, E-Mail, SSH, ABAP, Azure DevOps), Nachfolger der
+pi-Erweiterungen.
 Zugänge gibt der User im quiver-Fenster ein (Felder des Eintrags), nie ein Agent. Details: [SPEC.md](SPEC.md).
 
 ## 2. Nicht verhandelbar

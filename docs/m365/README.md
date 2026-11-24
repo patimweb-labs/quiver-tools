@@ -60,7 +60,7 @@ Die Teams-Tools handeln **als der User**: Sie lesen, was er lesen darf, und was 
 ihm. Delegierte Rechte: `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`,
 `ChannelMessage.Send`, `TeamMember.Read.All`, `Chat.ReadWrite`, `User.ReadBasic.All` (in der
 App-Registrierung eingetragen,
-Admin-Zustimmung für neoimpulse.de erteilt – siehe [docs/entra-app.md](docs/entra-app.md)).
+Admin-Zustimmung für neoimpulse.de erteilt – siehe [entra-app.md](entra-app.md)).
 
 | Tool | Was es tut | Graph |
 |---|---|---|
@@ -116,7 +116,7 @@ Admin-Zustimmung für neoimpulse.de erteilt – siehe [docs/entra-app.md](docs/e
 Delegierte Rechte (Aufgabe 06, in der App-Registrierung eingetragen, Admin-Zustimmung für
 neoimpulse.de erteilt): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.ReadWrite`,
 `Group.Read.All`, `Contacts.ReadWrite`, `People.Read`, `Notes.ReadWrite.All` – siehe
-[docs/entra-app.md](docs/entra-app.md).
+[entra-app.md](entra-app.md).
 
 ### SharePoint und OneDrive
 
@@ -296,7 +296,7 @@ quiver-m365 --version
 
 Es gibt **keine** App-Registrierung einzurichten und kein Secret: `quiver-m365` ist eine
 eingebaute Multi-Tenant-App (öffentlicher Client). Details:
-[docs/entra-app.md](docs/entra-app.md).
+[entra-app.md](entra-app.md).
 
 ## Konfiguration
 
@@ -304,7 +304,7 @@ Alles über Umgebung, alles optional:
 
 | Variable | Standard | Bedeutung |
 |---|---|---|
-| `M365_CLIENT_ID` | eingebaute Client-ID | eigene App-Registrierung (siehe [docs/entra-app.md](docs/entra-app.md)) |
+| `M365_CLIENT_ID` | eingebaute Client-ID | eigene App-Registrierung (siehe [entra-app.md](entra-app.md)) |
 | `M365_TENANT` | `organizations` | Tenant-ID oder Domain |
 | `M365_SCOPES` | `User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.Read.All Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send TeamMember.Read.All Chat.ReadWrite User.ReadBasic.All Sites.ReadWrite.All Files.ReadWrite.All Tasks.ReadWrite Group.Read.All Contacts.ReadWrite People.Read Notes.ReadWrite.All offline_access` | delegierte Rechte |
 | `M365_AUTHORITY` | `https://login.microsoftonline.com` | Anmeldedienst (Tests: Attrappe) |

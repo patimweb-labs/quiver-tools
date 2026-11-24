@@ -4,7 +4,7 @@
 
 Eigene MCP-Tools für [mcp-quiver](https://github.com/patimweb-labs/mcp-quiver) in reinem Rust:
 **Outline-Wiki**, **E-Mail** (IMAP/SMTP), **ZEP** (über den offiziellen ZEP-MCP), **SSH/SFTP**,
-**ABAP** (SAP ADT) und **Azure DevOps**. Die Zugangsdaten trägt
+**ABAP** (SAP ADT), **Azure DevOps** und **Excalidraw** (lokal auf Dateien). Die Zugangsdaten trägt
 der User **im quiver-Fenster** ein – unter Tools → <Titel>. quiver legt Geheimes in die Tresor-Datei
 und setzt beim Start die Umgebung des Tools; Passwörter und API-Keys gehen nie durch einen Agenten.
 
@@ -605,6 +605,56 @@ Ausführlich: [docs/m365/README.md](docs/m365/README.md), App-Registrierung und 
 [docs/m365/entra-app.md](docs/m365/entra-app.md), Spezifikation:
 [docs/m365/SPEC.md](docs/m365/SPEC.md). Bis 2026-11-24 war quiver-m365 ein eigenes Repo; die
 Historie ist hier übernommen.
+
+## quiver-excalidraw (Excalidraw-Dateien)
+
+Das erste der beiden Diagramm-Werkzeuge: es erzeugt, liest und ändert `.excalidraw`-Dateien
+in einem **Arbeitsordner** und zeigt dem Agenten das Ergebnis als **PNG**. Reines Rust –
+kein Node, kein Netz, kein Browser im Hintergrund. Crates: `crates/diagramm` (Ablage,
+Modell, Layout, Zeichnen) und `crates/excalidraw` (Programm `quiver-excalidraw`).
+Aufgabe: [docs/aufgaben/17-excalidraw.md](docs/aufgaben/17-excalidraw.md), Entscheidung:
+[docs/adr/0011-excalidraw.md](docs/adr/0011-excalidraw.md).
+
+Ausführlich: [crates/excalidraw/README.md](crates/excalidraw/README.md).
+
+### Three fields, no credentials
+
+| Feld | Art | Pflicht | Standard |
+|---|---|---|---|
+| `ordner` | Text | ja | – (voller Pfad, `~` wird aufgelöst, wird angelegt) |
+| `schreiben` | Schalter | nein | **an** |
+
+There is nothing to sign in to. Everything the tool touches lives inside the working
+folder: relative paths only, no `..`, no absolute paths, no symlinks, no hidden names, no
+overwriting, no deleting. Verändern geht nur mit dem gelesenen `stand` (SHA-256).
+
+### Tools
+
+| Tool | Kind | What it does |
+|---|---|---|
+| `excalidraw_status` | read | working folder, number of files, `schreiben` on/off |
+| `excalidraw_liste` | read | every `.excalidraw` file, also in subfolders, with size and time |
+| `excalidraw_lesen` | read | per element: id, type, text, position, bindings, plus `stand`; `roh: true` for the source text |
+| `excalidraw_bild` | read | the scene as a **PNG image**, and what could not be drawn |
+| `excalidraw_oeffnen` | read | opens `https://excalidraw.com` and names the full path; `nur_link: true` opens nothing |
+| `excalidraw_erstellen` | write | a diagram from `modell` (`knoten`, `kanten`, `gruppen`, `richtung`) |
+| `excalidraw_aus_quelltext` | write | a finished file, checked strictly |
+| `excalidraw_elemente_aendern` | write | per id: `text`, `farbe`, `form`, `x`/`y`/`breite`/`hoehe`, `verbindungen` |
+| `excalidraw_elemente_hinzufuegen` | write | `rectangle`, `diamond`, `ellipse`, `text`, `line`, `arrow`, `frame`, `image` |
+| `excalidraw_elemente_entfernen` | write | removes elements and resolves both sides of every binding |
+| `excalidraw_exportieren` | write | SVG or PNG into the working folder |
+| `excalidraw_profile` | read | the entry from the environment |
+
+### What the file must contain
+
+`type "excalidraw"`, `version 2`, `source`, `elements`, `appState`, `files` – and every
+element with all **25 required fields** of the format sources. Text in a shape is bound
+twice (`containerId` and `boundElements`), an arrow likewise (`startBinding`/`endBinding`
+and `boundElements`). `link` only `https`, `http`, `mailto`. Everything the tool does not
+understand – images in `files`, `customData`, whole elements of unknown type – is carried
+through unchanged. Drawing is done by the crate itself, with the embedded font; nothing is
+uploaded, and `excalidraw_oeffnen` only opens the empty page – the file is dragged into
+the window by hand.
 
 ## Entwickeln
 

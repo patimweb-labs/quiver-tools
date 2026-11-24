@@ -3,6 +3,7 @@ resolver = "2"
 members = [
   "crates/kern",
   "crates/diagramm",
+  "crates/excalidraw",
   "crates/outline",
   "crates/email",
   "crates/zep",

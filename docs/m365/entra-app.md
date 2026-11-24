@@ -9,9 +9,9 @@
 | Client-ID | `9ae8e0db-e05f-4db8-adde-83d70d416eeb` |
 | Kontotypen | Accounts in any organizational directory (Multi-Tenant) |
 | Plattform | Public client/native, Redirects `http://127.0.0.1` und `http://localhost` (jeder Port) |
-| Öffentliche Client-Flows | an |
+| Öffentliche Client-Flows | **aus** (2026-11-24): keine Gerätecode-Anmeldung; Browser mit PKCE und Loopback braucht sie nicht |
 | Rechte (delegiert, Graph) | `User.Read`, `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `Files.Read.All`, `offline_access`; für Teams (2026-11-24): `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `ChannelMessage.Send`, `TeamMember.Read.All`, `Chat.ReadWrite`, `User.ReadBasic.All`; für SharePoint/OneDrive, Planner/To Do, Kontakte/Personen und OneNote (2026-11-24): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.ReadWrite`, `Group.Read.All`, `Contacts.ReadWrite`, `People.Read`, `Notes.ReadWrite.All` |
-| Rechte (delegiert, Azure DevOps `499b84ac-1321-427f-aa17-267ca6975798`) | `user_impersonation` (2026-11-24; derzeit ungenutzt – DevOps läuft über quiver-devops mit PAT) |
+| Azure DevOps | Recht am 2026-11-24 entfernt (quiver-devops nutzt PAT). **Offen:** die Admin-Zustimmung `user_impersonation` im Entra-Portal widerrufen |
 | Secret | keins |
 
 Angelegt 2026-11-23 mit der Azure CLI (`az ad app create … --sign-in-audience AzureADMultipleOrgs`

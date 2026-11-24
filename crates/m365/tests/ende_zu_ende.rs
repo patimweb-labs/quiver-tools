@@ -45,7 +45,37 @@ const TOOLS_TEAMS: &[&str] = &[
     "teams_als_gelesen",
 ];
 
-/// Verändert das Tool etwas in Teams bzw. im Postfach/Kalender?
+/// Die 26 Tools aus docs/aufgaben/06-graph-erweiterung.md.
+const TOOLS_ERWEITERUNG: &[&str] = &[
+    "sharepoint_sites",
+    "sharepoint_bibliotheken",
+    "dateien_liste",
+    "datei_lesen",
+    "datei_hochladen",
+    "ordner_anlegen",
+    "sharepoint_listen",
+    "sharepoint_listeneintraege",
+    "sharepoint_listeneintrag_anlegen",
+    "sharepoint_listeneintrag_aendern",
+    "planner_plaene",
+    "planner_aufgaben",
+    "planner_aufgabe_anlegen",
+    "planner_aufgabe_aendern",
+    "todo_listen",
+    "todo_aufgaben",
+    "todo_aufgabe_anlegen",
+    "todo_aufgabe_erledigen",
+    "kontakte_suchen",
+    "kontakt_anlegen",
+    "personen_suchen",
+    "onenote_notizbuecher",
+    "onenote_abschnitte",
+    "onenote_seiten",
+    "onenote_seite_lesen",
+    "onenote_seite_anlegen",
+];
+
+/// Verändert das Tool etwas bei Graph?
 fn ist_destruktiv(name: &str) -> bool {
     matches!(
         name,
@@ -56,6 +86,16 @@ fn ist_destruktiv(name: &str) -> bool {
             | "teams_chat_senden"
             | "teams_chat_anlegen"
             | "teams_reagieren"
+            | "datei_hochladen"
+            | "ordner_anlegen"
+            | "sharepoint_listeneintrag_anlegen"
+            | "sharepoint_listeneintrag_aendern"
+            | "planner_aufgabe_anlegen"
+            | "planner_aufgabe_aendern"
+            | "todo_aufgabe_anlegen"
+            | "todo_aufgabe_erledigen"
+            | "kontakt_anlegen"
+            | "onenote_seite_anlegen"
     )
 }
 
@@ -98,13 +138,23 @@ async fn list_tools_hat_alle_tools_und_profil_liefert_den_namen() {
     let mut erwartet: Vec<&str> = TOOLS_SPEC
         .iter()
         .chain(TOOLS_TEAMS.iter())
+        .chain(TOOLS_ERWEITERUNG.iter())
         .copied()
         .collect();
     erwartet.sort_unstable();
     assert_eq!(
         namen, erwartet,
-        "die acht Tools aus SPEC.md §4 und die 16 aus Aufgabe 05"
+        "die acht Tools aus SPEC.md §4, die 16 aus Aufgabe 05 und die 26 aus Aufgabe 06"
     );
+
+    // Regression: die bisherigen 24 Tools stehen weiter mit denselben Namen in
+    // der Liste (nichts umbenannt, nichts entfernt).
+    for alt in TOOLS_SPEC.iter().chain(TOOLS_TEAMS.iter()) {
+        assert!(
+            tools.iter().any(|tool| tool.name == *alt),
+            "{alt} fehlt – bestehende Tools dürfen nicht verschwinden"
+        );
+    }
 
     // Jedes Eingabeschema ist ein Objekt (Aufgabe 05) – sonst kann ein Client
     // die Parameter nicht prüfen.

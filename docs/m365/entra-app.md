@@ -10,7 +10,7 @@
 | Kontotypen | Accounts in any organizational directory (Multi-Tenant) |
 | Plattform | Public client/native, Redirects `http://127.0.0.1` und `http://localhost` (jeder Port) |
 | Öffentliche Client-Flows | an |
-| Rechte (delegiert, Graph) | `User.Read`, `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `Files.Read.All`, `offline_access`; für Teams (2026-11-24): `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `ChannelMessage.Send`, `Chat.ReadWrite`, `User.ReadBasic.All` |
+| Rechte (delegiert, Graph) | `User.Read`, `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `Files.Read.All`, `offline_access`; für Teams (2026-11-24): `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `ChannelMessage.Send`, `Chat.ReadWrite`, `User.ReadBasic.All`; für SharePoint/OneDrive, Planner/To Do, Kontakte/Personen und OneNote (2026-11-24): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.ReadWrite`, `Group.Read.All`, `Contacts.ReadWrite`, `People.Read`, `Notes.ReadWrite.All` |
 | Rechte (delegiert, Azure DevOps `499b84ac-1321-427f-aa17-267ca6975798`) | `user_impersonation` (2026-11-24; derzeit ungenutzt – DevOps läuft über quiver-devops mit PAT) |
 | Secret | keins |
 
@@ -19,7 +19,9 @@ Angelegt 2026-11-23 mit der Azure CLI (`az ad app create … --sign-in-audience 
 `az ad app permission add`).
 
 **Admin-Zustimmung für neoimpulse.de** erteilt am 2026-11-23, für Teams und DevOps erneut am
-2026-11-24 (`az ad app permission admin-consent`, alle User des Tenants). Wer vor dem 24.11.
+2026-11-24 und für die Rechte aus Aufgabe 06 (`Sites.ReadWrite.All`, `Files.ReadWrite.All`,
+`Tasks.ReadWrite`, `Group.Read.All`, `Contacts.ReadWrite`, `People.Read`, `Notes.ReadWrite.All`)
+am 2026-11-24 (`az ad app permission admin-consent`, alle User des Tenants). Wer vor dem 24.11.
 angemeldet war, klickt **einmal** erneut auf „Anmelden“, damit das Refresh-Token die neuen Rechte
 trägt. Andere Tenants geben im Browser frei (siehe unten).
 

@@ -83,6 +83,10 @@ pub struct Aufzeichnung {
     pub abfrage: Vec<(String, String)>,
     pub kopfzeilen: Vec<(String, String)>,
     pub body: Option<Value>,
+    /// Der rohe Körper als Text – bei PUT/OneNote ist er kein JSON.
+    pub roher_body: Option<String>,
+    /// Länge des rohen Körpers in Bytes.
+    pub rohe_bytes: Option<usize>,
 }
 
 impl Aufzeichnung {
@@ -240,13 +244,20 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
         })
         .collect();
 
-    let body = if methode == "POST" {
-        let bytes = to_bytes(request.into_body(), 1 << 20)
+    // POST/PATCH/PUT tragen einen Körper; der Text einer Datei ist kein JSON,
+    // deshalb wird er zusätzlich roh aufgezeichnet.
+    let (body, roher_body, rohe_bytes) = if matches!(methode.as_str(), "POST" | "PATCH" | "PUT") {
+        let bytes = to_bytes(request.into_body(), 8 << 20)
             .await
             .expect("Body lesbar");
-        serde_json::from_slice::<Value>(&bytes).ok()
+        let roh = String::from_utf8_lossy(&bytes).to_string();
+        (
+            serde_json::from_slice::<Value>(&bytes).ok(),
+            Some(roh),
+            Some(bytes.len()),
+        )
     } else {
-        None
+        (None, None, None)
     };
 
     fach(&zustand.aufzeichnungen).push(Aufzeichnung {
@@ -255,6 +266,8 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
         abfrage: abfrage.clone(),
         kopfzeilen,
         body: body.clone(),
+        roher_body: roher_body.clone(),
+        rohe_bytes,
     });
 
     if let Some(antwort) = fach(&zustand.einmal).take() {
@@ -404,6 +417,207 @@ async fn dienen(State(zustand): State<Arc<Zustand>>, request: Request) -> Respon
         }
         ("POST", pfad) if pfad.ends_with("/replies") => gesendete_nachricht("neu-antwort"),
         ("POST", pfad) if pfad.ends_with("/messages") => gesendete_nachricht("neu-nachricht"),
+        // ------------------------------------------------------------------
+        // SharePoint, OneDrive, Listen (docs/aufgaben/06-graph-erweiterung.md)
+        // ------------------------------------------------------------------
+        ("GET", "/sites") => json!({"value": sites()}),
+        ("GET", pfad) if pfad.starts_with("/sites/") && pfad.ends_with("/drives") => {
+            json!({"value": laufwerke()})
+        }
+        ("GET", pfad) if pfad.starts_with("/sites/") && pfad.ends_with("/lists") => {
+            json!({"value": listen()})
+        }
+        ("GET", pfad) if pfad.contains("/lists/") && pfad.ends_with("/items") => {
+            json!({"value": listeneintraege()})
+        }
+        ("POST", pfad) if pfad.contains("/lists/") && pfad.ends_with("/items") => {
+            let felder = body
+                .as_ref()
+                .and_then(|body| body.get("fields"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            json!({
+                "id": "3",
+                "webUrl": "https://contoso.sharepoint.com/sites/projekt-nord/Lists/Aufgaben/3",
+                "lastModifiedDateTime": "2026-11-27T10:00:00Z",
+                "fields": felder,
+            })
+        }
+        ("PATCH", pfad) if pfad.ends_with("/fields") => body.clone().unwrap_or(Value::Null),
+        ("GET", pfad) if pfad.ends_with("/children") => json!({"value": kinder()}),
+        // Ein einzelner Eintrag (Metadaten) – nicht der Inhalt, nicht die Kinder.
+        ("GET", pfad) if pfad.contains("/items/") && !pfad.ends_with("/content") => {
+            item_aus_id(pfad)
+        }
+        ("GET", pfad)
+            if pfad.contains("/root:/")
+                && !pfad.ends_with("/content")
+                && !pfad.ends_with("/children") =>
+        {
+            item_aus_name(pfad)
+        }
+        ("POST", pfad) if pfad.ends_with("/children") => {
+            let name = body
+                .as_ref()
+                .and_then(|body| body.get("name"))
+                .cloned()
+                .unwrap_or_else(|| json!("Ordner"));
+            json!({
+                "id": "neu-ordner",
+                "name": name,
+                "folder": {"childCount": 0},
+                "webUrl": "https://contoso.sharepoint.com/sites/projekt-nord/neu-ordner",
+                "lastModifiedDateTime": "2026-11-27T10:00:00Z",
+            })
+        }
+        ("PUT", pfad) if pfad.ends_with("/content") => {
+            let name = name_aus_pfad(pfad);
+            json!({
+                "id": "neu-datei",
+                "name": name,
+                "size": rohe_bytes.unwrap_or(0),
+                "file": {"mimeType": "text/plain"},
+                "webUrl": "https://contoso.sharepoint.com/neu-datei",
+                "lastModifiedDateTime": "2026-11-27T10:00:00Z",
+            })
+        }
+        // Das Ziel der Weiterleitung von `/content` – ohne Token, wie bei Graph.
+        ("GET", pfad) if pfad.starts_with("/download/") => {
+            let name = pfad.trim_start_matches("/download/");
+            let (typ, text) = textdatei(name);
+            return (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, typ)],
+                text.to_string(),
+            )
+                .into_response();
+        }
+        // ------------------------------------------------------------------
+        // Planner und To Do
+        // ------------------------------------------------------------------
+        ("GET", "/me/planner/plans") => json!({"value": plaene()}),
+        ("GET", "/groups") => json!({
+            "value": [{"id": "group-1", "displayName": "Entwicklung"}]
+        }),
+        ("GET", pfad) if pfad.starts_with("/groups/") && pfad.ends_with("/planner/plans") => {
+            json!({"value": plaene()})
+        }
+        ("GET", pfad) if pfad.starts_with("/planner/plans/") && pfad.ends_with("/buckets") => {
+            json!({"value": buckets()})
+        }
+        ("GET", pfad) if pfad.starts_with("/planner/plans/") && pfad.ends_with("/tasks") => {
+            json!({"value": planner_aufgaben()})
+        }
+        ("GET", "/me/planner/tasks") => json!({"value": planner_aufgaben()}),
+        ("GET", pfad) if pfad.starts_with("/planner/tasks/") => {
+            let id = pfad.trim_start_matches("/planner/tasks/");
+            planner_aufgabe(id)
+        }
+        ("POST", "/planner/tasks") => {
+            let body = body.unwrap_or(Value::Null);
+            json!({
+                "id": "task-neu",
+                "planId": body.get("planId").cloned().unwrap_or(Value::Null),
+                "bucketId": body.get("bucketId").cloned().unwrap_or(Value::Null),
+                "title": body.get("title").cloned().unwrap_or(Value::Null),
+                "percentComplete": 0,
+                "dueDateTime": body.get("dueDateTime").cloned().unwrap_or(Value::Null),
+                "assignments": body.get("assignments").cloned().unwrap_or(Value::Null),
+                "@odata.etag": "W/\"neu\"",
+            })
+        }
+        ("PATCH", pfad) if pfad.starts_with("/planner/tasks/") => {
+            let id = pfad.trim_start_matches("/planner/tasks/");
+            let mut aufgabe = planner_aufgabe(id);
+            if let (Some(Value::Object(quelle)), Value::Object(ziel)) = (&body, &mut aufgabe) {
+                for (name, wert) in quelle {
+                    ziel.insert(name.clone(), wert.clone());
+                }
+            }
+            aufgabe["@odata.etag"] = json!("W/\"2\"");
+            aufgabe
+        }
+        ("GET", "/me/todo/lists") => json!({"value": todo_listen()}),
+        ("GET", pfad) if pfad.starts_with("/me/todo/lists/") && pfad.ends_with("/tasks") => {
+            json!({"value": todo_aufgaben()})
+        }
+        ("POST", pfad) if pfad.starts_with("/me/todo/lists/") && pfad.ends_with("/tasks") => {
+            let body = body.unwrap_or(Value::Null);
+            let mut aufgabe = todo_aufgabe("todo-neu");
+            for feld in ["title", "importance", "dueDateTime", "body"] {
+                if let Some(wert) = body.get(feld) {
+                    aufgabe[feld] = wert.clone();
+                }
+            }
+            aufgabe
+        }
+        ("PATCH", pfad) if pfad.starts_with("/me/todo/lists/") && pfad.contains("/tasks/") => {
+            let id = pfad.rsplit('/').next().unwrap_or("todo-1");
+            let mut aufgabe = todo_aufgabe(id);
+            if let (Some(Value::Object(quelle)), Value::Object(ziel)) = (&body, &mut aufgabe) {
+                for (name, wert) in quelle {
+                    ziel.insert(name.clone(), wert.clone());
+                }
+            }
+            aufgabe
+        }
+        // ------------------------------------------------------------------
+        // Kontakte und Personen
+        // ------------------------------------------------------------------
+        ("GET", "/me/contacts") => json!({"value": kontakte()}),
+        ("POST", "/me/contacts") => {
+            let body = body.unwrap_or(Value::Null);
+            let mut kontakt = kontakte()[0].clone();
+            if let (Value::Object(quelle), Value::Object(ziel)) = (&body, &mut kontakt) {
+                for (name, wert) in quelle {
+                    ziel.insert(name.clone(), wert.clone());
+                }
+            }
+            kontakt["id"] = json!("k-neu");
+            kontakt
+        }
+        ("GET", "/me/people") => json!({"value": personen_von_people()}),
+        // ------------------------------------------------------------------
+        // OneNote
+        // ------------------------------------------------------------------
+        ("GET", "/me/onenote/notebooks") => json!({"value": notizbuecher()}),
+        ("GET", pfad) if pfad.starts_with("/me/onenote/") && pfad.ends_with("/sections") => {
+            json!({"value": abschnitte()})
+        }
+        ("GET", pfad) if pfad.starts_with("/me/onenote/") && pfad.ends_with("/pages") => {
+            json!({"value": onenote_seiten()})
+        }
+        ("GET", pfad) if pfad.starts_with("/me/onenote/pages/") && pfad.ends_with("/content") => {
+            let text = "<html><head><title>Jour fixe</title></head><body><p>Erste Zeile</p><p>Zweite Zeile</p></body></html>";
+            return (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "text/html")],
+                text.to_string(),
+            )
+                .into_response();
+        }
+        ("GET", pfad) if pfad.starts_with("/me/onenote/pages/") => {
+            let id = pfad.trim_start_matches("/me/onenote/pages/");
+            onenote_seite(id)
+        }
+        ("POST", pfad) if pfad.starts_with("/me/onenote/") && pfad.ends_with("/pages") => {
+            let titel = roher_body
+                .as_deref()
+                .and_then(|html| zwischen(html, "<title>", "</title>"))
+                .unwrap_or_else(|| "Neue Seite".to_string());
+            json!({
+                "id": "1-page-neu-0001",
+                "title": titel,
+                "webUrl": "https://example/onenote/1-page-neu-0001",
+                "createdDateTime": "2026-11-27T10:00:00Z",
+                "lastModifiedDateTime": "2026-11-27T10:00:00Z",
+            })
+        }
+        // Zuletzt, weil es jeden `/content`-Pfad fängt: Dateiinhalt (Text oder
+        // die PDF-Ausgabe für Office-Dateien).
+        ("GET", pfad) if pfad.ends_with("/content") => {
+            return inhalt(pfad, &abfrage, &host);
+        }
         _ => {
             return (
                 StatusCode::NOT_FOUND,
@@ -442,6 +656,417 @@ fn felder(abfrage: &str) -> Vec<(String, String)> {
             (entkodieren(name), entkodieren(wert))
         })
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Daten für Aufgabe 06: SharePoint, OneDrive, Listen, Planner, To Do, Kontakte,
+// Personen, OneNote. Feste Ids, damit die Tests sie nennen können.
+// ---------------------------------------------------------------------------
+
+pub const SITE_NORD: &str = "contoso.sharepoint.com,1111,aaaa";
+pub const SITE_SUED: &str = "contoso.sharepoint.com,2222,bbbb";
+pub const SITE_INTERN: &str = "contoso.sharepoint.com,3333,cccc";
+pub const DRIVE_DOKU: &str = "drive-doku";
+pub const DRIVE_FOTOS: &str = "drive-fotos";
+pub const LISTE_AUFGABEN: &str = "11111111-1111-1111-1111-111111111111";
+pub const ITEM_ORDNER: &str = "item-projekte";
+pub const ITEM_TEXT: &str = "item-notiz";
+pub const ITEM_OFFICE: &str = "item-bericht";
+pub const ITEM_PDF: &str = "item-anleitung";
+pub const NOTIZ_INHALT: &str = "Zeile eins\nZeile zwei";
+pub const PLAN_NORD: &str = "plan-1";
+pub const PLAN_SUED: &str = "plan-2";
+pub const BUCKET_OFFEN: &str = "bucket-1";
+pub const BUCKET_FERTIG: &str = "bucket-2";
+pub const AUFGABE_MIT_ETAG: &str = "task-1";
+pub const AUFGABE_OHNE_ETAG: &str = "task-ohne-etag";
+pub const TODO_LISTE: &str = "AAMkADtodo-aufgaben-1";
+pub const TODO_LISTE_EINKAUF: &str = "AAMkADtodo-einkauf-2";
+pub const TODO_AUFGABE: &str = "AAMkADtodo-task-1";
+pub const NOTIZBUCH: &str = "1-nb-arbeit-0000000001";
+pub const ABSCHNITT: &str = "1-sec-besprechungen-0001";
+pub const ONENOTE_SEITE: &str = "1-page-jour-fixe-0001";
+
+fn sites() -> Vec<Value> {
+    vec![
+        json!({
+            "id": SITE_NORD,
+            "displayName": "Projekt Nord",
+            "name": "Projekt-Nord",
+            "description": "Der Norden",
+            "webUrl": "https://contoso.sharepoint.com/sites/projekt-nord",
+        }),
+        json!({
+            "id": SITE_SUED,
+            "displayName": "Projekt Süd",
+            "name": "Projekt-Sued",
+            "webUrl": "https://contoso.sharepoint.com/sites/projekt-sued",
+        }),
+        // Damit „Projekt“ mehrdeutig ist: drei Treffer, keiner genau.
+        json!({
+            "id": SITE_INTERN,
+            "displayName": "Projekt Nord Intern",
+            "name": "Projekt-Nord-Intern",
+            "webUrl": "https://contoso.sharepoint.com/sites/projekt-nord-intern",
+        }),
+    ]
+}
+
+fn laufwerke() -> Vec<Value> {
+    vec![
+        json!({
+            "id": DRIVE_DOKU,
+            "name": "Dokumente",
+            "driveType": "documentLibrary",
+            "webUrl": "https://contoso.sharepoint.com/sites/projekt-nord/Dokumente",
+        }),
+        json!({
+            "id": DRIVE_FOTOS,
+            "name": "Fotos",
+            "driveType": "documentLibrary",
+        }),
+    ]
+}
+
+fn listen() -> Vec<Value> {
+    vec![
+        json!({
+            "id": LISTE_AUFGABEN,
+            "name": "Aufgaben",
+            "displayName": "Aufgaben",
+            "description": "Was zu tun ist",
+            "webUrl": "https://contoso.sharepoint.com/sites/projekt-nord/Lists/Aufgaben",
+            "list": {"template": "genericList"},
+        }),
+        json!({
+            "id": "22222222-2222-2222-2222-222222222222",
+            "name": "Kontakte",
+            "displayName": "Kontakte",
+            "list": {"template": "contacts"},
+        }),
+    ]
+}
+
+fn listeneintraege() -> Vec<Value> {
+    vec![
+        json!({
+            "id": "1",
+            "webUrl": "https://contoso.sharepoint.com/sites/projekt-nord/Lists/Aufgaben/1",
+            "lastModifiedDateTime": "2026-11-27T09:00:00Z",
+            "fields": {"Titel": "Erster", "Status": "offen"},
+        }),
+        json!({
+            "id": "2",
+            "webUrl": "https://contoso.sharepoint.com/sites/projekt-nord/Lists/Aufgaben/2",
+            "lastModifiedDateTime": "2026-11-26T09:00:00Z",
+            "fields": {"Titel": "Zweiter", "Status": "fertig"},
+        }),
+    ]
+}
+
+fn kinder() -> Vec<Value> {
+    vec![
+        json!({
+            "id": ITEM_ORDNER,
+            "name": "Projekte",
+            "folder": {"childCount": 2},
+            "webUrl": "https://contoso.sharepoint.com/Projekte",
+            "lastModifiedDateTime": "2026-11-25T08:00:00Z",
+            "parentReference": {"path": "/drive/root:"},
+        }),
+        json!({
+            "id": ITEM_TEXT,
+            "name": "notiz.md",
+            "size": 26,
+            "file": {"mimeType": "text/markdown"},
+            "webUrl": "https://contoso.sharepoint.com/notiz.md",
+            "lastModifiedDateTime": "2026-11-20T08:00:00Z",
+            "parentReference": {"path": "/drive/root:/Projekte"},
+        }),
+        json!({
+            "id": ITEM_OFFICE,
+            "name": "bericht.docx",
+            "size": 1234,
+            "file": {"mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"},
+            "webUrl": "https://contoso.sharepoint.com/bericht.docx",
+        }),
+        json!({
+            "id": ITEM_PDF,
+            "name": "anleitung.pdf",
+            "size": 4321,
+            "file": {"mimeType": "application/pdf"},
+            "webUrl": "https://contoso.sharepoint.com/anleitung.pdf",
+        }),
+    ]
+}
+
+/// Ein Eintrag aus `…/items/{id}` (ohne `/content`).
+fn item_aus_id(pfad: &str) -> Value {
+    let id = pfad
+        .split("/items/")
+        .nth(1)
+        .unwrap_or_default()
+        .split('/')
+        .next()
+        .unwrap_or_default();
+    kinder()
+        .into_iter()
+        .find(|eintrag| eintrag["id"] == id)
+        .unwrap_or_else(|| kinder()[0].clone())
+}
+
+/// Ein Eintrag aus `…/root:/{pfad}` (ohne `/content`, ohne `/children`).
+fn item_aus_name(pfad: &str) -> Value {
+    let name = pfad
+        .split("/root:/")
+        .nth(1)
+        .unwrap_or_default()
+        .trim_matches(':');
+    kinder()
+        .into_iter()
+        .find(|eintrag| eintrag["name"] == name)
+        .unwrap_or_else(|| kinder()[0].clone())
+}
+
+/// Der Dateiname hinter `…/content` (aus dem Upload-Pfad).
+fn name_aus_pfad(pfad: &str) -> String {
+    let ohne = pfad.strip_suffix("/content").unwrap_or(pfad);
+    ohne.rsplit(":/")
+        .next()
+        .unwrap_or(ohne)
+        .rsplit('/')
+        .next()
+        .unwrap_or(ohne)
+        .trim_matches(':')
+        .to_string()
+}
+
+/// Die Id eines Laufwerkseintrags aus `…/items/{id}/content`.
+fn item_aus_pfad(pfad: &str) -> &str {
+    pfad.split("/items/")
+        .nth(1)
+        .unwrap_or_default()
+        .trim_end_matches("/content")
+}
+
+/// Der Text einer Textdatei (für `/download/…` und `/content`).
+fn textdatei(name: &str) -> (&'static str, &'static str) {
+    if name.ends_with(".md") {
+        ("text/markdown; charset=utf-8", NOTIZ_INHALT)
+    } else {
+        ("text/plain; charset=utf-8", NOTIZ_INHALT)
+    }
+}
+
+/// Dateiinhalt: Textdatei über eine Weiterleitung (wie Graph), Office-Datei als
+/// PDF (`?format=pdf`).
+fn inhalt(pfad: &str, abfrage: &[(String, String)], host: &str) -> Response {
+    let id = item_aus_pfad(pfad);
+    let als_pdf = abfrage
+        .iter()
+        .any(|(name, wert)| name == "format" && wert == "pdf");
+    if als_pdf {
+        return (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "application/pdf")],
+            "%PDF-1.7\n(Attrappe)".to_string(),
+        )
+            .into_response();
+    }
+    let name = match id {
+        ITEM_TEXT => "notiz.md",
+        ITEM_OFFICE => "bericht.docx",
+        ITEM_PDF => "anleitung.pdf",
+        _ => "unbekannt.txt",
+    };
+    (
+        StatusCode::FOUND,
+        [(header::LOCATION, format!("http://{host}/download/{name}"))],
+    )
+        .into_response()
+}
+
+fn plaene() -> Vec<Value> {
+    vec![
+        json!({
+            "id": PLAN_NORD,
+            "title": "Projekt Nord",
+            "owner": "group-1",
+            "createdDateTime": "2026-11-01T08:00:00Z",
+        }),
+        json!({
+            "id": PLAN_SUED,
+            "title": "Projekt Süd",
+            "owner": "group-1",
+            "createdDateTime": "2026-11-02T08:00:00Z",
+        }),
+    ]
+}
+
+fn buckets() -> Vec<Value> {
+    vec![
+        json!({"id": BUCKET_OFFEN, "name": "Zu erledigen", "planId": PLAN_NORD}),
+        json!({"id": BUCKET_FERTIG, "name": "Erledigt", "planId": PLAN_NORD}),
+    ]
+}
+
+fn planner_aufgaben() -> Vec<Value> {
+    vec![
+        planner_aufgabe(AUFGABE_MIT_ETAG),
+        planner_aufgabe("task-2"),
+        planner_aufgabe(AUFGABE_OHNE_ETAG),
+    ]
+}
+
+/// Eine Planner-Aufgabe. `task-ohne-etag` liefert bewusst **kein** ETag – dann
+/// darf kein PATCH entstehen.
+fn planner_aufgabe(id: &str) -> Value {
+    let (titel, bucket, fortschritt) = match id {
+        "task-2" => ("Rechnung prüfen", BUCKET_FERTIG, 0),
+        AUFGABE_OHNE_ETAG => ("Ohne ETag", BUCKET_OFFEN, 0),
+        _ => ("Angebot schreiben", BUCKET_OFFEN, 50),
+    };
+    let mut aufgabe = json!({
+        "id": id,
+        "planId": PLAN_NORD,
+        "bucketId": bucket,
+        "title": titel,
+        "percentComplete": fortschritt,
+        "priority": 5,
+        "dueDateTime": "2026-11-30T00:00:00Z",
+        "createdDateTime": "2026-11-10T08:00:00Z",
+        "assignments": {},
+    });
+    if id != AUFGABE_OHNE_ETAG {
+        aufgabe["@odata.etag"] = json!(format!("W/\"{id}\""));
+    }
+    aufgabe
+}
+
+fn todo_listen() -> Vec<Value> {
+    vec![
+        json!({"id": TODO_LISTE, "displayName": "Aufgaben", "wellknownListName": "defaultList"}),
+        json!({"id": TODO_LISTE_EINKAUF, "displayName": "Einkauf"}),
+    ]
+}
+
+fn todo_aufgaben() -> Vec<Value> {
+    vec![todo_aufgabe(TODO_AUFGABE), {
+        let mut fertig = todo_aufgabe("AAMkADtodo-task-2");
+        fertig["title"] = json!("Bericht senden");
+        fertig["status"] = json!("completed");
+        fertig["completedDateTime"] = json!({
+            "dateTime": "2026-11-27T09:00:00.0000000",
+            "timeZone": "Europe/Berlin",
+        });
+        fertig
+    }]
+}
+
+fn todo_aufgabe(id: &str) -> Value {
+    json!({
+        "id": id,
+        "title": "Rechnung prüfen",
+        "status": "notStarted",
+        "importance": "high",
+        "dueDateTime": {"dateTime": "2026-11-30T00:00:00.0000000", "timeZone": "Europe/Berlin"},
+        "createdDateTime": "2026-11-10T08:00:00Z",
+        "body": {"contentType": "text", "content": "Bis Freitag"},
+    })
+}
+
+fn kontakte() -> Vec<Value> {
+    vec![json!({
+        "id": "k1",
+        "displayName": "Bert Beispiel",
+        "givenName": "Bert",
+        "surname": "Beispiel",
+        "companyName": "Beispiel GmbH",
+        "jobTitle": "Einkauf",
+        "emailAddresses": [{"name": "Bert", "address": "bert@firma.de"}],
+        "businessPhones": ["+49 30 1234"],
+        "mobilePhone": "+49 170 1234567",
+    })]
+}
+
+fn personen_von_people() -> Vec<Value> {
+    vec![
+        json!({
+            "id": "u-bert",
+            "displayName": "Bert Beispiel",
+            "department": "Vertrieb",
+            "jobTitle": "Key Account",
+            "companyName": "Beispiel GmbH",
+            "scoredEmailAddresses": [{"address": "bert@firma.de"}],
+            "phones": [{"number": "+49 30 1234", "type": "business"}],
+        }),
+        json!({
+            "id": "u-clara",
+            "displayName": "Clara Claudia",
+            "department": "Entwicklung",
+            "scoredEmailAddresses": [{"address": "clara@firma.de"}],
+        }),
+    ]
+}
+
+fn notizbuecher() -> Vec<Value> {
+    vec![
+        json!({
+            "id": NOTIZBUCH,
+            "displayName": "Arbeit",
+            "webUrl": "https://example/onenote/arbeit",
+        }),
+        json!({
+            "id": "1-nb-privat-0000000002",
+            "displayName": "Privat",
+        }),
+    ]
+}
+
+fn abschnitte() -> Vec<Value> {
+    vec![
+        json!({
+            "id": ABSCHNITT,
+            "displayName": "Besprechungen",
+            "webUrl": "https://example/onenote/besprechungen",
+        }),
+        json!({
+            "id": "1-sec-ideen-0000000002",
+            "displayName": "Ideen",
+        }),
+    ]
+}
+
+fn onenote_seiten() -> Vec<Value> {
+    vec![
+        json!({
+            "id": ONENOTE_SEITE,
+            "title": "Jour fixe",
+            "webUrl": "https://example/onenote/jour-fixe",
+            "lastModifiedDateTime": "2026-11-27T09:00:00Z",
+        }),
+        json!({
+            "id": "1-page-notizen-0000000002",
+            "title": "Notizen",
+        }),
+    ]
+}
+
+fn onenote_seite(id: &str) -> Value {
+    json!({
+        "id": id,
+        "title": "Jour fixe",
+        "webUrl": "https://example/onenote/jour-fixe",
+        "createdDateTime": "2026-11-27T08:00:00Z",
+        "lastModifiedDateTime": "2026-11-27T09:00:00Z",
+    })
+}
+
+/// Der Text zwischen zwei Markierungen (für den Titel einer neuen Seite).
+fn zwischen(text: &str, von: &str, bis: &str) -> Option<String> {
+    let rest = text.split_once(von)?.1;
+    let ende = rest.split_once(bis)?.0;
+    Some(ende.to_string())
 }
 
 // ---------------------------------------------------------------------------

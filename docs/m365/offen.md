@@ -33,4 +33,21 @@ Aus dem ersten echten Test gegen den Tenant von neoimpulse.de (2026-11-23, nur l
         Chat mit Vorschau als ungelesen (lieber einmal zu viel zeigen als etwas verpassen).
       - Die Reaktionsnamen sind auf `like/heart/laugh/surprised/sad/angry` und die üblichen Emojis
         abgebildet; weitere Tenant-Reaktionen gehen unverändert durch.
+- [ ] **Aufgabe 06 – bewusste Abkürzungen:**
+      - **Office-/PDF-Text:** `datei_lesen` kann Office-Dateien nur als PDF anfordern
+        (`?format=pdf`) und **nicht** in Text wandeln; PDF und Binäres liefern nur Metadaten.
+        Eine echte Textextraktion bräuchte eine zusätzliche Bibliothek (z. B. `pdf-extract`) –
+        bewusst nicht eingebaut, um klein zu bleiben.
+      - **Upload über 4 MB:** `datei_hochladen` lehnt größere Inhalte ab, statt eine Upload-Session
+        (`createUploadSession`, mehrere `PUT`-Teile) zu fahren. Für Code- und Notizdateien reicht 4 MB.
+      - **Listeneinträge ohne ETag:** `sharepoint_listeneintrag_aendern` schickt kein `If-Match`;
+        bei gleichzeitigen Änderungen gewinnt der letzte Schreiber. Planner dagegen verlangt ETag
+        und bekommt ihn.
+      - **Planner:** kein Anlegen/Ändern von Plänen und Buckets, kein Löschen von Aufgaben
+        (`DELETE /planner/tasks/{id}` bräuchte ein eigenes destruktives Tool).
+      - **To Do:** keine Checklistenpunkte (`checklistItems`), keine Anhänge, keine Wiederholungen.
+      - **SharePoint:** Listenspalten werden roh als `felder` ausgegeben; besondere Typen
+        (Personen, Lookup, verwaltete Metadaten) werden nicht aufgelöst.
+      - **Download-Grenze:** Der Client liest höchstens 8 MB Antwort in den Speicher; größere
+        Textdateien werden abgeschnitten, statt gestreamt zu werden.
 - [ ] Tresor-Datei (ADR mcp-quiver 0001): optional Hauptpasswort (Argon2) beim Start.

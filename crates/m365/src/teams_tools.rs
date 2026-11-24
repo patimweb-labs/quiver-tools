@@ -707,7 +707,11 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         }
     }
 
-    async fn personen_suchen(&self, suche: &str, anzahl: u32) -> Result<Vec<Person>, ToolFehler> {
+    async fn personen_im_tenant_suchen(
+        &self,
+        suche: &str,
+        anzahl: u32,
+    ) -> Result<Vec<Person>, ToolFehler> {
         let abfrage = format!("\"displayName:{suche}\" OR \"mail:{suche}\"");
         let liste: Sammlung<Profil> = self
             .graph
@@ -745,7 +749,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         if referenz.is_empty() {
             return Err(ungueltig_tool("Teilnehmer fehlt"));
         }
-        let personen = self.personen_suchen(referenz, 10).await?;
+        let personen = self.personen_im_tenant_suchen(referenz, 10).await?;
         let klein = referenz.to_lowercase();
         let identisch: Vec<&Person> = personen
             .iter()
@@ -1155,7 +1159,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             return Err(ungueltig_tool("suche fehlt"));
         }
         let anzahl = anzahl_mit(anfrage.anzahl, 10, 50);
-        let personen = self.personen_suchen(suche, anzahl).await?;
+        let personen = self.personen_im_tenant_suchen(suche, anzahl).await?;
         let liste: Vec<Value> = personen
             .iter()
             .map(|person| {

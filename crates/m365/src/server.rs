@@ -40,6 +40,12 @@ pub const NICHT_ANGEMELDET_HINWEIS: &str =
 pub const ZUSTIMMUNG_HINWEIS: &str =
     "Für Teams fehlt die Zustimmung – im quiver-Fenster unter Tools → Microsoft 365 erneut auf „Anmelden“ klicken.";
 
+/// Derselbe Fall für die Rechte aus Aufgabe 06 (SharePoint, Planner, To Do,
+/// Kontakte, Personen, OneNote). Der Teams-Satz bleibt unverändert, damit
+/// bestehende Antworten gleich bleiben.
+pub const ZUSTIMMUNG_ERWEITERT_HINWEIS: &str =
+    "Für SharePoint, Planner, To Do, Kontakte oder OneNote fehlt die Zustimmung – im quiver-Fenster unter Tools → Microsoft 365 erneut auf „Anmelden“ klicken.";
+
 /// Kopfzeile für `mail_lesen`: Text statt HTML (SPEC.md §4).
 const PREFER_TEXT: &str = "outlook.body-content-type=\"text\"";
 /// Wie viele Mails/Treffer ein Tool höchstens liefert.
@@ -170,10 +176,15 @@ pub struct Quiver<A: Anmeldung> {
 impl<A: Anmeldung + 'static> Quiver<A> {
     /// Baut den Server aus Graph-Client und Zeitzone.
     pub fn neu(graph: GraphClient<A>, zeitzone: impl Into<String>) -> Self {
-        // Mail/Kalender/Dateien (SPEC.md §4) und Teams (Aufgabe 05) sind zwei
-        // Router, damit die Dateien nicht ins Unermessliche wachsen.
+        // Mail/Kalender/Dateien (SPEC.md §4), Teams (Aufgabe 05) und die
+        // Erweiterung (Aufgabe 06) sind getrennte Router, damit die Dateien
+        // nicht ins Unermessliche wachsen.
         let mut tool_router = Self::tool_router();
         tool_router.merge(Self::teams_router());
+        tool_router.merge(Self::dateien_router());
+        tool_router.merge(Self::planner_router());
+        tool_router.merge(Self::kontakte_router());
+        tool_router.merge(Self::onenote_router());
         Self {
             graph,
             zeitzone: Zeitzone::neu(zeitzone),
@@ -514,6 +525,24 @@ impl From<ErrorData> for ToolFehler {
     fn from(fehler: ErrorData) -> Self {
         ToolFehler::Fehler(fehler)
     }
+}
+
+impl ToolFehler {
+    /// Der Hinweis auf eine fehlende Zustimmung nennt bei den neuen Rechten
+    /// nicht mehr nur Teams (Aufgabe 06); alles andere bleibt gleich.
+    pub(crate) fn fuer_erweiterung(self) -> Self {
+        match self {
+            ToolFehler::Hinweis(text) if text == ZUSTIMMUNG_HINWEIS => {
+                ToolFehler::Hinweis(ZUSTIMMUNG_ERWEITERT_HINWEIS.to_string())
+            }
+            anderes => anderes,
+        }
+    }
+}
+
+/// Wie [`ergebnis`], aber mit dem Hinweis für die neuen Rechte (Aufgabe 06).
+pub(crate) fn ergebnis_erweitert(inner: Result<String, ToolFehler>) -> Result<String, ErrorData> {
+    ergebnis(inner.map_err(ToolFehler::fuer_erweiterung))
 }
 
 /// Ergebnis eines Teams-Tools: Hinweise werden Text, Fehler bleiben Fehler.

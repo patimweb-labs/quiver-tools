@@ -805,14 +805,24 @@ Entscheidungen: [docs/adr/](docs/adr/).
 
 ## Releases
 
-A tag `vX.Y.Z` — it must match `[workspace.package] version` — builds every
-`quiver-*` program natively on its own runner (macOS `aarch64` and `x86_64`, Linux
-`x86_64` and `aarch64` on 22.04, Windows `x86_64`) and attaches one archive per
-system to the GitHub release:
+Versions are managed by [`release-please`](https://github.com/googleapis/release-please)
+from the Conventional Commits. A push to `main` keeps a release pull request
+up to date: it carries the new version in `Cargo.toml` and `Cargo.lock` plus the
+entry in `CHANGELOG.md`. Merging that pull request creates the tag and the
+release, and the same workflow run builds one archive per system — macOS
+`aarch64` and `x86_64`, Linux `x86_64` and `aarch64` on 22.04, Windows `x86_64` —
+and attaches them together with `SHA256SUMS`:
 
 ```
 quiver-tools-<version>-<system>-<arch>.tar.gz
 ```
+
+Tag and build happen in one run because a tag created by `GITHUB_TOKEN` does not
+start another workflow. A tag `vX.Y.Z` pushed by hand still works and must match
+`[workspace.package] version`. "Run workflow" and pull requests only build. A
+version that is already published is never rebuilt: if the release for the tag
+already carries files, the run stops instead of overwriting them. `v0.1.0` was
+built before `release-please` and stays as it is.
 
 The archive holds the stripped programs flat next to each other, plus
 `LISTE.json` (name, version, size, SHA-256 per program). `SHA256SUMS` covers all
@@ -821,12 +831,12 @@ assigned to it. macOS is signed ad hoc (Gatekeeper asks once); Windows needs no 
 runtime. Nothing is signed with a certificate and no secret is used.
 
 Before upload, each program is started on its own system: `--version`, `eintrag`
-and an MCP handshake over pipes (`initialize`, `tools/list`). “Run workflow” and
-pull requests only build — a release is created from a tag alone.
+and an MCP handshake over pipes (`initialize`, `tools/list`).
 
 The same steps run locally:
 
 ```bash
+verteilung/release-ziel.sh             # what this run would do (event rules)
 verteilung/paket.sh                    # build, strip, sign (macOS), dist/*.tar.gz
 verteilung/pruefen.sh dist/*.tar.gz    # hashes and a short start of every program
 ```

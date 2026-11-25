@@ -1,0 +1,70 @@
+{
+  "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "include-component-in-tag": false,
+  "include-v-in-tag": true,
+  "bump-minor-pre-major": true,
+  "bump-patch-for-minor-pre-major": false,
+  "bootstrap-sha": "78bf4ced1bd5351d08c1be7b4f5e43374083800a",
+  "pull-request-title-pattern": "chore: Release ${version}",
+  "pull-request-header": "Wenn dieser PR gemergt wird, entsteht das Release ${version}: Tag, die fünf Archive (macOS aarch64 und x86_64, Linux x86_64 und aarch64, Windows x86_64) und `SHA256SUMS`.",
+  "changelog-sections": [
+    {
+      "type": "feat",
+      "section": "Neu"
+    },
+    {
+      "type": "fix",
+      "section": "Behoben"
+    },
+    {
+      "type": "perf",
+      "section": "Schneller"
+    },
+    {
+      "type": "refactor",
+      "section": "Umgebaut"
+    },
+    {
+      "type": "docs",
+      "section": "Dokumentation"
+    },
+    {
+      "type": "build",
+      "section": "Bau und Pakete"
+    },
+    {
+      "type": "ci",
+      "section": "CI",
+      "hidden": true
+    },
+    {
+      "type": "test",
+      "section": "Tests",
+      "hidden": true
+    },
+    {
+      "type": "chore",
+      "section": "Sonstiges",
+      "hidden": true
+    }
+  ],
+  "packages": {
+    ".": {
+      "release-type": "simple",
+      "package-name": "quiver-tools",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "Cargo.toml",
+          "jsonpath": "$.workspace.package.version"
+        },
+        {
+          "type": "toml",
+          "path": "Cargo.lock",
+          "jsonpath": "$.package[?(@.name.value == 'quiver-tools-kern' || @.name.value == 'quiver-diagramm' || @.name.value == 'quiver-excalidraw' || @.name.value == 'quiver-drawio' || @.name.value == 'quiver-outline' || @.name.value == 'quiver-email' || @.name.value == 'quiver-zep' || @.name.value == 'quiver-ssh' || @.name.value == 'quiver-abap' || @.name.value == 'quiver-devops' || @.name.value == 'quiver-jira' || @.name.value == 'quiver-confluence' || @.name.value == 'quiver-zephyr' || @.name.value == 'm365-anmeldung' || @.name.value == 'm365-graph' || @.name.value == 'quiver-m365')].version"
+        }
+      ]
+    }
+  }
+}

@@ -1,17 +1,24 @@
 # Release der Programme
 
-Ein Tag `vX.Y.Z` baut alle `quiver-*`-Programme für jedes unterstützte System und
-legt sie als GitHub-Release ab. Die Version steht in `[workspace.package]` der
-`Cargo.toml`; der Tag muss dazu passen, sonst bricht der Lauf mit einer Meldung ab
-(sonst hieße das Release anders als die Programme in ihrer eigenen Antwort).
+Die Version kommt aus den Conventional Commits: `release-please` führt einen
+Release-PR, in dem Version (in `Cargo.toml` und `Cargo.lock`) und `CHANGELOG.md`
+stehen. Wird dieser PR gemergt, legt derselbe Workflow-Lauf Tag und Release an,
+baut die fünf Archive, prüft sie und hängt sie samt `SHA256SUMS` an. Der Weg über
+einen Tag von Hand bleibt daneben bestehen.
+
+Warum Tag und Bau im selben Lauf: einen Tag, den `GITHUB_TOKEN` anlegt, löst
+**keinen** neuen Workflow aus. `release-please` erzeugt den Tag also in dem Lauf,
+der danach bauen muss.
 
 ## Was ein Lauf tut
 
 | Auslöser | Ergebnis |
 |---|---|
-| Tag `vX.Y.Z` (von Hand) | bauen, prüfen, Release anlegen und Archive anhängen |
+| Push nach `main` ohne neues Release | nur der Release-PR wird geführt; es wird nichts gebaut |
+| Merge des Release-PR (Push nach `main` mit neuem Release) | Tag und Release anlegen, fünf Archive bauen, prüfen, `SHA256SUMS` und Archive anhängen |
+| Tag `vX.Y.Z` (von Hand) | dasselbe, Tag und Release kommen von Hand |
 | „Run workflow“ | nur bauen; die Archive liegen als Artefakte am Lauf |
-| Pull Request | nur bauen, und nur wenn `verteilung/**` oder der Workflow sich ändern |
+| Pull Request | nur bauen, und nur wenn `verteilung/**`, der Workflow oder die Release-Konfiguration sich ändern |
 
 Gebaut wird auf fünf Läufern, je System ein Archiv:
 
@@ -42,14 +49,60 @@ Im Archiv liegen die Programme **flach** nebeneinander, dazu `LISTE.json`. Der q
 Dazu kommt `SHA256SUMS` über **alle** Archive; es liegt neben ihnen am Release,
 nicht in ihnen.
 
-## Einen Release machen
+## Wer die Version anhebt
 
-1. Version in `Cargo.toml` unter `[workspace.package]` anheben; ein
-   `cargo build` zieht `Cargo.lock` nach. Beides gehört in denselben Commit.
+`release-please` liest die Commits seit dem letzten Release und schlägt die
+nächste Version vor. `bump-minor-pre-major: true` gilt bis 1.0: ein `feat` hebt
+die zweite Stelle (0.1.0 → 0.2.0), ein `fix` die dritte (0.1.0 → 0.1.1). Ein
+`feat!`/`BREAKING CHANGE` hebt bis 1.0 ebenfalls nur die zweite Stelle, danach
+die erste.
+
+| Datei | Rolle |
+|---|---|
+| `release-please-config.json` | Release-Typ, Tag-Form (`v<version>`, ohne Komponente), Abschnitte des Changelogs, die Dateien mit der Version |
+| `.release-please-manifest.json` | der Stand, der zuletzt veröffentlicht wurde — heute `0.1.0` |
+| `CHANGELOG.md` | die Historie; von Hand steht hier nur der Eintrag zu `0.1.0` |
+| `Cargo.toml` (`[workspace.package] version`) | die eine Version, die alle Kisten erben |
+| `Cargo.lock` | dieselbe Version je Kiste, sonst bricht `--locked` |
+
+Die Version wird **nur** über `release-please` angehoben; von Hand ist sie ein
+Fehler, weil `Cargo.lock` und `CHANGELOG.md` sonst auseinanderlaufen. Was der
+Agent nicht kann: der Release-PR, den `GITHUB_TOKEN` anlegt, löst keine
+`pull_request`-Läufe aus — die Prüfungen aus `pruefen.yml` laufen auf ihm nicht
+(siehe `docs/offen.md`).
+
+## Der Tag von Hand
+
+Ein Tag bleibt möglich, etwa für eine Fassung aus einem Stand, der noch nicht
+über den Release-PR lief:
+
+1. Version in `Cargo.toml` anheben; ein `cargo build` zieht `Cargo.lock` nach.
+   Beides gehört in denselben Commit (und `CHANGELOG.md` mit dem Eintrag).
 2. Über Branch und Pull Request nach `main` — `main` bleibt lauffähig.
 3. `git tag vX.Y.Z` setzen und den Tag pushen.
 4. Der Lauf baut alle Archive, prüft sie und legt das Release an. Passt der Tag
    nicht zur Version, bricht er vor dem ersten Bau ab.
+
+## Eine veröffentlichte Version bleibt, wie sie ist
+
+Vor dem Bau fragt `verteilung/release-ziel.sh`, ob es zu dem Tag schon ein
+Release mit Dateien gibt:
+
+- **kein Release** → wird angelegt,
+- **Release ohne Dateien** (der Bau ist früher gescheitert) → wird ergänzt,
+- **Release mit Dateien** → Abbruch: dieselbe Version ein zweites Mal ist ein
+  Fehler. Es wird weder neu gebaut noch mit `--clobber` überschrieben. Für eine
+  neue Fassung steigt die Version, und das macht der Release-PR.
+
+Die erste Fassung **`v0.1.0`** ist auf dem Weg vor `release-please` entstanden
+und bleibt, wie sie ist: `.release-please-manifest.json` führt sie als
+veröffentlicht, `bootstrap-sha` markiert für den ersten Lauf den Commit, bis zu
+dem die Historie als veröffentlicht gilt. `gh release upload` läuft ohne
+`--clobber`, damit auch ein Fehlgriff am Tag nichts überschreibt.
+
+Was ein Lauf mit Tag und Release vorhat, lässt sich ohne CI durchspielen:
+`verteilung/release-ziel.sh` liest die Ereignisumgebung und gibt
+`version=`, `tag=` und `veroeffentlichen=` aus (siehe „Lokal“).
 
 ## Nativ, nicht über Kreuz
 
@@ -97,9 +150,11 @@ darf den Lauf nicht festhalten (`timeout` gibt es nicht auf jedem System).
 
 ## Rechte und Geheimnisse
 
-`permissions` ist oben leer; jeder Job nimmt sich Lesen, **schreiben darf allein**
-der Job `veroeffentlichen` (`contents: write`). Der Workflow braucht **keine
-Geheimnisse** — auch nicht auf Pull Requests, wo keine ausgewertet werden.
+`permissions` ist oben leer; jeder Job nimmt sich Lesen. Schreiben dürfen nur zwei
+Jobs: `release_please` (`contents: write`, `pull-requests: write`, damit er PR, Tag
+und Release führt) und `veroeffentlichen` (`contents: write`, damit Archive und
+`SHA256SUMS` ans Release kommen). Der Workflow braucht **keine Geheimnisse** —
+auch nicht auf Pull Requests, wo keine ausgewertet werden.
 
 ## Lokal
 
@@ -107,9 +162,16 @@ Dieselben Schritte, ohne CI:
 
 ```bash
 verteilung/version.sh                  # Version aus [workspace.package]
+verteilung/release-ziel.sh             # was dieser Lauf täte (braucht EREIGNIS, REF, …)
 verteilung/paket.sh                    # bauen, strippen, signieren, dist/*.tar.gz
 verteilung/pruefen.sh dist/quiver-tools-*.tar.gz
 ```
+
+Die Ereignisregeln lassen sich ohne CI prüfen: `release-ziel.sh` liest
+`EREIGNIS`, `REF`, `RP_RELEASED`, `RP_TAG` und `REPOSITORY` aus der Umgebung und
+fragt `gh api` nach einem bestehenden Release. Mit einer `gh`-Attrappe im `PATH`
+spielt man die fünf Fälle (Push nach `main` mit und ohne Release, Tag, Pull
+Request, „Run workflow“) durch.
 
 `CARGO_TARGET_DIR` wird beachtet (die Aufgaben bauen nach `target-pi/`), sonst gilt
 `target/`. `dist/` steht in `.gitignore`.

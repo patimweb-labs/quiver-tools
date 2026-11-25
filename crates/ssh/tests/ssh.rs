@@ -342,7 +342,7 @@ fn ein_geaenderter_host_schluessel_ist_ein_harter_fehler() {
                 .collect::<Vec<_>>()
                 .join(" ")
         );
-        std::fs::write(aufbau.home().join(".ssh/known_hosts"), &zeile).unwrap();
+        std::fs::write(aufbau.home().join(".ssh").join("known_hosts"), &zeile).unwrap();
 
         let zugaenge = [attrappe::zugang(
             "web-01",
@@ -365,7 +365,14 @@ fn ein_geaenderter_host_schluessel_ist_ein_harter_fehler() {
         assert!(fehler.contains(&fremd.fingerprint), "{fehler}");
         // Die Antwort nennt Datei und Zeile, die der User löschen muss.
         assert!(
-            fehler.contains(&aufbau.home().join(".ssh/known_hosts").display().to_string()),
+            fehler.contains(
+                &aufbau
+                    .home()
+                    .join(".ssh")
+                    .join("known_hosts")
+                    .display()
+                    .to_string()
+            ),
             "{fehler}"
         );
         assert!(fehler.contains("Zeile 1"), "{fehler}");
@@ -374,7 +381,7 @@ fn ein_geaenderter_host_schluessel_ist_ein_harter_fehler() {
         assert_eq!(server.zustand.pubkey_versuche(), 0);
         // Nichts wurde überschrieben.
         assert_eq!(
-            std::fs::read_to_string(aufbau.home().join(".ssh/known_hosts")).unwrap(),
+            std::fs::read_to_string(aufbau.home().join(".ssh").join("known_hosts")).unwrap(),
             zeile
         );
 

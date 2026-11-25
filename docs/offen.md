@@ -53,3 +53,8 @@
 - [ ] DevOps: nur Git-Repos – TFVC (`_apis/tfvc`) fehlt.
 - [ ] DevOps: `devops_lauf_log` liest das ganze Log und schneidet das Ende ab; ein `Range`-Kopf (DevOps kann Zeilenbereiche liefern) wäre bei großen Logs sparsamer.
 - [ ] DevOps: `tracing`-Ereignisse des Werkzeugs sind stumm, weil der Kern keinen Subscriber setzt.
+- [ ] Release: **keine Versionierung von selbst.** Es gibt kein `release-please`; Version in `Cargo.toml` anheben und den Tag `vX.Y.Z` von Hand setzen. Der Workflow prüft nur, dass beides zusammenpasst.
+- [ ] Release/Windows: **`+crt-static` ist lokal nicht geprüft.** Gebaut wird nativ erst in der CI; ob `aws-lc-sys` mit statischer C-Runtime (MSVC) durchläuft, zeigt der erste Lauf. Bricht es, bleibt der Rückweg: Flag in `verteilung/paket.sh` entfernen, dann braucht Windows das VC++-Redistributable.
+- [ ] Release/Windows: **keine Signatur.** SmartScreen fragt beim ersten Start nach; ein Zertifikat ist nicht vorhanden.
+- [ ] Release: `LISTE.json` wird in `verteilung/paket.sh` von Hand geschrieben (kein JSON-Werkzeug auf allen Läufern). Ein Tippfehler fällt erst beim Lesen auf; `verteilung/pruefen.sh` hält nur Namen und Summen dagegen.
+- [ ] Release: **kein Herkunftsnachweis** (`attest-build-provenance`). Geprüft wird über `SHA256SUMS`; wer mehr will, braucht `id-token`/`attestations` im Release-Job.

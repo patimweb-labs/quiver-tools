@@ -20,6 +20,8 @@
 //! der Kundennamensraum (`Z*`, `Y*`, `/…/`) und `source` bis 2 MB.
 
 use std::any::Any;
+// Nur der SIGTERM-Wächter (unix) braucht ein Merk-Flag.
+#[cfg(unix)]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -41,7 +43,10 @@ use serde_json::Value;
 
 use crate::adt::client::{Anfrage, Client, Methode};
 use crate::adt::daten::{self, Objekt};
-use crate::adt::sitzung::{Sitzung, Sitzungen, FREIGABE_FRIST};
+use crate::adt::sitzung::{Sitzung, Sitzungen};
+// Die Frist gilt nur dort, wo der Wächter sie setzt (unix).
+#[cfg(unix)]
+use crate::adt::sitzung::FREIGABE_FRIST;
 use crate::adt::xml::attribut_wert as xml_attribut;
 use crate::adt::AdtFehler;
 use crate::format;
@@ -86,7 +91,9 @@ pub struct AbapServer {
     systeme: Result<Sammlung, SammelFehler>,
     /// Je System eine stateful Sitzung, erst beim ersten Schreibaufruf angelegt.
     sitzungen: Arc<Sitzungen>,
-    /// Hängt der SIGTERM-Wächter schon?
+    /// Hängt der SIGTERM-Wächter schon? Nur unix: Windows kennt kein SIGTERM,
+    /// dort räumt allein [`Drop`] auf.
+    #[cfg(unix)]
     ende_beobachtet: Arc<AtomicBool>,
 }
 
@@ -97,6 +104,7 @@ impl AbapServer {
             zugang,
             systeme: Sammlung::aus_umgebung(),
             sitzungen: Arc::new(Sitzungen::default()),
+            #[cfg(unix)]
             ende_beobachtet: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -107,6 +115,7 @@ impl AbapServer {
             zugang,
             systeme,
             sitzungen: Arc::new(Sitzungen::default()),
+            #[cfg(unix)]
             ende_beobachtet: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -165,6 +174,11 @@ impl AbapServer {
         });
     }
 
+    /// Auf Windows gibt es kein Gegenstück: SIGTERM ist ein Unix-Signal, und
+    /// ein hart beendeter Prozess (`TerminateProcess`) bekommt keine
+    /// Gelegenheit zum Aufräumen. Dort gibt allein [`Drop`] die Locks frei,
+    /// also nur beim normalen Ende über stdin. Die Folge (eine Sperre bleibt
+    /// im SAP stehen und ist mit SM12 zu löschen) steht in `docs/offen.md`.
     #[cfg(not(unix))]
     fn beobachte_ende(&self) {}
 

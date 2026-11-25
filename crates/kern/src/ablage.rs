@@ -10,7 +10,8 @@
 //! - **Abgelehnt** werden absolute Pfade, `..`, `.`, NUL, Backslash, `:`,
 //!   versteckte Namen (`.…`), Steuerzeichen und Windows-Gerätenamen
 //!   (`CON`, `NUL`, `COM1`, …) – auf jeder Ebene.
-//! - **Keine symbolischen Links**: jede existierende Ebene wird geprüft.
+//! - **Keine symbolischen Links**: jede existierende Ebene wird geprüft, und der
+//!   aufgelöste Elternordner muss unter der Wurzel liegen (fängt Windows-Junctions).
 //! - **Kein Überschreiben**: neue Dateien entstehen mit `create_new`.
 //! - **Grenze**: höchstens [`MAX_BYTES`] je Datei.
 //!
@@ -93,6 +94,7 @@ impl Ablage {
                 pfad: eltern.display().to_string(),
                 grund: fehler.to_string(),
             })?;
+            pruefe_im_ordner(&self.wurzel, eltern)?;
         }
         pruefe_symlinks(&self.wurzel, &voll)?;
         let mut datei = OpenOptions::new()
@@ -186,7 +188,7 @@ fn pruefe_relativ(relativ: &str) -> Result<Vec<String>, AblageFehler> {
     Ok(teile)
 }
 
-/// Jede existierende Ebene unterhalb der Wurzel auf einen Symlink prüfen.
+/// Prüft jede existierende Ebene unterhalb der Wurzel auf einen Symlink.
 fn pruefe_symlinks(wurzel: &Path, voll: &Path) -> Result<(), AblageFehler> {
     let relativ = voll
         .strip_prefix(wurzel)
@@ -203,6 +205,26 @@ fn pruefe_symlinks(wurzel: &Path, voll: &Path) -> Result<(), AblageFehler> {
         }
     }
     Ok(())
+}
+
+/// Prüft, dass ein **vorhandener** Ordner auch aufgelöst unter der Wurzel liegt.
+///
+/// Die Wurzel selbst ist bereits aufgelöst ([`Ablage::neu`]); dieser Vergleich
+/// fängt jede Umleitung, die [`pruefe_symlinks`] nicht als solche sieht. Auf
+/// Windows sind das vor allem Junctions („Mount Point“, `mklink /J`): sie gehen
+/// nach außen wie ein symbolischer Link, ohne dass `file_type().is_symlink()`
+/// sie auf jeder Fassung als Link meldet. Auf Unix ist die Prüfung doppelt zu
+/// [`pruefe_symlinks`] und schadet nicht.
+fn pruefe_im_ordner(wurzel: &Path, ordner: &Path) -> Result<(), AblageFehler> {
+    let echt = std::fs::canonicalize(ordner).map_err(|fehler| AblageFehler::Ordner {
+        pfad: ordner.display().to_string(),
+        grund: fehler.to_string(),
+    })?;
+    if echt.starts_with(wurzel) {
+        Ok(())
+    } else {
+        Err(AblageFehler::Symlink(ordner.display().to_string()))
+    }
 }
 
 /// Windows-Gerätenamen, die auch auf anderen Systemen Ärger machen.
@@ -264,6 +286,25 @@ mod tests {
         let fehler = ablage.schreiben_neu("seite.md", "boese").unwrap_err();
         assert!(matches!(fehler, AblageFehler::Symlink(_)), "{fehler:?}");
         assert_eq!(std::fs::read_to_string(&ziel).unwrap(), "unberuehrt");
+    }
+
+    /// Ein Symlink als **Ordner** führt aus dem Arbeitsordner heraus; auch die
+    /// aufgelöste Prüfung (Windows: Junction) muss ihn sehen.
+    #[cfg(unix)]
+    #[test]
+    fn ein_symlink_als_ordner_wird_nicht_durchschrieben() {
+        use std::os::unix::fs::symlink;
+        let aussen = tempfile::tempdir().unwrap();
+        let ordner = tempfile::tempdir().unwrap();
+        let ablage = Ablage::neu(ordner.path().to_str().unwrap()).unwrap();
+        symlink(aussen.path(), ordner.path().join("verweis")).unwrap();
+
+        for relativ in ["verweis/datei.md", "verweis/tief/datei.md"] {
+            let fehler = ablage.schreiben_neu(relativ, "boese").unwrap_err();
+            assert!(matches!(fehler, AblageFehler::Symlink(_)), "{fehler:?}");
+            assert!(!aussen.path().join("datei.md").exists());
+            assert!(!aussen.path().join("tief").exists());
+        }
     }
 
     #[test]

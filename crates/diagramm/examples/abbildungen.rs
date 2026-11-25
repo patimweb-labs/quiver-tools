@@ -4,10 +4,14 @@
 //! Beispiel: Modell → Layout → SVG und PNG, dazu eine Datei über die Ablage.
 //!
 //! ```bash
-//! CARGO_TARGET_DIR=target-pi cargo run -p quiver-diagramm --example beispiel
+//! CARGO_TARGET_DIR=target-pi cargo run -p quiver-diagramm --example abbildungen
 //! ```
 //!
 //! Schreibt nur in den temporären Ordner des Systems.
+//!
+//! Der Name ist nicht `beispiel`, weil `crates/drawio` schon eins so nennt: zwei
+//! Beispiele mit demselben Namen im selben Zielordner überschreiben sich
+//! gegenseitig (Cargo warnt: „output filename collision“).
 
 use quiver_diagramm::ablage::Ablage;
 use quiver_diagramm::layout::layout;

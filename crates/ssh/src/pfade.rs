@@ -179,6 +179,9 @@ fn nur_ich(datei: &Path) -> std::io::Result<()> {
     std::fs::set_permissions(datei, std::fs::Permissions::from_mode(0o600))
 }
 
+/// Auf Windows gibt es keinen Dateimodus; der Schlüssel liegt dann in einem
+/// Ordner, den nur der Benutzer betreten kann (ACL aus dem Benutzerprofil).
+/// Was das heißt und was nicht, steht in `docs/architektur.md` (Plattformen).
 #[cfg(not(unix))]
 fn nur_ich(_datei: &Path) -> std::io::Result<()> {
     Ok(())
@@ -190,6 +193,7 @@ fn nur_ich_ordner(ordner: &Path) -> std::io::Result<()> {
     std::fs::set_permissions(ordner, std::fs::Permissions::from_mode(0o700))
 }
 
+/// Wie [`nur_ich`]: auf Windows entscheidet die ACL des Benutzerprofils.
 #[cfg(not(unix))]
 fn nur_ich_ordner(_ordner: &Path) -> std::io::Result<()> {
     Ok(())

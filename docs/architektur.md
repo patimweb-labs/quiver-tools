@@ -362,6 +362,57 @@ funktioniert: [adr/0004-zep-offizieller-mcp.md](adr/0004-zep-offizieller-mcp.md)
   `sudo -S -p ''` und SFTP über einen temp-Ordner. `HOME` und `QUIVER_SSH_DATEN` zeigen
   auf temp-Ordner; die echte `~/.ssh` wird nie gelesen oder geschrieben.
 
+## Plattformen: Linux, macOS, Windows
+
+Die Werkzeuge laufen auf allen drei Systemen; die CI prüft alle drei
+(`.github/workflows/pruefen.yml`). Kein Code verzweigt über `cfg(target_os)` –
+die Unterschiede kommen aus `std::path` und aus Umgebungsvariablen. Nur drei
+Dinge brauchen wirklich ein `cfg(unix)`:
+
+| Was | Unix | Windows |
+| --- | --- | --- |
+| Dateirechte | `0600`/`0700` für Schlüssel (`ssh`), Tresor (`zep`, `m365-anmeldung`) und Zustandsordner | kein Gegenstück: es bleibt bei der ACL, die der Ordner vom Benutzerprofil erbt. `rechte`/`nur_ich` sind dort ein No-op, und `#[cfg(unix)]`-Tests prüfen den Modus |
+| Prozessende | SIGTERM-Wächter in `quiver-abap`: offene SAP-Sperren werden freigegeben (höchstens 5 s), Ende mit 143 | kein SIGTERM. Locks gibt nur `Drop` beim normalen Ende (stdin zu) frei; ein hart beendeter Prozess (`TerminateProcess`) bekommt keine Gelegenheit dazu |
+| Symlink-Tests | `std::os::unix::fs::symlink` | ohne Entwicklermodus oder Admin nicht anlegbar; die Fälle entfallen (`#[cfg(unix)]`), die Regel selbst prüft `pruefe_im_ordner` auch dort |
+
+Alles andere ist plattformgleich gelöst, ohne `cfg`:
+
+- **Pfade** entstehen nur über `Path`/`PathBuf` (`join`, `strip_prefix`,
+  `canonicalize`). Relative Namen von Agenten tragen immer `/`; die Ablage zerlegt
+  sie in Segmente und baut den Pfad mit `join` – der Trenner des Systems entsteht
+  erst dort. Laufwerksangaben (`C:`), UNC-Pfade, Backslash, `..`, versteckte Namen
+  und Windows-Gerätenamen (`CON`, `NUL`, `COM1`…) werden darum **auf jeder
+  Plattform** abgelehnt.
+- **Benutzerordner**: `HOME`, sonst `USERPROFILE`; `dirs::data_dir()` für den
+  Datenordner. `~` und `~/…` werden ohne `cfg` aufgelöst.
+- **Kindprozesse** starten über `env!("CARGO_BIN_EXE_…")` – auf Windows mit `.exe`,
+  ohne Sonderfall im Test.
+- **Zeilenenden**: gelesen wird über `BufRead::lines()` (schluckt `\r\n`), geschrieben
+  mit `\n`; was ein Werkzeug schreibt, liest es byte-gleich zurück. Testdaten aus dem
+  Repo werden nicht Zeile für Zeile erwartet.
+- **Programmstart** (`open::that`) und **HTTP** (`reqwest` mit rustls) sind
+  plattformneutral; die Zertifikatsprüfung gegen den Systemspeicher macht
+  `rustls-platform-verifier` (Linux, macOS, Windows).
+- **Ordner-Ausbruch**: `kern::Ablage` prüft jede existierende Ebene auf Symlinks
+  **und** vergleicht den aufgelösten Elternordner mit der aufgelösten Wurzel. Der
+  zweite Vergleich fängt Windows-Junctions („Mount Point“, `mklink /J`), die nicht
+  auf jeder Fassung als symbolischer Link gemeldet werden. `diagramm::Ablage` prüft
+  genauso.
+- **Sperrdateien** (`fd_lock` in `diagramm`, `File::lock` in `zep` und
+  `m365-anmeldung`) sind auf Windows verpflichtend statt nur beratend. Die Sperrdatei
+  wird nie gelesen, darum ändert das nichts am Verhalten – es serialisiert nur
+  strenger.
+- **Schreiben** geht immer über eine temporäre Datei und ein anschließendes
+  Umbenennen; damit liegt entweder der alte oder der neue Stand da. Auf Windows kann
+  ein Umbenennen scheitern, solange ein anderes Handle die Zieldatei offen hält – dann
+  kommt ein Fehler, kein halber Inhalt.
+
+Geprüft wird das so: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`
+und `cargo test --workspace` nativ auf Linux, macOS und Windows (CI). Lokal auf einem
+Mac kommt für Windows `cargo clippy --workspace --all-targets --target
+x86_64-pc-windows-gnu` mit `mingw-w64` hinzu; die Tests für Windows zeigt allein die
+CI.
+
 ## Ein fünftes Tool: `crates/abap`
 
 Die Vorlage `pi-abap-fs` (TypeScript, Bibliothek `abap-adt-api`) liefert die Semantik,

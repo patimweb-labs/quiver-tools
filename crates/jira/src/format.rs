@@ -692,7 +692,7 @@ mod tests {
             name: "firma".into(),
             werte: [
                 ("url", "https://firma.atlassian.net"),
-                ("email", "patrick@example.test"),
+                ("email", "alex@example.test"),
                 ("api_token", "token-4711"),
             ]
             .into_iter()
@@ -732,7 +732,7 @@ mod tests {
         assert!(text.contains("firma"), "{text}");
         assert!(text.contains("Schreiben aus"), "{text}");
         assert!(!text.contains("token-4711"), "{text}");
-        assert!(!text.contains("patrick@example.test"), "{text}");
+        assert!(!text.contains("alex@example.test"), "{text}");
         assert_eq!(status(&[]), "Keine Jira-Site eingerichtet.");
     }
 
@@ -740,11 +740,11 @@ mod tests {
     fn der_test_nennt_den_benutzer_und_kein_geheimnis() {
         let text = testen(
             &site(),
-            &json!({ "displayName": "Patrick Weppelmann",
-                "emailAddress": "patrick@example.test", "accountId": "acc-123" }),
+            &json!({ "displayName": "Alex Beispiel",
+                "emailAddress": "alex@example.test", "accountId": "acc-123" }),
         );
         assert!(text.contains("Anmeldung an firma erfolgreich"), "{text}");
-        assert!(text.contains("Patrick Weppelmann"), "{text}");
+        assert!(text.contains("Alex Beispiel"), "{text}");
         assert!(text.contains("acc-123"), "{text}");
         assert!(text.contains("Schreiben: aus"), "{text}");
         assert!(!text.contains("token-4711"), "{text}");
@@ -754,12 +754,12 @@ mod tests {
     fn projekte_zaehlen_und_nennen_den_schluessel() {
         let liste = json!([
             { "key": "ABC", "name": "Alpha", "projectTypeKey": "software",
-              "lead": { "displayName": "Patrick" } }
+              "lead": { "displayName": "Alex" } }
         ]);
         let text = projekte("firma", daten::liste(&liste, ""), Some(1), false);
         assert!(text.contains("1 Projekt(e) in firma"), "{text}");
         assert!(
-            text.contains("- ABC — Alpha (software, Leitung Patrick)"),
+            text.contains("- ABC — Alpha (software, Leitung Alex)"),
             "{text}"
         );
 
@@ -776,12 +776,12 @@ mod tests {
         let liste = json!([
             { "key": "ABC-1", "fields": { "summary": "Login kaputt",
               "status": { "name": "In Progress" }, "issuetype": { "name": "Bug" },
-              "assignee": { "displayName": "Patrick" },
+              "assignee": { "displayName": "Alex" },
               "updated": "2026-11-20T10:15:00.000+0000" } }
         ]);
         let text = suchen(daten::liste(&liste, ""), Some(1), Some("seite-2"));
         assert!(
-            text.contains("- ABC-1 [Bug] [In Progress] Login kaputt — zugewiesen: Patrick"),
+            text.contains("- ABC-1 [Bug] [In Progress] Login kaputt — zugewiesen: Alex"),
             "{text}"
         );
         assert!(text.contains("2026-11-20 10:15"), "{text}");
@@ -801,7 +801,7 @@ mod tests {
                 "issuetype": { "name": "Bug" },
                 "status": { "name": "In Progress" },
                 "project": { "key": "ABC", "name": "Alpha" },
-                "assignee": { "displayName": "Patrick" },
+                "assignee": { "displayName": "Alex" },
                 "reporter": { "displayName": "Anna" },
                 "priority": { "name": "High" },
                 "labels": ["login", "bug"],
@@ -829,7 +829,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("- Projekt: ABC (Alpha)"), "{text}");
-        assert!(text.contains("- Zugewiesen: Patrick"), "{text}");
+        assert!(text.contains("- Zugewiesen: Alex"), "{text}");
         assert!(text.contains("- Labels: login, bug"), "{text}");
         assert!(text.contains("fällig: 2026-11-30"), "{text}");
         assert!(
@@ -921,12 +921,12 @@ mod tests {
 
         let text = super::filter(
             &json!({ "id": "10000", "name": "Meine Bugs", "jql": "project = ABC",
-                     "description": "Alle Bugs", "owner": { "displayName": "Patrick" } }),
+                     "description": "Alle Bugs", "owner": { "displayName": "Alex" } }),
             4000,
         );
         assert!(text.starts_with("10000 Meine Bugs"), "{text}");
         assert!(text.contains("JQL: project = ABC"), "{text}");
-        assert!(text.contains("Besitzer: Patrick"), "{text}");
+        assert!(text.contains("Besitzer: Alex"), "{text}");
 
         let arten = json!({ "issueLinkTypes": [
             { "id": "10000", "name": "Blocks", "outward": "blocks", "inward": "is blocked by" }
@@ -938,12 +938,12 @@ mod tests {
         );
 
         let personen_baum = json!([
-            { "accountId": "acc-123", "displayName": "Patrick", "active": true },
+            { "accountId": "acc-123", "displayName": "Alex", "active": true },
             { "accountId": "acc-456", "displayName": "Anna", "active": false }
         ]);
         let text = personen(&personen_baum);
         assert!(text.contains("2 Person(en)"), "{text}");
-        assert!(text.contains("- Patrick · accountId acc-123"), "{text}");
+        assert!(text.contains("- Alex · accountId acc-123"), "{text}");
         assert!(
             text.contains("- Anna · accountId acc-456 · inaktiv"),
             "{text}"

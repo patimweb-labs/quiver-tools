@@ -490,7 +490,7 @@ mod tests {
         Site {
             name: "firma".into(),
             url: "https://firma.atlassian.net".into(),
-            email: "patrick@example.test".into(),
+            email: "alex@example.test".into(),
             token: "token-4711".into(),
             nur: vec!["ENG".into()],
             schreiben: false,
@@ -529,7 +529,7 @@ mod tests {
         assert!(text.contains("Bereiche ENG"), "{text}");
         assert!(text.contains("Schreiben aus"), "{text}");
         assert!(!text.contains("token-4711"), "{text}");
-        assert!(!text.contains("patrick@example.test"), "{text}");
+        assert!(!text.contains("alex@example.test"), "{text}");
         assert_eq!(status(&[]), "Keine Confluence-Site eingerichtet.");
     }
 
@@ -537,15 +537,15 @@ mod tests {
     fn der_test_nennt_benutzer_und_konto_aber_keine_email() {
         let text = testen(
             &site(),
-            &json!({ "displayName": "Patrick Weppelmann", "accountId": "5f0c1e2a",
-                     "email": "patrick@example.test" }),
+            &json!({ "displayName": "Alex Beispiel", "accountId": "5f0c1e2a",
+                     "email": "alex@example.test" }),
         );
         assert!(
-            text.contains("Anmeldung an firma erfolgreich: Patrick Weppelmann (Konto 5f0c1e2a)"),
+            text.contains("Anmeldung an firma erfolgreich: Alex Beispiel (Konto 5f0c1e2a)"),
             "{text}"
         );
         assert!(text.contains("Schreiben: aus"), "{text}");
-        assert!(!text.contains("patrick@example.test"), "{text}");
+        assert!(!text.contains("alex@example.test"), "{text}");
         assert!(!text.contains("token-4711"), "{text}");
 
         // Ohne `displayName` zählt `publicName`.

@@ -50,7 +50,7 @@ fn browser() -> Arc<AttrappenBrowser> {
 /// Benutzer und Passwort abgeschickt werden.
 fn tote_konfig(zustand: std::path::PathBuf) -> ZepKonfig {
     ZepKonfig {
-        url: "http://127.0.0.1:9/zepneoimpulse/next/mcp".to_string(),
+        url: "http://127.0.0.1:9/firma/next/mcp".to_string(),
         benutzer: BENUTZER.to_string(),
         passwort: PASSWORT.to_string(),
         zustand,

@@ -364,7 +364,7 @@ mod tests {
             name,
             &[
                 ("url", url),
-                ("email", "patrick@example.test"),
+                ("email", "alex@example.test"),
                 ("api_token", "token-4711"),
             ],
         )
@@ -376,7 +376,7 @@ mod tests {
             "firma",
             &[
                 ("url", "https://firma.atlassian.net/"),
-                ("email", "patrick@example.test"),
+                ("email", "alex@example.test"),
                 ("api_token", "token-4711"),
                 ("nur", " ABC , DEF ,, "),
                 ("schreiben", "an"),
@@ -492,7 +492,7 @@ mod tests {
         let site = Site::aus_zugang(&site("firma", "https://firma.atlassian.net")).unwrap();
         let text = format!("{site:?}");
         assert!(!text.contains("token-4711"), "{text}");
-        assert!(!text.contains("patrick@example.test"), "{text}");
+        assert!(!text.contains("alex@example.test"), "{text}");
         assert!(text.contains("firma"), "{text}");
         assert!(text.contains("token: true"), "{text}");
     }
@@ -558,6 +558,6 @@ mod tests {
         assert!(text.contains("firma"), "{text}");
         assert!(text.contains("Schreiben aus"), "{text}");
         assert!(!text.contains("token-4711"), "{text}");
-        assert!(!text.contains("patrick@example.test"), "{text}");
+        assert!(!text.contains("alex@example.test"), "{text}");
     }
 }

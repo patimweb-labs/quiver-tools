@@ -1809,10 +1809,10 @@ pub struct AnlegenParam {
     /// Zugewiesener Benutzer (E-Mail oder Anzeigename).
     #[serde(default)]
     pub zugewiesen: Option<String>,
-    /// Bereichspfad, z. B. `SCODA\Web`.
+    /// Bereichspfad, z. B. `PROJEKT\Web`.
     #[serde(default)]
     pub bereich: Option<String>,
-    /// Iterationspfad, z. B. `SCODA\Sprint 1`.
+    /// Iterationspfad, z. B. `PROJEKT\Sprint 1`.
     #[serde(default)]
     pub iteration: Option<String>,
     /// Eltern-Arbeitsitem, wird als Link gesetzt.
@@ -2145,16 +2145,16 @@ mod tests {
 
     #[test]
     fn ohne_team_kommt_ein_hinweis() {
-        let server = server_mit(vec![eintrag("kunde", Some("SCODA"), true)]);
+        let server = server_mit(vec![eintrag("kunde", Some("PROJEKT"), true)]);
         let text = text_von(aufruf(&server, "devops_iterationen", json!({})));
         assert!(text.contains("Team fehlt"), "{text}");
     }
 
     #[test]
     fn das_profil_nennt_die_organisationen_ohne_pat() {
-        let server = server_mit(vec![eintrag("neoimpulse", Some("SCODA"), false)]);
+        let server = server_mit(vec![eintrag("beispiel", Some("PROJEKT"), false)]);
         let text = text_von(aufruf(&server, "devops_profile", json!({})));
-        assert!(text.contains("neoimpulse"), "{text}");
+        assert!(text.contains("beispiel"), "{text}");
         assert!(text.contains("Schreiben aus"), "{text}");
         assert!(!text.contains("pat-4711"), "{text}");
     }
@@ -2162,11 +2162,11 @@ mod tests {
     #[test]
     fn mehrere_organisationen_verlangen_einen_namen() {
         let server = server_mit(vec![
-            eintrag("neoimpulse", Some("SCODA"), true),
+            eintrag("beispiel", Some("PROJEKT"), true),
             eintrag("kunde", None, false),
         ]);
         let text = text_von(aufruf(&server, "devops_status", json!({})));
-        assert!(text.contains("neoimpulse"), "{text}");
+        assert!(text.contains("beispiel"), "{text}");
         assert!(text.contains("kunde"), "{text}");
         assert!(!text.contains("pat-4711"), "{text}");
 
@@ -2188,7 +2188,7 @@ mod tests {
 
     #[test]
     fn schreiben_aus_antwortet_ohne_anfrage() {
-        let server = server_mit(vec![eintrag("kunde", Some("SCODA"), false)]);
+        let server = server_mit(vec![eintrag("kunde", Some("PROJEKT"), false)]);
         for (name, argumente) in [
             (
                 "devops_workitem_anlegen",
@@ -2230,7 +2230,7 @@ mod tests {
 
     #[test]
     fn leere_pflichtparameter_und_unbekannte_werkzeuge_sind_parameterfehler() {
-        let server = server_mit(vec![eintrag("org", Some("SCODA"), true)]);
+        let server = server_mit(vec![eintrag("org", Some("PROJEKT"), true)]);
         let fehler = aufruf(
             &server,
             "devops_workitem_anlegen",
@@ -2310,10 +2310,10 @@ mod tests {
     #[test]
     fn der_ersteller_filter_arbeitet_lokal() {
         let liste = json!({ "value": [
-            { "pullRequestId": 1, "createdBy": { "displayName": "Patrick Weppelmann" } },
+            { "pullRequestId": 1, "createdBy": { "displayName": "Alex Beispiel" } },
             { "pullRequestId": 2, "createdBy": { "displayName": "Anna" } }
         ] });
-        let gefiltert = filtern_nach_ersteller(&liste, "weppel");
+        let gefiltert = filtern_nach_ersteller(&liste, "beisp");
         assert_eq!(daten::liste(&gefiltert, "value").len(), 1);
         assert_eq!(
             daten::text(&gefiltert, "value.0.pullRequestId").as_deref(),

@@ -57,7 +57,7 @@ fn text(wert: &str) -> String {
 ///
 /// ```text
 /// SELECT [System.Id] FROM WorkItems
-///   WHERE [System.TeamProject] = 'SCODA' AND [System.State] = 'Active'
+///   WHERE [System.TeamProject] = 'PROJEKT' AND [System.State] = 'Active'
 ///   ORDER BY [System.ChangedDate] DESC
 /// ```
 pub fn bauen(projekt: &str, komfort: &Komfort<'_>) -> String {
@@ -96,10 +96,10 @@ mod tests {
 
     #[test]
     fn ohne_komfort_bleibt_das_projekt() {
-        let abfrage = bauen("SCODA", &Komfort::default());
+        let abfrage = bauen("PROJEKT", &Komfort::default());
         assert_eq!(
             abfrage,
-            "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = 'SCODA' \
+            "SELECT [System.Id] FROM WorkItems WHERE [System.TeamProject] = 'PROJEKT' \
              ORDER BY [System.ChangedDate] DESC"
         );
         assert!(Komfort::default().ist_leer());
@@ -113,7 +113,7 @@ mod tests {
             status: Some("Active"),
             typ: Some("Bug"),
         };
-        let abfrage = bauen("SCODA", &komfort);
+        let abfrage = bauen("PROJEKT", &komfort);
         assert!(
             abfrage.contains("[System.WorkItemType] = 'Bug'"),
             "{abfrage}"
@@ -138,7 +138,7 @@ mod tests {
             typ: Some("  "),
         };
         assert!(komfort.ist_leer());
-        let abfrage = bauen("SCODA", &komfort);
+        let abfrage = bauen("PROJEKT", &komfort);
         assert!(!abfrage.contains("CONTAINS"), "{abfrage}");
         assert!(!abfrage.contains("[System.State]"), "{abfrage}");
 
@@ -147,7 +147,7 @@ mod tests {
             text: Some("Kunde's Login"),
             ..Komfort::default()
         };
-        assert!(bauen("SCODA", &komfort).contains("CONTAINS 'Kunde''s Login'"));
+        assert!(bauen("PROJEKT", &komfort).contains("CONTAINS 'Kunde''s Login'"));
     }
 
     #[test]

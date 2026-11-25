@@ -17,7 +17,7 @@ Alles aus den Metadaten lesen, **nichts** fest verdrahten außer der Basis-URL.
 
 | Feld | Art | Hilfe |
 |---|---|---|
-| `url` | Url, Pflicht | MCP-Adresse, z. B. `https://www.zep-online.de/zepneoimpulse/next/mcp` |
+| `url` | Url, Pflicht | MCP-Adresse, z. B. `https://www.zep-online.de/firma/next/mcp` |
 | `benutzer` | Text, **Pflicht** | ZEP-Benutzername |
 | `passwort` | Passwort, **Pflicht** | ZEP-Passwort |
 

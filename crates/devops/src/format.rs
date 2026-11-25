@@ -852,9 +852,9 @@ mod tests {
 
     fn organisation() -> Organisation {
         Organisation {
-            name: "neoimpulse".into(),
-            url: "https://dev.azure.com/neoimpulse".into(),
-            projekt: Some("SCODA".into()),
+            name: "beispiel".into(),
+            url: "https://dev.azure.com/beispiel".into(),
+            projekt: Some("PROJEKT".into()),
             pat: "pat-4711".into(),
             schreiben: false,
             ca_zertifikat: None,
@@ -864,8 +864,8 @@ mod tests {
     #[test]
     fn die_hinweise_nennen_das_quiver_fenster() {
         assert_eq!(
-            pat_ungueltig("neoimpulse"),
-            "PAT für neoimpulse ungültig oder abgelaufen – im quiver-Fenster unter Tools → DevOps \
+            pat_ungueltig("beispiel"),
+            "PAT für beispiel ungültig oder abgelaufen – im quiver-Fenster unter Tools → DevOps \
              erneuern."
         );
         assert_eq!(
@@ -881,9 +881,9 @@ mod tests {
     fn der_status_nennt_die_organisation_ohne_pat() {
         let text = status(&[organisation()]);
         assert!(text.contains("1 Organisation(en)"), "{text}");
-        assert!(text.contains("neoimpulse"), "{text}");
+        assert!(text.contains("beispiel"), "{text}");
         assert!(
-            text.contains("Standardprojekt SCODA (frei wählbar)"),
+            text.contains("Standardprojekt PROJEKT (frei wählbar)"),
             "{text}"
         );
         assert!(text.contains("Schreiben aus"), "{text}");
@@ -932,9 +932,9 @@ mod tests {
                 "System.WorkItemType": "User Story",
                 "System.State": "Active",
                 "System.Title": "Login kaputt",
-                "System.AssignedTo": { "displayName": "Patrick" },
-                "System.AreaPath": "SCODA\\Web",
-                "System.IterationPath": "SCODA\\Sprint 1",
+                "System.AssignedTo": { "displayName": "Alex" },
+                "System.AreaPath": "PROJEKT\\Web",
+                "System.IterationPath": "PROJEKT\\Sprint 1",
                 "System.ChangedDate": "2026-11-20T10:15:00Z",
                 "System.Description": "<div>Klicken geht nicht</div>",
                 "Microsoft.VSTS.Common.AcceptanceCriteria": "<ul><li>Login klappt</li></ul>",
@@ -951,8 +951,8 @@ mod tests {
             text.starts_with("#123 [User Story] [Active] Login kaputt"),
             "{text}"
         );
-        assert!(text.contains("- Zugewiesen: Patrick"), "{text}");
-        assert!(text.contains("- Bereich: SCODA\\Web"), "{text}");
+        assert!(text.contains("- Zugewiesen: Alex"), "{text}");
+        assert!(text.contains("- Bereich: PROJEKT\\Web"), "{text}");
         assert!(
             text.contains("## Beschreibung\nKlicken geht nicht"),
             "{text}"
@@ -997,13 +997,13 @@ mod tests {
 
         let iteration_baum = json!({ "value": [ {
             "id": "guid-1",
-            "path": "SCODA\\Sprint 1",
+            "path": "PROJEKT\\Sprint 1",
             "attributes": { "startDate": "2026-11-01T00:00:00Z", "finishDate": "2026-11-14T00:00:00Z",
                             "timeFrame": "current" }
         } ] });
         let text = super::iterationen(&iteration_baum);
         assert!(
-            text.contains("SCODA\\Sprint 1 · 2026-11-01 – 2026-11-14 · current"),
+            text.contains("PROJEKT\\Sprint 1 · 2026-11-01 – 2026-11-14 · current"),
             "{text}"
         );
     }
@@ -1012,30 +1012,30 @@ mod tests {
     fn pull_requests_und_ihre_threads_werden_gelesen() {
         let liste = json!({ "value": [ {
             "pullRequestId": 42, "title": "Login", "status": "active", "isDraft": true,
-            "createdBy": { "displayName": "Patrick" },
+            "createdBy": { "displayName": "Alex" },
             "sourceRefName": "refs/heads/feature/login", "targetRefName": "refs/heads/main",
-            "repository": { "name": "scoda-web" }
+            "repository": { "name": "projekt-web" }
         } ] });
         let text = pull_requests(&liste);
         assert!(
             text.contains(
-                "#42 [active] Login · scoda-web · feature/login → main · Patrick · Entwurf"
+                "#42 [active] Login · projekt-web · feature/login → main · Alex · Entwurf"
             ),
             "{text}"
         );
 
         let pr = json!({
             "pullRequestId": 42, "title": "Login", "status": "active",
-            "createdBy": { "displayName": "Patrick" },
+            "createdBy": { "displayName": "Alex" },
             "creationDate": "2026-11-20T09:00:00Z",
             "sourceRefName": "refs/heads/feature/login", "targetRefName": "refs/heads/main",
-            "repository": { "name": "scoda-web" }, "mergeStatus": "succeeded",
+            "repository": { "name": "projekt-web" }, "mergeStatus": "succeeded",
             "description": "<div>Bitte prüfen</div>",
             "reviewers": [ { "displayName": "Anna", "vote": 10 }, { "displayName": "Ben", "vote": -5 } ],
             "_links": { "web": { "href": "https://dev.azure.com/x/pr/42" } }
         });
         let commits = json!({ "value": [ { "commitId": "abcdef1234567890", "comment": "Erster Commit",
-            "author": { "name": "Patrick", "date": "2026-11-20T09:30:00Z" } } ] });
+            "author": { "name": "Alex", "date": "2026-11-20T09:30:00Z" } } ] });
         let items = json!({ "value": [ { "id": "123" } ] });
         let text = pull_request(&pr, &commits, &items, 4000);
         assert!(text.starts_with("#42 [active] Login"), "{text}");
@@ -1045,7 +1045,7 @@ mod tests {
         assert!(text.contains("- Ben · wartet auf Autor"), "{text}");
         assert!(text.contains("- #123"), "{text}");
         assert!(
-            text.contains("abcdef12 Patrick 2026-11-20 09:30: Erster Commit"),
+            text.contains("abcdef12 Alex 2026-11-20 09:30: Erster Commit"),
             "{text}"
         );
 
@@ -1066,19 +1066,19 @@ mod tests {
         let laeufe_baum = json!({ "value": [ {
             "id": 1234, "buildNumber": "20261120.1", "status": "completed", "result": "failed",
             "sourceBranch": "refs/heads/main", "startTime": "2026-11-20T10:00:00Z",
-            "definition": { "id": 7, "name": "scoda-ci" }
+            "definition": { "id": 7, "name": "projekt-ci" }
         } ] });
         let text = super::laeufe(&laeufe_baum);
         assert!(
-            text.contains("#1234 scoda-ci · completed/failed · main · 2026-11-20 10:00"),
+            text.contains("#1234 projekt-ci · completed/failed · main · 2026-11-20 10:00"),
             "{text}"
         );
 
         let lauf_baum = json!({ "id": 1234, "status": "completed", "result": "failed",
             "buildNumber": "2026.1", "sourceBranch": "refs/heads/main",
-            "requestedFor": { "displayName": "Patrick" },
+            "requestedFor": { "displayName": "Alex" },
             "startTime": "2026-11-20T10:00:00Z", "finishTime": "2026-11-20T10:05:00Z",
-            "definition": { "name": "scoda-ci" } });
+            "definition": { "name": "projekt-ci" } });
         let zeitachse = json!({ "records": [
             { "type": "Stage", "name": "Build", "result": "failed", "errorCount": 1 },
             { "type": "Job", "name": "Compile", "result": "succeeded", "errorCount": 0 },
@@ -1087,7 +1087,7 @@ mod tests {
         ] });
         let text = lauf(&lauf_baum, Some(&zeitachse));
         assert!(
-            text.starts_with("#1234 scoda-ci · completed/failed"),
+            text.starts_with("#1234 projekt-ci · completed/failed"),
             "{text}"
         );
         assert!(text.contains("## Fehlgeschlagene Schritte (2)"), "{text}");
@@ -1101,18 +1101,19 @@ mod tests {
 
     #[test]
     fn repos_branches_pipelines_werden_gelesen() {
-        let repo_baum = json!({ "value": [ { "name": "scoda-web", "defaultBranch": "refs/heads/main",
+        let repo_baum = json!({ "value": [ { "name": "projekt-web", "defaultBranch": "refs/heads/main",
                                             "size": 4096 } ] });
-        assert!(repos(&repo_baum).contains("- scoda-web · Standardbranch refs/heads/main · 4 kB"));
+        assert!(repos(&repo_baum).contains("- projekt-web · Standardbranch refs/heads/main · 4 kB"));
 
         let branch_baum = json!({ "value": [ { "name": "refs/heads/main",
-            "objectId": "abcdef1234567890", "creator": { "displayName": "Patrick" } } ] });
+            "objectId": "abcdef1234567890", "creator": { "displayName": "Alex" } } ] });
         assert!(
-            branches("scoda-web", &branch_baum).contains("- refs/heads/main · abcdef12 · Patrick")
+            branches("projekt-web", &branch_baum).contains("- refs/heads/main · abcdef12 · Alex")
         );
 
-        let pipeline_baum = json!({ "value": [ { "id": 7, "name": "scoda-ci", "folder": "\\" } ] });
-        assert!(pipelines(&pipeline_baum).contains("- #7 scoda-ci · Ordner \\"));
+        let pipeline_baum =
+            json!({ "value": [ { "id": 7, "name": "projekt-ci", "folder": "\\" } ] });
+        assert!(pipelines(&pipeline_baum).contains("- #7 projekt-ci · Ordner \\"));
     }
 
     #[test]
@@ -1183,21 +1184,21 @@ mod tests {
     fn die_organisation_und_der_test_nennen_keinen_pat() {
         let text = testen(
             &organisation(),
-            &json!({ "authenticatedUser": { "displayName": "Patrick",
-                "properties": { "Account": { "$value": "neoimpulse" } } } }),
+            &json!({ "authenticatedUser": { "displayName": "Alex",
+                "properties": { "Account": { "$value": "beispiel" } } } }),
         );
-        assert!(text.contains("Patrick (Konto neoimpulse)"), "{text}");
+        assert!(text.contains("Alex (Konto beispiel)"), "{text}");
         assert!(text.contains("Schreiben: aus"), "{text}");
         assert!(!text.contains("pat-4711"), "{text}");
 
-        let projekt_baum = json!({ "value": [ { "name": "SCODA", "state": "wellFormed",
+        let projekt_baum = json!({ "value": [ { "name": "PROJEKT", "state": "wellFormed",
             "visibility": "private" } ] });
-        assert!(projekte_text(&projekt_baum).contains("- SCODA (wellFormed, private)"));
+        assert!(projekte_text(&projekt_baum).contains("- PROJEKT (wellFormed, private)"));
     }
 
     /// `projekte` heißt wie die gleichnamige Funktion in `daten`; hier ein
     /// eindeutiger Name für den Test.
     fn projekte_text(baum: &Value) -> String {
-        super::projekte("neoimpulse", baum)
+        super::projekte("beispiel", baum)
     }
 }

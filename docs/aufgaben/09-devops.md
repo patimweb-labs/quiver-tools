@@ -14,7 +14,7 @@ Projekt. Felder in dieser Reihenfolge:
 
 | Feld | Art | Hilfe |
 |---|---|---|
-| `url` | Url, Pflicht | z. B. `https://dev.azure.com/neoimpulse` oder ein Azure DevOps Server `https://tfs.kunde.de/tfs/DefaultCollection` |
+| `url` | Url, Pflicht | z. B. `https://dev.azure.com/beispiel` oder ein Azure DevOps Server `https://tfs.kunde.de/tfs/DefaultCollection` |
 | `projekt` | Text | Standardprojekt; leer heißt, das Projekt wird je Aufruf angegeben |
 | `pat` | Passwort, Pflicht | Personal Access Token, erzeugt in DevOps unter Benutzereinstellungen → Personal access tokens. Rechte nach Bedarf (Work Items, Code, Build: lesen bzw. schreiben). |
 | `schreiben` | Schalter, **Standard aus** | Erlaubt Anlegen und Ändern (Work Items, Pull Requests, Kommentare, Pipelines starten) für diese Organisation |

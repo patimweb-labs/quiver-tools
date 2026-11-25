@@ -124,12 +124,12 @@ mod tests {
         let baum = json!({
             "id": "123",
             "version": { "number": 3, "authorId": "abc" },
-            "author": { "displayName": "Patrick" },
+            "author": { "displayName": "Alex" },
             "results": [ { "id": "1" }, { "id": "2" } ]
         });
         assert_eq!(text(&baum, "id").as_deref(), Some("123"));
         assert_eq!(zahl(&baum, "version.number"), Some(3));
-        assert_eq!(text(&baum, "author").as_deref(), Some("Patrick"));
+        assert_eq!(text(&baum, "author").as_deref(), Some("Alex"));
         assert_eq!(text(&baum, "results.1.id").as_deref(), Some("2"));
         assert_eq!(text(&baum, "gibtsnicht"), None);
         assert_eq!(text_oder(&baum, "gibtsnicht", "-"), "-");

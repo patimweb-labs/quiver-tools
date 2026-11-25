@@ -54,8 +54,8 @@ impl Werkzeug for Zephyr {
                 art: FeldArt::Url,
                 pflicht: false,
                 standard: Some(STANDARD_BASIS_URL),
-                hilfe: "Zephyr Scale Cloud, REST v2. Für die Attrappe genügt \
-                        http://127.0.0.1:<port>.",
+                hilfe:
+                    "Adresse von Zephyr Scale Cloud (REST v2). Normalerweise unverändert lassen.",
                 link: None,
             },
             Feld {

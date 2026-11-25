@@ -34,14 +34,14 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 /// E-Mail und Token der ersten Site. Kein echtes Geheimnis.
-pub const EMAIL_A: &str = "patrick@example.test";
+pub const EMAIL_A: &str = "alex@example.test";
 pub const TOKEN_A: &str = "token-attrappe-4711";
 /// E-Mail und Token der zweiten Site.
 pub const EMAIL_B: &str = "anna@example.test";
 pub const TOKEN_B: &str = "token-attrappe-4712";
 
 /// Anzeigename und Konto des angemeldeten Benutzers.
-pub const BENUTZER: &str = "Patrick Weppelmann";
+pub const BENUTZER: &str = "Alex Beispiel";
 pub const BENUTZER_ID: &str = "acc-123";
 
 /// Die Projekte der Attrappe.

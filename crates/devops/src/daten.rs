@@ -132,7 +132,7 @@ mod tests {
     fn ein_punktpfad_findet_werte() {
         let baum = json!({
             "id": 123,
-            "fields": { "System.Title": "Login kaputt", "System.AssignedTo": { "displayName": "Patrick" } },
+            "fields": { "System.Title": "Login kaputt", "System.AssignedTo": { "displayName": "Alex" } },
             "value": [ { "id": 1 }, { "id": 2 } ]
         });
         assert_eq!(
@@ -141,7 +141,7 @@ mod tests {
         );
         assert_eq!(
             text(&baum, "fields.System.AssignedTo").as_deref(),
-            Some("Patrick")
+            Some("Alex")
         );
         assert_eq!(zahl(&baum, "id"), Some(123));
         assert_eq!(zahl(&baum, "value.1.id"), Some(2));
@@ -189,8 +189,8 @@ mod tests {
 
     #[test]
     fn das_repo_kommt_aus_dem_pull_request() {
-        let pr = json!({ "repository": { "name": "scoda-web", "id": "abc" } });
-        assert_eq!(repo_von_pull_request(&pr).as_deref(), Some("scoda-web"));
+        let pr = json!({ "repository": { "name": "projekt-web", "id": "abc" } });
+        assert_eq!(repo_von_pull_request(&pr).as_deref(), Some("projekt-web"));
         assert_eq!(repo_von_pull_request(&json!({})), None);
     }
 }

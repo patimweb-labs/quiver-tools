@@ -1,6 +1,6 @@
 # Offene Punkte
 
-Aus dem ersten echten Test gegen den Tenant von neoimpulse.de (2026-11-23, nur lesende Tools).
+Aus dem ersten echten Test gegen den Tenant von example.test (2026-11-23, nur lesende Tools).
 
 - [x] `mail_lesen` liefert den ganzen Verlauf (im Test 15 379 Zeichen). Für Agenten zu viel Kontext:
       `uniqueBody` statt `body` anbieten und/oder Parameter `max_zeichen` (Standard z. B. 4000) mit Hinweis „gekürzt“.

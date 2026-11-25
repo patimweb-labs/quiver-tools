@@ -557,7 +557,7 @@ mod tests {
         Site {
             name: "firma".into(),
             url: "https://firma.atlassian.net".into(),
-            email: "patrick@example.test".into(),
+            email: "alex@example.test".into(),
             token: "token-4711".into(),
             nur: Vec::new(),
             schreiben: true,
@@ -721,7 +721,7 @@ mod tests {
         let client = Client::neu(&site()).unwrap();
         let text = format!("{client:?}");
         assert!(!text.contains("token-4711"), "{text}");
-        assert!(!text.contains("patrick@example.test"), "{text}");
+        assert!(!text.contains("alex@example.test"), "{text}");
         assert!(text.contains("firma"), "{text}");
     }
 

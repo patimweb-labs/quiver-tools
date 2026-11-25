@@ -567,7 +567,7 @@ async fn filter_verknuepfungsarten_und_personen_werden_gelesen() {
     let text = antwort(&server, "jira_filter", json!({ "id": FILTER })).await;
     assert!(text.contains("10000 Meine Bugs"), "{text}");
     assert!(text.contains("JQL: project = ABC"), "{text}");
-    assert!(text.contains("Besitzer: Patrick Weppelmann"), "{text}");
+    assert!(text.contains("Besitzer: Alex Beispiel"), "{text}");
 
     let text = antwort(&server, "jira_verknuepfungsarten", json!({})).await;
     assert!(
@@ -579,7 +579,7 @@ async fn filter_verknuepfungsarten_und_personen_werden_gelesen() {
         "{text}"
     );
 
-    let text = antwort(&server, "jira_person_suchen", json!({ "suche": "Patrick" })).await;
+    let text = antwort(&server, "jira_person_suchen", json!({ "suche": "Alex" })).await;
     assert!(text.contains("2 Person(en)"), "{text}");
     assert!(
         text.contains(&format!("accountId {}", attrappe::BENUTZER_ID)),
@@ -592,7 +592,7 @@ async fn filter_verknuepfungsarten_und_personen_werden_gelesen() {
             .erster("user/search")
             .unwrap()
             .feld("query"),
-        Some("Patrick")
+        Some("Alex")
     );
 }
 
@@ -1191,7 +1191,7 @@ async fn keine_antwort_enthaelt_token_oder_passwort() {
         antwort(&server, "jira_vorgang", json!({ "key": VORGANG })).await,
         antwort(&server, "jira_kommentare", json!({ "key": VORGANG })).await,
         antwort(&server, "jira_uebergaenge", json!({ "key": VORGANG })).await,
-        antwort(&server, "jira_person_suchen", json!({ "suche": "Patrick" })).await,
+        antwort(&server, "jira_person_suchen", json!({ "suche": "Alex" })).await,
     ];
     for text in &antworten {
         ohne_token(text);

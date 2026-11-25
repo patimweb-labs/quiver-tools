@@ -162,7 +162,7 @@ fn namen(werkzeuge: &[Value]) -> Vec<String> {
 /// Die Zugangsliste, die quiver setzen würde.
 fn zugaenge(adresse: &str, schreiben: bool) -> Value {
     json!([{
-        "name": "neoimpulse",
+        "name": "beispiel",
         "werte": {
             "url": adresse,
             "projekt": attrappe::PROJEKT,
@@ -257,14 +257,14 @@ fn kindprozess_listet_alle_werkzeuge_und_liest() {
 
         let (status, fehler) = kind.aufrufen(3, "devops_status", json!({}));
         assert!(!fehler, "{status}");
-        assert!(status.contains("neoimpulse"), "{status}");
+        assert!(status.contains("beispiel"), "{status}");
         assert!(status.contains("Schreiben an"), "{status}");
         assert!(!status.contains(attrappe::PAT_A), "{status}");
 
         // `devops_profile` kommt aus dem Kern und nennt die Organisationen.
         let (profil, fehler) = kind.aufrufen(30, "devops_profile", json!({}));
         assert!(!fehler, "{profil}");
-        assert!(profil.contains("neoimpulse"), "{profil}");
+        assert!(profil.contains("beispiel"), "{profil}");
         assert!(!profil.contains(attrappe::PAT_A), "{profil}");
 
         let (text, fehler) = kind.aufrufen(4, "devops_workitem", json!({ "id": attrappe::ITEM }));
@@ -274,7 +274,7 @@ fn kindprozess_listet_alle_werkzeuge_und_liest() {
 
         let (text, fehler) = kind.aufrufen(5, "devops_pipelines", json!({}));
         assert!(!fehler, "{text}");
-        assert!(text.contains("scoda-ci"), "{text}");
+        assert!(text.contains("projekt-ci"), "{text}");
 
         let stderr = kind.beenden();
         assert!(
@@ -338,7 +338,7 @@ fn ohne_schreiben_antwortet_der_kindprozess_ohne_anfrage() {
             json!({ "typ": "Bug", "titel": "Neuer Fehler" }),
         );
         assert!(!fehler, "{text}");
-        assert!(text.contains("Schreiben ist für neoimpulse aus"), "{text}");
+        assert!(text.contains("Schreiben ist für beispiel aus"), "{text}");
         assert!(server.aufzeichnung.alle().is_empty());
 
         kind.beenden();

@@ -1231,7 +1231,7 @@ mod tests {
     fn eintrag(name: &str, nur: Option<&str>, schreiben: bool) -> Eintrag {
         let mut werte: std::collections::BTreeMap<String, String> = [
             ("url", "https://firma.atlassian.net"),
-            ("email", "patrick@example.test"),
+            ("email", "alex@example.test"),
             ("api_token", "token-4711"),
             ("schreiben", if schreiben { "an" } else { "aus" }),
         ]
@@ -1355,7 +1355,7 @@ mod tests {
         assert!(text.contains("Bereiche ENG"), "{text}");
         assert!(text.contains("Schreiben aus"), "{text}");
         assert!(!text.contains("token-4711"), "{text}");
-        assert!(!text.contains("patrick@example.test"), "{text}");
+        assert!(!text.contains("alex@example.test"), "{text}");
     }
 
     #[test]

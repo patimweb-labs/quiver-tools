@@ -35,15 +35,15 @@ pub const PAT_A: &str = "pat-attrappe-4711";
 /// PAT der zweiten Organisation. Kein echtes Geheimnis.
 pub const PAT_B: &str = "pat-attrappe-4712";
 /// Anzeigename des angemeldeten Benutzers.
-pub const BENUTZER: &str = "Patrick Weppelmann";
+pub const BENUTZER: &str = "Alex Beispiel";
 /// Die ID des angemeldeten Benutzers (für Abstimmungen).
 pub const BENUTZER_ID: &str = "5f0c1e2a-0000-4000-8000-000000000001";
 /// Das Projekt der Attrappe.
-pub const PROJEKT: &str = "SCODA";
+pub const PROJEKT: &str = "PROJEKT";
 /// Das Team der Attrappe.
-pub const TEAM: &str = "SCODA Team";
+pub const TEAM: &str = "PROJEKT Team";
 /// Das Repository der Attrappe.
-pub const REPO: &str = "scoda-web";
+pub const REPO: &str = "projekt-web";
 /// Die Projekt-ID im Artefakt-Pfad.
 pub const PROJEKT_ID: &str = "8a1f2b3c-0000-4000-8000-00000000000a";
 /// Die Repo-ID im Artefakt-Pfad.
@@ -390,7 +390,7 @@ fn beantworten(
             "authenticatedUser": {
                 "id": BENUTZER_ID,
                 "providerDisplayName": BENUTZER,
-                "properties": { "Account": { "$value": "neoimpulse" } }
+                "properties": { "Account": { "$value": "beispiel" } }
             },
             "instanceId": "00000000-0000-0000-0000-000000000000",
             "webApplicationRelativeDirectory": "/"
@@ -615,7 +615,7 @@ fn beantworten(
             "id": 5678,
             "status": "inProgress",
             "result": Value::Null,
-            "definition": { "id": PIPELINE, "name": "scoda-ci" },
+            "definition": { "id": PIPELINE, "name": "projekt-ci" },
             "_links": { "web": { "href": "https://dev.azure.com/x/build/5678" } }
         }));
     }
@@ -623,7 +623,7 @@ fn beantworten(
     if pfad.ends_with("/_apis/pipelines") {
         return json_wert(json!({
             "count": 1,
-            "value": [ { "id": PIPELINE, "name": "scoda-ci", "folder": "\\", "revision": 3 } ]
+            "value": [ { "id": PIPELINE, "name": "projekt-ci", "folder": "\\", "revision": 3 } ]
         }));
     }
 
@@ -653,7 +653,7 @@ fn beantworten(
                 "queueTime": "2026-11-20T09:59:00Z",
                 "startTime": "2026-11-20T10:00:00Z",
                 "finishTime": "2026-11-20T10:05:00Z",
-                "definition": { "id": PIPELINE, "name": "scoda-ci" }
+                "definition": { "id": PIPELINE, "name": "projekt-ci" }
             } ]
         }));
     }
@@ -665,7 +665,7 @@ fn beantworten(
             "requestedFor": { "displayName": BENUTZER },
             "startTime": "2026-11-20T10:00:00Z",
             "finishTime": "2026-11-20T10:05:00Z",
-            "definition": { "id": PIPELINE, "name": "scoda-ci" },
+            "definition": { "id": PIPELINE, "name": "projekt-ci" },
             "_links": { "web": { "href": "https://dev.azure.com/x/build/1234" } }
         }));
     }

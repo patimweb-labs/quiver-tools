@@ -226,20 +226,20 @@ async fn hole<T: serde::de::DeserializeOwned>(
 mod tests {
     use super::*;
 
-    const MCP: &str = "https://www.zep-online.de/zepneoimpulse/next/mcp";
+    const MCP: &str = "https://www.zep-online.de/firma/next/mcp";
 
     #[test]
     fn die_well_known_adressen_folgen_den_rfc() {
         let mcp = mcp_adresse(MCP).unwrap();
         assert_eq!(
             ressourcen_adresse(&mcp).unwrap().as_str(),
-            "https://www.zep-online.de/.well-known/oauth-protected-resource/zepneoimpulse/next/mcp"
+            "https://www.zep-online.de/.well-known/oauth-protected-resource/firma/next/mcp"
         );
 
-        let issuer = Url::parse("https://www.zep-online.de/zepneoimpulse/next").unwrap();
+        let issuer = Url::parse("https://www.zep-online.de/firma/next").unwrap();
         assert_eq!(
             server_adresse(&issuer).unwrap().as_str(),
-            "https://www.zep-online.de/.well-known/oauth-authorization-server/zepneoimpulse/next"
+            "https://www.zep-online.de/.well-known/oauth-authorization-server/firma/next"
         );
     }
 

@@ -53,7 +53,7 @@ fn server(eintraege: Vec<Eintrag>) -> DevopsServer {
 /// Eine Organisation mit festem Projekt; Schreiben ist an.
 fn eine(adresse: &str) -> DevopsServer {
     server(vec![eintrag(
-        "neoimpulse",
+        "beispiel",
         adresse,
         Some(PROJEKT),
         PAT_A,
@@ -64,7 +64,7 @@ fn eine(adresse: &str) -> DevopsServer {
 /// Eine Organisation mit festem Projekt; Schreiben ist **aus**.
 fn eine_ohne_schreiben(adresse: &str) -> DevopsServer {
     server(vec![eintrag(
-        "neoimpulse",
+        "beispiel",
         adresse,
         Some(PROJEKT),
         PAT_A,
@@ -75,7 +75,7 @@ fn eine_ohne_schreiben(adresse: &str) -> DevopsServer {
 /// Zwei Organisationen: die erste mit Projekt, die zweite ohne (Projekt je Aufruf).
 fn zwei(adresse: &str) -> DevopsServer {
     server(vec![
-        eintrag("neoimpulse", adresse, Some(PROJEKT), PAT_A, true),
+        eintrag("beispiel", adresse, Some(PROJEKT), PAT_A, true),
         eintrag("kunde", adresse, None, PAT_B, false),
     ])
 }
@@ -120,7 +120,7 @@ async fn status_zeigt_die_organisationen_ohne_pat() {
 
     let text = antwort(&server, "devops_status", json!({})).await;
     assert!(text.contains("2 Organisation(en)"), "{text}");
-    assert!(text.contains("neoimpulse"), "{text}");
+    assert!(text.contains("beispiel"), "{text}");
     assert!(text.contains("kunde"), "{text}");
     assert!(text.contains("Schreiben aus"), "{text}");
     assert!(text.contains("Schreiben an"), "{text}");
@@ -135,12 +135,9 @@ async fn testen_meldet_sich_an_und_nennt_den_benutzer() {
     let server = eine(&attrappe.adresse);
 
     let text = antwort(&server, "devops_testen", json!({})).await;
-    assert!(
-        text.contains("Anmeldung an neoimpulse erfolgreich"),
-        "{text}"
-    );
+    assert!(text.contains("Anmeldung an beispiel erfolgreich"), "{text}");
     assert!(text.contains(attrappe::BENUTZER), "{text}");
-    assert!(text.contains("Konto neoimpulse"), "{text}");
+    assert!(text.contains("Konto beispiel"), "{text}");
     ohne_pat(&text);
 
     // Genau eine Anfrage, mit Vorschau-`api-version` und Basic-Anmeldung.
@@ -196,7 +193,7 @@ async fn zwei_organisationen_verlangen_einen_namen() {
         "{}",
         fehler.message
     );
-    assert!(fehler.message.contains("neoimpulse"), "{}", fehler.message);
+    assert!(fehler.message.contains("beispiel"), "{}", fehler.message);
     assert!(attrappe.aufzeichnung.alle().is_empty());
 
     // Unbekannt → Hinweis mit den bekannten Namen, ohne Anfrage.
@@ -222,12 +219,7 @@ async fn das_projekt_kommt_aus_dem_zugang_oder_aus_dem_aufruf() {
     let server = zwei(&attrappe.adresse);
 
     // Aus dem Zugang.
-    antwort(
-        &server,
-        "devops_repos",
-        json!({ "verbindung": "neoimpulse" }),
-    )
-    .await;
+    antwort(&server, "devops_repos", json!({ "verbindung": "beispiel" })).await;
     assert!(attrappe
         .aufzeichnung
         .zu("git/repositories")
@@ -277,7 +269,7 @@ async fn ein_ungueltiger_pat_wird_nicht_wiederholt() {
     assert!(
         fehler
             .message
-            .contains("PAT für neoimpulse ungültig oder abgelaufen"),
+            .contains("PAT für beispiel ungültig oder abgelaufen"),
         "{}",
         fehler.message
     );
@@ -301,7 +293,7 @@ async fn eine_anmeldeseite_mit_203_gilt_als_ungueltiger_pat() {
         .await
         .unwrap_err();
     assert!(
-        fehler.message.contains("PAT für neoimpulse"),
+        fehler.message.contains("PAT für beispiel"),
         "{}",
         fehler.message
     );
@@ -317,7 +309,7 @@ async fn projekte_werden_gelesen() {
 
     let text = antwort(&server, "devops_projekte", json!({})).await;
     assert!(text.contains("2 Projekt(e)"), "{text}");
-    assert!(text.contains("- SCODA (wellFormed, private)"), "{text}");
+    assert!(text.contains("- PROJEKT (wellFormed, private)"), "{text}");
     ohne_pat(&text);
 }
 
@@ -355,7 +347,7 @@ async fn die_suche_baut_die_wiql_aus_den_komfort_parametern() {
         "{abfrage}"
     );
     assert!(
-        abfrage.contains("[System.TeamProject] = 'SCODA'"),
+        abfrage.contains("[System.TeamProject] = 'PROJEKT'"),
         "{abfrage}"
     );
     assert!(
@@ -465,17 +457,17 @@ async fn iterationen_und_ihre_arbeitsitems_werden_gelesen() {
     let server = eine(&attrappe.adresse);
 
     let text = antwort(&server, "devops_iterationen", json!({ "team": TEAM })).await;
-    assert!(text.contains("SCODA\\Sprint 1"), "{text}");
+    assert!(text.contains("PROJEKT\\Sprint 1"), "{text}");
     assert!(text.contains("2026-11-01 – 2026-11-14"), "{text}");
     let aufruf = attrappe
         .aufzeichnung
         .erster("teamsettings/iterations")
         .unwrap();
-    // Das Team steht kodiert im Pfad (`SCODA Team` → `SCODA%20Team`).
+    // Das Team steht kodiert im Pfad (`PROJEKT Team` → `PROJEKT%20Team`).
     assert!(
         aufruf
             .pfad
-            .contains("/SCODA%20Team/_apis/work/teamsettings/iterations"),
+            .contains("/PROJEKT%20Team/_apis/work/teamsettings/iterations"),
         "{}",
         aufruf.pfad
     );
@@ -529,7 +521,7 @@ async fn repos_und_branches_werden_gelesen() {
 
     let text = antwort(&server, "devops_repos", json!({})).await;
     assert!(
-        text.contains("- scoda-web · Standardbranch refs/heads/main"),
+        text.contains("- projekt-web · Standardbranch refs/heads/main"),
         "{text}"
     );
 
@@ -551,7 +543,7 @@ async fn pull_requests_werden_gelesen_und_gefiltert() {
     let text = antwort(&server, "devops_pull_requests", json!({})).await;
     assert!(text.contains("2 Pull Request(s)"), "{text}");
     assert!(
-        text.contains("#42 [active] Login reparieren · scoda-web · feature/login → main"),
+        text.contains("#42 [active] Login reparieren · projekt-web · feature/login → main"),
         "{text}"
     );
     assert!(text.contains("#43 [active] Doku"), "{text}");
@@ -605,7 +597,7 @@ async fn ein_pull_request_zeigt_pruefer_arbeitsitems_und_commits() {
     );
     assert!(text.contains("## Commits (1)"), "{text}");
     assert!(
-        text.contains("abcdef12 Patrick Weppelmann 2026-11-20 09:30: Login reparieren"),
+        text.contains("abcdef12 Alex Beispiel 2026-11-20 09:30: Login reparieren"),
         "{text}"
     );
     ohne_pat(&text);
@@ -651,11 +643,11 @@ async fn pipelines_laeufe_und_logs_werden_gelesen() {
     let server = eine(&attrappe.adresse);
 
     let text = antwort(&server, "devops_pipelines", json!({})).await;
-    assert!(text.contains("- #7 scoda-ci · Ordner \\"), "{text}");
+    assert!(text.contains("- #7 projekt-ci · Ordner \\"), "{text}");
 
     let text = antwort(&server, "devops_laeufe", json!({})).await;
     assert!(
-        text.contains("#1234 scoda-ci · completed/failed · main · 2026-11-20 10:00"),
+        text.contains("#1234 projekt-ci · completed/failed · main · 2026-11-20 10:00"),
         "{text}"
     );
     assert_eq!(
@@ -680,7 +672,10 @@ async fn pipelines_laeufe_und_logs_werden_gelesen() {
     assert_eq!(aufruf.feld("$top"), Some("5"));
 
     let text = antwort(&server, "devops_lauf", json!({ "lauf": LAUF })).await;
-    assert!(text.contains("#1234 scoda-ci · completed/failed"), "{text}");
+    assert!(
+        text.contains("#1234 projekt-ci · completed/failed"),
+        "{text}"
+    );
     assert!(text.contains("## Fehlgeschlagene Schritte (2)"), "{text}");
     assert!(text.contains("- Task npm test · failed · Log 5"), "{text}");
     assert!(!text.contains("Compile"), "{text}");
@@ -739,7 +734,7 @@ async fn schreiben_aus_macht_bei_allen_acht_werkzeugen_keine_anfrage() {
     ] {
         let text = antwort(&server, name, argumente).await;
         assert!(
-            text.contains("Schreiben ist für neoimpulse aus"),
+            text.contains("Schreiben ist für beispiel aus"),
             "{name}: {text}"
         );
         assert!(
@@ -767,8 +762,8 @@ async fn ein_arbeitsitem_wird_angelegt_und_geaendert() {
             "titel": "Neuer Fehler",
             "beschreibung": "<div>Bitte prüfen</div>",
             "zugewiesen": "anna@example.test",
-            "bereich": "SCODA\\Web",
-            "iteration": "SCODA\\Sprint 1",
+            "bereich": "PROJEKT\\Web",
+            "iteration": "PROJEKT\\Sprint 1",
             "eltern": 100
         }),
     )
@@ -804,7 +799,7 @@ async fn ein_arbeitsitem_wird_angelegt_und_geaendert() {
         "/fields/System.AssignedTo".into(),
         "anna@example.test".into()
     )));
-    assert!(felder.contains(&("/fields/System.AreaPath".into(), "SCODA\\Web".into())));
+    assert!(felder.contains(&("/fields/System.AreaPath".into(), "PROJEKT\\Web".into())));
     // Der Eltern-Link hängt als Relation an.
     let relation = rumpf
         .as_array()
@@ -1097,7 +1092,7 @@ async fn eine_pipeline_wird_gestartet() {
     )
     .await;
     assert!(
-        text.contains("Pipeline-Lauf #5678 gestartet: scoda-ci"),
+        text.contains("Pipeline-Lauf #5678 gestartet: projekt-ci"),
         "{text}"
     );
     assert!(text.contains("inProgress"), "{text}");
@@ -1121,7 +1116,7 @@ async fn ein_lesender_aufruf_wiederholt_bei_429_hoechstens_zweimal() {
 
     attrappe.zu_viele_anfragen(2);
     let text = antwort(&server, "devops_projekte", json!({})).await;
-    assert!(text.contains("- SCODA"), "{text}");
+    assert!(text.contains("- PROJEKT"), "{text}");
     // Zwei abgelehnte Versuche plus der erfolgreiche.
     assert_eq!(attrappe.aufzeichnung.anzahl("projects"), 3);
 

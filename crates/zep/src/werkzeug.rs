@@ -103,7 +103,7 @@ impl Werkzeug for Zep {
                 art: FeldArt::Url,
                 pflicht: true,
                 standard: None,
-                hilfe: "z. B. https://www.zep-online.de/zepneoimpulse/next/mcp",
+                hilfe: "Die MCP-Adresse eurer ZEP-Umgebung, z. B. https://www.zep-online.de/<firma>/next/mcp",
                 link: None,
             },
             Feld {
@@ -112,7 +112,7 @@ impl Werkzeug for Zep {
                 art: FeldArt::Text,
                 pflicht: true,
                 standard: None,
-                hilfe: "Ihr ZEP-Benutzername (kein Geheimnis, wird nicht gepusht)",
+                hilfe: "Dein ZEP-Benutzername",
                 link: None,
             },
             Feld {
@@ -121,7 +121,7 @@ impl Werkzeug for Zep {
                 art: FeldArt::Passwort,
                 pflicht: true,
                 standard: None,
-                hilfe: "Ihr ZEP-Passwort; liegt in der Tresor-Datei und geht nie an einen Agenten",
+                hilfe: "Dein ZEP-Passwort. Es bleibt verschlüsselt auf diesem Gerät und geht nie an einen Agenten.",
                 link: None,
             },
             Feld {
@@ -130,9 +130,8 @@ impl Werkzeug for Zep {
                 art: FeldArt::Schalter,
                 pflicht: false,
                 standard: Some("aus"),
-                hilfe: "Nur nötig, wenn der ZEP-MCP über http:// erreichbar ist (z. B. eine \
-                        lokale Attrappe). Ohne diesen Schalter sind nur 127.0.0.1, localhost \
-                        und [::1] per http erlaubt.",
+                hilfe: "Nur einschalten, wenn die Adresse mit http:// beginnt. Benutzername und \
+                        Passwort gehen dann unverschlüsselt durchs Netz.",
                 link: None,
             },
             Feld {
@@ -314,7 +313,7 @@ mod tests {
         let mut profil = Profil::leer();
         profil.werte.insert(
             ADRESSE.to_string(),
-            "https://www.zep-online.de/zepneoimpulse/next/mcp".to_string(),
+            "https://www.zep-online.de/firma/next/mcp".to_string(),
         );
         profil.werte.insert(BENUTZER.to_string(), "ada".to_string());
         profil
@@ -374,10 +373,7 @@ mod tests {
     #[test]
     fn die_konfiguration_kommt_aus_dem_profil() {
         let konfig = ZepKonfig::aus_profil(&profil()).unwrap();
-        assert_eq!(
-            konfig.url,
-            "https://www.zep-online.de/zepneoimpulse/next/mcp"
-        );
+        assert_eq!(konfig.url, "https://www.zep-online.de/firma/next/mcp");
         assert_eq!(konfig.benutzer, "ada");
         assert_eq!(konfig.passwort, "streng-geheim-4711");
     }

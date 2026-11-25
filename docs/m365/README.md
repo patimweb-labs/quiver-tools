@@ -60,7 +60,7 @@ Die Teams-Tools handeln **als der User**: Sie lesen, was er lesen darf, und was 
 ihm. Delegierte Rechte: `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`,
 `ChannelMessage.Send`, `TeamMember.Read.All`, `Chat.ReadWrite`, `User.ReadBasic.All` (in der
 App-Registrierung eingetragen,
-Admin-Zustimmung für neoimpulse.de erteilt – siehe [entra-app.md](entra-app.md)).
+Admin-Zustimmung für example.test erteilt – siehe [entra-app.md](entra-app.md)).
 
 | Tool | Was es tut | Graph |
 |---|---|---|
@@ -114,7 +114,7 @@ Admin-Zustimmung für neoimpulse.de erteilt – siehe [entra-app.md](entra-app.m
 ## SharePoint, OneDrive, Planner, To Do, Kontakte, Personen und OneNote
 
 Delegierte Rechte (Aufgabe 06, in der App-Registrierung eingetragen, Admin-Zustimmung für
-neoimpulse.de erteilt): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.ReadWrite`,
+example.test erteilt): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.ReadWrite`,
 `Group.Read.All`, `Contacts.ReadWrite`, `People.Read`, `Notes.ReadWrite.All` – siehe
 [entra-app.md](entra-app.md).
 

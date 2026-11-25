@@ -675,7 +675,7 @@ mod tests {
             "content": [
                 { "type": "paragraph", "content": [
                     { "type": "text", "text": "Hallo " },
-                    { "type": "mention", "attrs": { "id": "acc-1", "text": "@Patrick" } },
+                    { "type": "mention", "attrs": { "id": "acc-1", "text": "@Alex" } },
                     { "type": "text", "text": " und " },
                     { "type": "status", "attrs": { "text": "Offen" } }
                 ] },
@@ -685,7 +685,7 @@ mod tests {
             ]
         });
         let text = adf_zu_text(&doc);
-        assert!(text.contains("Hallo @Patrick und Offen"), "{text}");
+        assert!(text.contains("Hallo @Alex und Offen"), "{text}");
         assert!(text.contains("geht nicht verloren"), "{text}");
     }
 

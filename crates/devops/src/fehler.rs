@@ -136,10 +136,10 @@ mod tests {
         // `reqwest`-Fehler lassen sich nicht bauen; geprüft wird der Text, den
         // die Anmeldung erzeugt.
         let fehler = DevopsFehler::Anmeldung {
-            verbindung: "neoimpulse".into(),
+            verbindung: "beispiel".into(),
         };
         let text = fehler.to_string();
-        assert!(text.contains("neoimpulse"), "{text}");
+        assert!(text.contains("beispiel"), "{text}");
         assert!(text.contains("ungültig oder abgelaufen"), "{text}");
         assert!(text.contains("Tools → DevOps"), "{text}");
     }

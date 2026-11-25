@@ -474,13 +474,13 @@ mod tests {
 
     #[test]
     fn der_systemname_ist_ohne_gross_und_kleinschreibung() {
-        // Der User nennt das System „BL4_900“, der Agent schreibt „bl4_900“.
+        // Der User nennt das System „S4D_900“, der Agent schreibt „s4d_900“.
         let sammlung =
-            Sammlung::aus_zugaengen(vec![vollstaendig("BL4_900"), vollstaendig("dev-100")])
+            Sammlung::aus_zugaengen(vec![vollstaendig("S4D_900"), vollstaendig("dev-100")])
                 .unwrap();
-        assert_eq!(sammlung.waehlen(Some("bl4_900")).unwrap().name, "BL4_900");
+        assert_eq!(sammlung.waehlen(Some("s4d_900")).unwrap().name, "S4D_900");
         assert_eq!(sammlung.waehlen(Some("DEV-100")).unwrap().name, "dev-100");
-        assert!(sammlung.waehlen(Some("bl4_901")).is_err());
+        assert!(sammlung.waehlen(Some("s4d_901")).is_err());
     }
 
     #[test]

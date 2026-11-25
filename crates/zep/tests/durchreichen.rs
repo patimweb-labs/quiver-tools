@@ -268,7 +268,7 @@ fn kindprozess_reicht_die_werkzeuge_durch_und_meldet_list_changed() {
 
     // 2. Ein Aufruf geht durch: Text unverändert.
     let aufruf = kind.aufrufen(3, "get_project_info");
-    assert_eq!(text(&aufruf), "Projekte der Attrappe: Neoimpulse, Quiver.");
+    assert_eq!(text(&aufruf), "Projekte der Attrappe: Beispiel, Quiver.");
     assert_eq!(aufruf["result"]["isError"], json!(false));
 
     // 3. ZEP ändert seine Werkzeugliste: das Kind meldet es weiter …
@@ -547,7 +547,7 @@ fn ohne_schreibschalter_geht_keine_aenderung_hinaus() {
 
     // Lesend geht weiter – die feste Liste, nicht die Kennzeichnung der Gegenseite.
     let lesend = kind.aufrufen(3, "get_project_info");
-    assert_eq!(text(&lesend), "Projekte der Attrappe: Neoimpulse, Quiver.");
+    assert_eq!(text(&lesend), "Projekte der Attrappe: Beispiel, Quiver.");
 
     // Schreibend nicht: der Hinweis nennt das Feld im quiver-Fenster.
     let gesperrt = kind.aufrufen(4, "zep_umschalten");

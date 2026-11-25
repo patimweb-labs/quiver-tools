@@ -82,7 +82,7 @@ impl Methode {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Anfrage {
     pub methode: Methode,
-    /// Pfad ab der Organisationsadresse, z. B. `SCODA/_apis/wit/wiql`.
+    /// Pfad ab der Organisationsadresse, z. B. `PROJEKT/_apis/wit/wiql`.
     pub pfad: String,
     /// Zusätzliche Abfrageparameter; `api-version` kommt automatisch dazu.
     pub abfrage: Vec<(String, String)>,
@@ -348,7 +348,7 @@ pub fn lesen(text: &str) -> Result<serde_json::Value, DevopsFehler> {
     })
 }
 
-/// Ein Pfadsegment kodieren (`SCODA`, `PI Agent Reviewer` → `PI%20Agent%20Reviewer`).
+/// Ein Pfadsegment kodieren (`PROJEKT`, `PI Agent Reviewer` → `PI%20Agent%20Reviewer`).
 pub fn kodieren(wert: &str) -> String {
     let mut ergebnis = String::with_capacity(wert.len());
     for byte in wert.bytes() {
@@ -389,9 +389,9 @@ mod tests {
 
     fn organisation() -> Organisation {
         Organisation {
-            name: "neoimpulse".into(),
-            url: "https://dev.azure.com/neoimpulse".into(),
-            projekt: Some("SCODA".into()),
+            name: "beispiel".into(),
+            url: "https://dev.azure.com/beispiel".into(),
+            projekt: Some("PROJEKT".into()),
             pat: "pat-4711".into(),
             schreiben: true,
             ca_zertifikat: None,
@@ -402,12 +402,12 @@ mod tests {
     fn die_adresse_wird_aus_der_organisation_gebaut() {
         let client = Client::neu(&organisation()).unwrap();
         assert_eq!(
-            client.url("SCODA/_apis/wit/wiql"),
-            "https://dev.azure.com/neoimpulse/SCODA/_apis/wit/wiql"
+            client.url("PROJEKT/_apis/wit/wiql"),
+            "https://dev.azure.com/beispiel/PROJEKT/_apis/wit/wiql"
         );
         assert_eq!(
             client.url("/_apis/projects"),
-            "https://dev.azure.com/neoimpulse/_apis/projects"
+            "https://dev.azure.com/beispiel/_apis/projects"
         );
         assert_eq!(
             client.url("https://andere.example.test/y"),
@@ -420,10 +420,10 @@ mod tests {
         let client = Client::neu(&organisation()).unwrap();
         assert_eq!(
             client.ziel(&Anfrage::holen("_apis/projects")),
-            "https://dev.azure.com/neoimpulse/_apis/projects?api-version=7.1"
+            "https://dev.azure.com/beispiel/_apis/projects?api-version=7.1"
         );
         // Eine eigene Version (Kommentare) wird nicht verdoppelt.
-        let kommentare = Anfrage::holen("SCODA/_apis/wit/workItems/1/comments")
+        let kommentare = Anfrage::holen("PROJEKT/_apis/wit/workItems/1/comments")
             .mit_abfrage("api-version", API_KOMMENTARE);
         let ziel = client.ziel(&kommentare);
         assert!(ziel.contains("api-version=7.1-preview.4"), "{ziel}");
@@ -446,14 +446,14 @@ mod tests {
         let ziel = client.ziel(&anfrage);
         assert_eq!(
             ziel,
-            "https://dev.azure.com/neoimpulse/_apis/connectionData?api-version=7.1-preview.1"
+            "https://dev.azure.com/beispiel/_apis/connectionData?api-version=7.1-preview.1"
         );
         assert_eq!(ziel.matches("api-version").count(), 1, "{ziel}");
     }
 
     #[test]
     fn segmente_werden_kodiert() {
-        assert_eq!(kodieren("SCODA"), "SCODA");
+        assert_eq!(kodieren("PROJEKT"), "PROJEKT");
         assert_eq!(kodieren("PI Agent Reviewer"), "PI%20Agent%20Reviewer");
         assert_eq!(kodieren("a/b"), "a%2Fb");
     }
@@ -463,12 +463,12 @@ mod tests {
         let client = Client::neu(&organisation()).unwrap();
         let text = format!("{client:?}");
         assert!(!text.contains("pat-4711"), "{text}");
-        assert!(text.contains("neoimpulse"), "{text}");
+        assert!(text.contains("beispiel"), "{text}");
     }
 
     #[test]
     fn der_json_patch_traegt_den_richtigen_content_type() {
-        let anfrage = Anfrage::patch("SCODA/_apis/wit/workitems/1", "[]");
+        let anfrage = Anfrage::patch("PROJEKT/_apis/wit/workitems/1", "[]");
         assert_eq!(anfrage.methode, Methode::Patch);
         assert_eq!(
             anfrage.kopfzeilen,

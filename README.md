@@ -239,7 +239,7 @@ Setup (once), in quiver under **Tools → ZEP**:
 
 | Field | Required | Notes |
 |---|---|---|
-| `url` | yes | MCP address, e.g. `https://www.zep-online.de/zepneoimpulse/next/mcp` |
+| `url` | yes | MCP address, e.g. `https://www.zep-online.de/firma/next/mcp` |
 | `benutzer` | yes | ZEP user name |
 | `passwort` | yes | ZEP password; lives in the encrypted vault file and reaches the tool only as `ZEP_PASSWORT` |
 
@@ -516,7 +516,7 @@ and it changes work items, comments, links, pull requests, votes and pipeline ru
 but only after the user allowed writing, and only per organisation.
 
 Setup (once per organisation, in quiver): **Tools → DevOps → Organisationen** → add an
-organisation with its address (e.g. `https://dev.azure.com/neoimpulse` or an Azure DevOps
+organisation with its address (e.g. `https://dev.azure.com/beispiel` or an Azure DevOps
 Server like `https://tfs.customer.example/tfs/DefaultCollection`), an optional default
 project and a Personal Access Token (**User settings → Personal access tokens**; the
 entry carries a link to that page). quiver keeps the PAT in the encrypted vault file and

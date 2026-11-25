@@ -52,7 +52,7 @@ pub const PASSWORT: &str = "zep-test-4711";
 pub const GEHEIM_MARKE: &str = "geheim-4711-nie-zeigen";
 
 /// Der Mandant in den Adressen.
-pub const MANDANT: &str = "zepneoimpulse";
+pub const MANDANT: &str = "firma";
 
 // -------------------------------------------------------------- Zustand
 
@@ -437,7 +437,7 @@ impl ServerHandler for Werkzeuge {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let antwort = match request.name.as_ref() {
-            "get_project_info" => "Projekte der Attrappe: Neoimpulse, Quiver.",
+            "get_project_info" => "Projekte der Attrappe: Beispiel, Quiver.",
             "get_attendances" => "Zeiten der Attrappe: 2 Buchungen.",
             "zep_kunden" => "Kunden der Attrappe: niemand.",
             "zep_umschalten" => {

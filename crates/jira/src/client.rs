@@ -509,7 +509,7 @@ mod tests {
             name: "firma".into(),
             werte: [
                 ("url", url),
-                ("email", "patrick@example.test"),
+                ("email", "alex@example.test"),
                 ("api_token", "token-4711"),
             ]
             .into_iter()
@@ -557,7 +557,7 @@ mod tests {
         let client = Client::neu(&site("https://firma.atlassian.net")).unwrap();
         let text = format!("{client:?}");
         assert!(!text.contains("token-4711"), "{text}");
-        assert!(!text.contains("patrick@example.test"), "{text}");
+        assert!(!text.contains("alex@example.test"), "{text}");
         assert!(text.contains("firma"), "{text}");
     }
 

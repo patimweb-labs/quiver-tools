@@ -54,7 +54,7 @@ impl Werkzeug for Devops {
                 art: FeldArt::Url,
                 pflicht: true,
                 standard: None,
-                hilfe: "z. B. https://dev.azure.com/neoimpulse oder ein Azure DevOps Server \
+                hilfe: "z. B. https://dev.azure.com/beispiel oder ein Azure DevOps Server \
                         https://tfs.kunde.de/tfs/DefaultCollection",
                 link: None,
             },

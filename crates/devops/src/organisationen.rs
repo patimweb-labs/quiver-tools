@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 use quiver_tools_kern::zugaenge::{self, ZugaengeFehler};
 
-/// Feldname der Organisationsadresse (Pflicht), z. B. `https://dev.azure.com/neoimpulse`.
+/// Feldname der Organisationsadresse (Pflicht), z. B. `https://dev.azure.com/beispiel`.
 pub const URL: &str = "url";
 /// Feldname des Standardprojekts (optional); leer heißt „je Aufruf angeben“.
 pub const PROJEKT: &str = "projekt";
@@ -30,7 +30,7 @@ pub const CA_ZERTIFIKAT: &str = quiver_tools_kern::net::FELD_CA_ZERTIFIKAT;
 /// Eine Organisation mit allen Werten. `Debug` zeigt den PAT nie.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Organisation {
-    /// Name aus dem quiver-Fenster, z. B. `neoimpulse`.
+    /// Name aus dem quiver-Fenster, z. B. `beispiel`.
     pub name: String,
     /// Basisadresse ohne Schrägstrich am Ende.
     pub url: String,
@@ -117,7 +117,7 @@ impl Organisation {
             .or_else(|| self.projekt.clone())
     }
 
-    /// `neoimpulse · https://dev.azure.com/neoimpulse · Standardprojekt SCODA
+    /// `beispiel · https://dev.azure.com/beispiel · Standardprojekt PROJEKT
     /// (frei wählbar) · Schreiben aus` – ohne PAT.
     ///
     /// Das Projekt ist ein **Standard**, keine Grenze: jedes Werkzeug darf ein
@@ -298,8 +298,8 @@ mod tests {
         zugang(
             name,
             &[
-                ("url", "https://dev.azure.com/neoimpulse/"),
-                ("projekt", "SCODA"),
+                ("url", "https://dev.azure.com/beispiel/"),
+                ("projekt", "PROJEKT"),
                 ("pat", "pat-4711"),
             ],
         )
@@ -307,24 +307,27 @@ mod tests {
 
     #[test]
     fn eine_organisation_wird_geprueft_und_hat_vorgaben() {
-        let organisation = Organisation::aus_zugang(&vollstaendig("neoimpulse")).unwrap();
-        assert_eq!(organisation.name, "neoimpulse");
+        let organisation = Organisation::aus_zugang(&vollstaendig("beispiel")).unwrap();
+        assert_eq!(organisation.name, "beispiel");
         // Der Schrägstrich am Ende fliegt raus.
-        assert_eq!(organisation.url, "https://dev.azure.com/neoimpulse");
-        assert_eq!(organisation.projekt.as_deref(), Some("SCODA"));
+        assert_eq!(organisation.url, "https://dev.azure.com/beispiel");
+        assert_eq!(organisation.projekt.as_deref(), Some("PROJEKT"));
         // Ohne Feld ist das Schreiben aus – der sichere Zustand.
         assert!(!organisation.schreiben);
         assert!(!organisation.schreiben_erlaubt());
         assert_eq!(
             organisation.beschreibung(),
-            "neoimpulse · https://dev.azure.com/neoimpulse · Standardprojekt SCODA (frei wählbar) · Schreiben aus"
+            "beispiel · https://dev.azure.com/beispiel · Standardprojekt PROJEKT (frei wählbar) · Schreiben aus"
         );
-        assert_eq!(organisation.projekt(None).as_deref(), Some("SCODA"));
+        assert_eq!(organisation.projekt(None).as_deref(), Some("PROJEKT"));
         assert_eq!(
             organisation.projekt(Some(" Anderes ")).as_deref(),
             Some("Anderes")
         );
-        assert_eq!(organisation.projekt(Some("   ")).as_deref(), Some("SCODA"));
+        assert_eq!(
+            organisation.projekt(Some("   ")).as_deref(),
+            Some("PROJEKT")
+        );
     }
 
     #[test]
@@ -345,8 +348,8 @@ mod tests {
              (frei wählbar, je Aufruf) · Schreiben aus"
         );
         assert_eq!(
-            organisation.projekt(Some("SCODA")).as_deref(),
-            Some("SCODA")
+            organisation.projekt(Some("PROJEKT")).as_deref(),
+            Some("PROJEKT")
         );
     }
 
@@ -377,7 +380,7 @@ mod tests {
 
     #[test]
     fn debug_zeigt_keinen_pat() {
-        let organisation = Organisation::aus_zugang(&vollstaendig("neoimpulse")).unwrap();
+        let organisation = Organisation::aus_zugang(&vollstaendig("beispiel")).unwrap();
         let text = format!("{organisation:?}");
         assert!(!text.contains("pat-4711"), "{text}");
         assert!(text.contains("pat: true"), "{text}");
@@ -417,9 +420,9 @@ mod tests {
 
     #[test]
     fn die_auswahl_ist_ohne_namen_eindeutig() {
-        let eine = Sammlung::aus_zugaengen(vec![vollstaendig("neoimpulse")]).unwrap();
-        assert_eq!(eine.waehlen(None).unwrap().name, "neoimpulse");
-        assert_eq!(eine.waehlen(Some("neoimpulse")).unwrap().name, "neoimpulse");
+        let eine = Sammlung::aus_zugaengen(vec![vollstaendig("beispiel")]).unwrap();
+        assert_eq!(eine.waehlen(None).unwrap().name, "beispiel");
+        assert_eq!(eine.waehlen(Some("beispiel")).unwrap().name, "beispiel");
         assert!(matches!(
             eine.waehlen(Some("gibtsnicht")),
             Err(AuswahlFehler::Unbekannt { .. })
@@ -427,7 +430,7 @@ mod tests {
 
         let zwei = zwei_organisationen();
         assert_eq!(zwei.alle().len(), 2);
-        assert_eq!(zwei.namen(), vec!["neoimpulse", "kunde"]);
+        assert_eq!(zwei.namen(), vec!["beispiel", "kunde"]);
         assert!(matches!(
             zwei.waehlen(None),
             Err(AuswahlFehler::Mehrdeutig(_))
@@ -442,7 +445,7 @@ mod tests {
     /// Zwei Organisationen für die Auswahl-Tests.
     fn zwei_organisationen() -> Sammlung {
         Sammlung::aus_zugaengen(vec![
-            vollstaendig("neoimpulse"),
+            vollstaendig("beispiel"),
             zugang(
                 "kunde",
                 &[

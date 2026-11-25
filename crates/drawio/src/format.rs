@@ -337,16 +337,23 @@ mod tests {
 
     #[test]
     fn der_zu_lange_link_ist_eine_meldung_mit_pfad() {
-        let text = oeffnen_zu_lang(Path::new("/tmp/a.drawio"), 5000, 2000);
+        // Denselben Pfad prüfen, den die Funktion anzeigt: er wird mit dem
+        // Trenner des Systems gebaut (Windows: `\`), nie mit einem festen `/`.
+        let datei = Path::new("/tmp/a.drawio");
+        let text = oeffnen_zu_lang(datei, 5000, 2000);
         assert!(text.contains("5000 Zeichen"), "{text}");
-        assert!(text.contains("/tmp/a.drawio"), "{text}");
+        assert!(text.contains(&datei.display().to_string()), "{text}");
         assert!(text.contains("Geöffnet wurde nichts"), "{text}");
     }
 
     #[test]
     fn das_oeffnen_sagt_dass_der_browser_nicht_in_die_datei_schreibt() {
-        let text = oeffnen(Path::new("/tmp"), "a.drawio");
+        let wurzel = Path::new("/tmp");
+        let text = oeffnen(wurzel, "a.drawio");
         assert!(text.contains("NICHT in der lokalen Datei"), "{text}");
-        assert!(text.contains("/tmp/a.drawio"), "{text}");
+        assert!(
+            text.contains(&wurzel.join("a.drawio").display().to_string()),
+            "{text}"
+        );
     }
 }

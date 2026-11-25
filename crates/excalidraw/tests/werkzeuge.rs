@@ -61,6 +61,18 @@ fn server(ordner: &Path, schreiben: bool) -> ExcalidrawServer {
     server_mit(ordner, schreiben, Arc::new(KeinBrowser::neu()))
 }
 
+/// Einen Ordner so anzeigen, wie die Werkzeuge ihn anzeigen: aufgelöst.
+///
+/// `Path::display()` eines aufgelösten Pfades sieht auf jedem System anders aus
+/// (Windows: `\\?\C:\…`, macOS: `/private/var/…`); darum nie mit dem rohen
+/// Pfad aus `TempDir` vergleichen.
+fn aufgeloest(pfad: &Path) -> String {
+    std::fs::canonicalize(pfad)
+        .unwrap_or_else(|_| pfad.to_path_buf())
+        .display()
+        .to_string()
+}
+
 fn aufruf(
     server: &ExcalidrawServer,
     name: &str,
@@ -130,7 +142,8 @@ fn status_und_liste_auf_leerem_ordner() {
     let status = text(&server, "excalidraw_status", json!({}));
     assert!(status.contains("0 Datei"), "{status}");
     assert!(status.contains("Schreiben ist an"), "{status}");
-    assert!(status.contains(&ordner.path().to_string_lossy().to_string()));
+    // Der Status zeigt den aufgelösten Ordner (Windows: `\\?\C:\…`).
+    assert!(status.contains(&aufgeloest(ordner.path())), "{status}");
 
     let liste = text(&server, "excalidraw_liste", json!({}));
     assert!(liste.contains("noch keine"), "{liste}");

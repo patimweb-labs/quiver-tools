@@ -217,6 +217,10 @@ fn rechte(pfad: &Path, modus: u32) {
     let _ = fs::set_permissions(pfad, fs::Permissions::from_mode(modus));
 }
 
+/// 0600/0700 gibt es nur auf Unix. Auf Windows bleibt es bei der ACL, die der
+/// Ordner vom Benutzerprofil erbt: kein Welt-Recht, aber auch kein ausdrücklich
+/// gesetztes Recht. Das ist die Grenze des Betriebssystems, nicht dieses
+/// Werkzeugs – dokumentiert in `docs/architektur.md` (Plattformen).
 #[cfg(not(unix))]
 fn rechte(_pfad: &Path, _modus: u32) {}
 

@@ -1,0 +1,8 @@
+# Überall LF, auch beim Auschecken unter Windows: Tests vergleichen Dateien.
+* text=auto eol=lf
+*.png binary
+*.ttf binary
+*.woff2 binary
+*.ico binary
+# Lizenztext der Schrift, unverändert übernommen.
+crates/diagramm/schriften/OFL.txt -text

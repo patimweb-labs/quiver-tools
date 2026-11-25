@@ -40,6 +40,18 @@ struct Umgebung {
     browser: Arc<Aufzeichner>,
 }
 
+/// Einen Ordner so anzeigen, wie die Werkzeuge ihn anzeigen: aufgelöst.
+///
+/// `Path::display()` eines aufgelösten Pfades ist auf jedem System etwas anders
+/// (Windows: `\\?\C:\…`, macOS: `/private/var/…`); darum nie mit dem rohen
+/// Pfad aus `tempdir()` vergleichen.
+fn aufgeloest(pfad: &std::path::Path) -> String {
+    std::fs::canonicalize(pfad)
+        .unwrap_or_else(|_| pfad.to_path_buf())
+        .display()
+        .to_string()
+}
+
 fn umgebung(schreiben: bool) -> Umgebung {
     let ordner = tempfile::tempdir().expect("temporärer Ordner");
     let pfad = ordner.path().to_string_lossy().to_string();
@@ -119,8 +131,10 @@ fn status_und_liste_zeigen_den_arbeitsordner() {
     let umgebung = umgebung(true);
     let status = antwort(&umgebung, "drawio_status", json!({}));
     assert!(status.contains("Schreiben: an"), "{status}");
+    // Der Status zeigt den aufgelösten Ordner; darum auch hier auflösen
+    // (Windows: `\\?\C:\…`, macOS: `/private/var/…`).
     assert!(
-        status.contains(umgebung.ordner.path().to_str().unwrap()),
+        status.contains(&aufgeloest(umgebung.ordner.path())),
         "{status}"
     );
     assert!(status.contains("Keine Anmeldung"), "{status}");

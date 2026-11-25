@@ -485,6 +485,12 @@ fn testen_meldet_sich_an_der_attrappe_an() {
         assert!(stdout.contains("1 Organisation(en) erreichbar"), "{stdout}");
         assert!(stdout.contains(attrappe::BENUTZER), "{stdout}");
         assert!(!stdout.contains(attrappe::PAT_A), "{stdout}");
+
+        // `connectionData` ist Vorschau: mit `7.1` antwortet der Dienst mit
+        // `400` und `testen` scheitert.
+        let aufrufe = server.aufzeichnung.zu("connectionData");
+        assert_eq!(aufrufe.len(), 1, "{:?}", aufrufe.len());
+        assert_eq!(aufrufe[0].api_version(), Some(attrappe::VORSCHAU_VERSION));
     });
 }
 

@@ -556,7 +556,8 @@ who is signed in.
   `Authorization: Basic base64(":" + PAT)`. That header is the only place the PAT ever
   appears – no answer, error text, log or test output contains it.
 - **`api-version`** rides on every request (`7.1`; the comment endpoints use
-  `7.1-preview.4`, where DevOps still requires the preview).
+  `7.1-preview.4` and `_apis/connectionData` uses `7.1-preview.1`, where DevOps still
+  requires the preview – plain `7.1` answers HTTP 400, "The resource is under preview").
 - **401, or 203 with an HTML login page** (DevOps redirects a rejected token), becomes
   „PAT für <verbindung> ungültig oder abgelaufen – im quiver-Fenster unter Tools → DevOps
   erneuern.“ and is **not** retried.

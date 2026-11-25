@@ -34,7 +34,7 @@ use serde::de::DeserializeOwned;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::client::{self, Anfrage, Client, Methode, API_KOMMENTARE};
+use crate::client::{self, verbindungsdaten, Anfrage, Client, Methode, API_KOMMENTARE};
 use crate::daten;
 use crate::fehler::DevopsFehler;
 use crate::format;
@@ -42,8 +42,6 @@ use crate::organisationen::{AuswahlFehler, Organisation, SammelFehler, Sammlung}
 use crate::werkzeug::{MEHRFACH_EINZAHL, MEHRFACH_TITEL, TITEL};
 use crate::wiql;
 
-/// `GET _apis/connectionData`: wer ist angemeldet.
-const VERBINDUNGSDATEN: &str = "_apis/connectionData";
 /// `GET _apis/projects`.
 const PROJEKTE: &str = "_apis/projects";
 
@@ -407,8 +405,10 @@ impl DevopsServer {
         let mut zeilen = Vec::new();
         for organisation in &organisationen {
             let client = Self::client(organisation)?;
+            // Der Endpunkt ist Vorschau: der Aufruf kommt aus dem Client, damit
+            // die `api-version` nirgends vergessen werden kann.
             let geantwortet = client
-                .json(&Anfrage::holen(VERBINDUNGSDATEN))
+                .json(&verbindungsdaten())
                 .await
                 .map_err(fehler_zu_mcp)?;
             zeilen.push(format::testen(organisation, &geantwortet));
@@ -1341,9 +1341,11 @@ impl DevopsServer {
 
         let client = Self::client(&organisation)?;
         // Die Stimme gilt für den angemeldeten Benutzer – seine ID kommt aus
-        // `connectionData`.
+        // `connectionData`. Antwortet der Dienst dort mit einem Fehler (400 bei
+        // falscher `api-version`), bricht der Aufruf hier ab; der Fehler läuft
+        // nie als Benutzer-ID in den Pfad des `PUT`.
         let daten = client
-            .json(&Anfrage::holen(VERBINDUNGSDATEN))
+            .json(&verbindungsdaten())
             .await
             .map_err(fehler_zu_mcp)?;
         let benutzer = daten::text(&daten, "authenticatedUser.id").ok_or_else(|| {

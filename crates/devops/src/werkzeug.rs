@@ -11,7 +11,7 @@
 use quiver_tools_kern::zugaenge::UMGEBUNG;
 use quiver_tools_kern::{hinweis_zugang, Feld, FeldArt, Profil, Werkzeug};
 
-use crate::client::{Anfrage, Client};
+use crate::client::{verbindungsdaten, Client};
 use crate::daten;
 use crate::organisationen::{
     Sammlung, CA_ZERTIFIKAT, PAT, PROJEKT, SCHREIBEN, UNVERSCHLUESSELT, URL,
@@ -124,7 +124,9 @@ impl Werkzeug for Devops {
         let mut erreichbar = Vec::new();
         for organisation in sammlung.alle() {
             let client = Client::neu(organisation)?;
-            let antwort = client.json(&Anfrage::holen("_apis/connectionData")).await?;
+            // `connectionData` ist ein Vorschau-Endpunkt; der Aufruf kommt aus
+            // dem Client, damit die `api-version` nicht hier vergessen wird.
+            let antwort = client.json(&verbindungsdaten()).await?;
             let anzeige = daten::text(&antwort, "authenticatedUser.displayName")
                 .or_else(|| daten::text(&antwort, "authenticatedUser.providerDisplayName"))
                 .unwrap_or_else(|| "unbekannt".to_string());

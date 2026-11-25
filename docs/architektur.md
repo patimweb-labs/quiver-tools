@@ -499,7 +499,9 @@ Regeln, die dort gelten:
   `Debug` von `Organisation` und `Client` zeigt höchstens, *ob* einer gesetzt ist.
   Antworten, Fehlertexte und Logs nennen ihn nie.
 - **`api-version` an jeder Anfrage.** `7.1`; die Kommentar-Endpunkte (`…/comments`)
-  brauchen `7.1-preview.4`, weil DevOps sie noch als Vorschau führt. Eine eigene
+  brauchen `7.1-preview.4` und `_apis/connectionData` braucht `7.1-preview.1`, weil
+  DevOps beide noch als Vorschau führt (mit `7.1` antworten sie mit HTTP 400). Den
+  `connectionData`-Aufruf baut allein `client::verbindungsdaten()`. Eine eigene
   `api-version` im Aufruf wird nicht verdoppelt.
 - **401 und 203 mit HTML sind endgültig.** DevOps leitet bei ungültigem PAT auf die
   Anmeldung um; beides wird zu „PAT für <verbindung> ungültig oder abgelaufen“ und

@@ -32,9 +32,9 @@ use ssh_key::{Algorithm, PrivateKey, PublicKey};
 
 /// Benutzer, den die Attrappe kennt.
 pub const BENUTZER: &str = "test";
-/// Anmelde-Passwort (kein echtes Geheimnis).
+/// Das eine Passwort (kein echtes Geheimnis): Anmeldung und sudo.
 pub const PASSWORT: &str = "anmelde-4711";
-/// sudo-Passwort (kein echtes Geheimnis).
+/// Ein eigenes sudo-Passwort aus früheren Versionen (kein echtes Geheimnis).
 pub const SUDO_PASSWORT: &str = "sudo-4712";
 
 fn griff<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -194,15 +194,18 @@ impl Attrappe {
 }
 
 /// Ein Eintrag für `QUIVER_ZUGAENGE`, wie quiver ihn übergeben würde.
-pub fn zugang(name: &str, port: u16, anmelde: Option<&str>, sudo: Option<&str>) -> Value {
+///
+/// `passwort` landet im Feld „Passwort“ (Anmeldung und sudo), `sudo_alt` im
+/// Feld `sudo_passwort` aus früheren Versionen.
+pub fn zugang(name: &str, port: u16, passwort: Option<&str>, sudo_alt: Option<&str>) -> Value {
     let mut werte = serde_json::Map::new();
     werte.insert("host".to_string(), json!("127.0.0.1"));
     werte.insert("port".to_string(), json!(port.to_string()));
     werte.insert("benutzer".to_string(), json!(BENUTZER));
-    if let Some(passwort) = anmelde {
+    if let Some(passwort) = passwort {
         werte.insert("anmelde_passwort".to_string(), json!(passwort));
     }
-    if let Some(passwort) = sudo {
+    if let Some(passwort) = sudo_alt {
         werte.insert("sudo_passwort".to_string(), json!(passwort));
     }
     // Die Tests prüfen die Werkzeuge, nicht den Schalter: Schreiben ist an.
@@ -433,8 +436,9 @@ fn ausfuehren(zustand: &Zustand, befehl: &str, stdin: &str) -> Ausgang {
             return Ausgang::fehler("attrappe: sudo-Befehl nicht lesbar\n", 2);
         };
         let passwort = stdin.lines().next().unwrap_or("");
-        // So antwortet sudo auf ein falsches Passwort.
-        if passwort != SUDO_PASSWORT {
+        // Die Attrappe nimmt beide Testpasswörter an: das eine Feld „Passwort“
+        // und ein eigenes sudo-Passwort aus früheren Versionen.
+        if passwort != SUDO_PASSWORT && passwort != PASSWORT {
             return Ausgang::fehler("Sorry, try again.\n", 1);
         }
         return ausfuehren(zustand, &inner, "");

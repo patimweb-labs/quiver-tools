@@ -57,7 +57,7 @@ impl Aufbau {
         }
     }
 
-    /// Derselbe Aufbau mit anderen Verbindungen (z. B. ohne Anmelde-Passwort).
+    /// Derselbe Aufbau mit anderen Verbindungen (z. B. ohne Passwort).
     fn mit(&self, zugaenge: &[Value]) -> SshServer {
         let json = Value::Array(zugaenge.to_vec()).to_string();
         let sammlung =
@@ -108,12 +108,7 @@ fn fehlertext(fehler: McpError) -> String {
 
 /// Eine Verbindung mit Schlüssel einrichten (Passwort-Anmeldung).
 fn einrichten(aufbau: &Aufbau, server: &Attrappe, name: &str) {
-    let zugaenge = [attrappe::zugang(
-        name,
-        server.port,
-        Some(PASSWORT),
-        Some(SUDO_PASSWORT),
-    )];
+    let zugaenge = [attrappe::zugang(name, server.port, Some(PASSWORT), None)];
     let antwort = text(
         aufruf(
             &aufbau.mit(&zugaenge),
@@ -136,7 +131,7 @@ fn erste_anmeldung_mit_passwort_richtet_den_schluessel_ein() {
             "web-01",
             server.port,
             Some(PASSWORT),
-            Some(SUDO_PASSWORT),
+            None,
         )];
 
         let antwort = text(
@@ -155,9 +150,11 @@ fn erste_anmeldung_mit_passwort_richtet_den_schluessel_ein() {
             "{antwort}"
         );
         assert!(
-            antwort.contains("Das Anmelde-Passwort wird nicht mehr gebraucht"),
+            antwort.contains("Das Passwort bleibt gespeichert"),
             "{antwort}"
         );
+        assert!(antwort.contains("sudo"), "{antwort}");
+        assert!(!antwort.contains(PASSWORT), "{antwort}");
         assert!(
             antwort.contains("Host-Schlüssel zum ersten Mal gesehen und gemerkt"),
             "{antwort}"
@@ -223,7 +220,10 @@ fn lehnt_der_server_den_schluessel_ab_wird_abgebrochen_und_aufgeraeumt() {
             .unwrap_err(),
         );
 
-        assert!(fehler.contains("PubkeyAuthentication no"), "{fehler}");
+        assert!(
+            fehler.contains("Anmeldung mit dem Schlüssel abgelehnt"),
+            "{fehler}"
+        );
         assert!(
             fehler.contains("Schlüsseldateien wurden wieder entfernt"),
             "{fehler}"
@@ -269,7 +269,10 @@ fn ein_vorhandener_schluessel_bleibt_bei_gescheiterter_neueinrichtung_erhalten()
             )
             .unwrap_err(),
         );
-        assert!(fehler.contains("PubkeyAuthentication no"), "{fehler}");
+        assert!(
+            fehler.contains("Anmeldung mit dem Schlüssel abgelehnt"),
+            "{fehler}"
+        );
         // Der alte Schlüssel ist unverändert.
         assert_eq!(
             std::fs::read_to_string(aufbau.schluessel("web-01")).unwrap(),
@@ -308,7 +311,7 @@ fn server_kennt_den_schluessel_nicht_mehr_kein_stiller_passwort_rueckfall() {
             .unwrap_err(),
         );
         assert!(
-            fehler.contains("Schlüssel-Anmeldung an web-01 fehlgeschlagen"),
+            fehler.contains("Die Anmeldung mit dem Schlüssel an web-01 wurde abgelehnt"),
             "{fehler}"
         );
         assert!(fehler.contains("ssh_schluessel_einrichten"), "{fehler}");
@@ -391,20 +394,21 @@ fn ein_geaenderter_host_schluessel_ist_ein_harter_fehler() {
 }
 
 #[test]
-fn sudo_nutzt_das_eigene_passwort_und_zeigt_es_nie() {
+fn ein_passwort_gilt_fuer_anmeldung_und_sudo_und_steht_nie_in_einer_antwort() {
     let laufzeit = Runtime::new().unwrap();
     laufzeit.block_on(async {
         let server = Attrappe::starte().await;
         let aufbau = Aufbau::neu(None);
         einrichten(&aufbau, &server, "web-01");
 
+        // Dasselbe Passwort wie für die Anmeldung gilt für sudo.
         let mit_sudo = text(
             aufruf(
                 &aufbau.mit(&[attrappe::zugang(
                     "web-01",
                     server.port,
+                    Some(PASSWORT),
                     None,
-                    Some(SUDO_PASSWORT),
                 )]),
                 "ssh_exec",
                 json!({ "befehl": "id -un", "sudo": true }),
@@ -413,16 +417,42 @@ fn sudo_nutzt_das_eigene_passwort_und_zeigt_es_nie() {
         );
         assert!(mit_sudo.contains("root"), "{mit_sudo}");
         assert!(mit_sudo.contains("$ sudo id -un"), "{mit_sudo}");
-        assert!(!mit_sudo.contains(SUDO_PASSWORT), "{mit_sudo}");
         assert!(!mit_sudo.contains(PASSWORT), "{mit_sudo}");
+        assert!(!mit_sudo.contains(SUDO_PASSWORT), "{mit_sudo}");
+        // Das Passwort steht in keinem Argument – der Server sieht es nur auf stdin.
+        for befehl in server.zustand.befehle() {
+            assert!(!befehl.contains(PASSWORT), "Passwort im Befehl: {befehl}");
+            assert!(
+                !befehl.contains(SUDO_PASSWORT),
+                "Passwort im Befehl: {befehl}"
+            );
+        }
 
-        // Falsches sudo-Passwort: klare Meldung, kein Passwort im Text.
+        // Ein eigenes sudo-Passwort aus früheren Versionen wird weiter benutzt.
+        let alt = text(
+            aufruf(
+                &aufbau.mit(&[attrappe::zugang(
+                    "web-01",
+                    server.port,
+                    Some(PASSWORT),
+                    Some(SUDO_PASSWORT),
+                )]),
+                "ssh_exec",
+                json!({ "befehl": "id -un", "sudo": true }),
+            )
+            .unwrap(),
+        );
+        assert!(alt.contains("root"), "{alt}");
+        assert!(!alt.contains(SUDO_PASSWORT), "{alt}");
+        assert!(!alt.contains(PASSWORT), "{alt}");
+
+        // Ist das alte sudo-Passwort falsch, gilt nicht still das Anmelde-Passwort.
         let falsch = text(
             aufruf(
                 &aufbau.mit(&[attrappe::zugang(
                     "web-01",
                     server.port,
-                    None,
+                    Some(PASSWORT),
                     Some("falsch-0815"),
                 )]),
                 "ssh_exec",
@@ -430,12 +460,12 @@ fn sudo_nutzt_das_eigene_passwort_und_zeigt_es_nie() {
             )
             .unwrap(),
         );
-        assert!(falsch.contains("wurde abgelehnt"), "{falsch}");
+        assert!(falsch.contains("abgelehnt"), "{falsch}");
         assert!(falsch.contains("Sorry, try again."), "{falsch}");
         assert!(!falsch.contains("falsch-0815"), "{falsch}");
-        assert!(!falsch.contains(SUDO_PASSWORT), "{falsch}");
+        assert!(!falsch.contains(PASSWORT), "{falsch}");
 
-        // Kein sudo-Passwort hinterlegt: Hinweis statt Fehler.
+        // Kein Passwort hinterlegt: Hinweis statt Fehler.
         let fehlt = text(
             aufruf(
                 &aufbau.mit(&[attrappe::zugang("web-01", server.port, None, None)]),
@@ -444,10 +474,8 @@ fn sudo_nutzt_das_eigene_passwort_und_zeigt_es_nie() {
             )
             .unwrap(),
         );
-        assert!(
-            fehlt.contains("sudo-Passwort für web-01 fehlt – im quiver-Fenster eintragen"),
-            "{fehlt}"
-        );
+        assert!(fehlt.contains("kein Passwort hinterlegt"), "{fehlt}");
+        assert!(fehlt.contains("Passwort"), "{fehlt}");
         assert!(!fehlt.contains(SUDO_PASSWORT), "{fehlt}");
 
         server.stoppen().await;
@@ -561,8 +589,8 @@ fn status_zeigt_alles_ohne_geheimnis() {
                 &aufbau.mit(&[attrappe::zugang(
                     "web-01",
                     server.port,
+                    Some(PASSWORT),
                     None,
-                    Some(SUDO_PASSWORT),
                 )]),
                 "ssh_status",
                 json!({}),
@@ -579,7 +607,7 @@ fn status_zeigt_alles_ohne_geheimnis() {
             "{uebersicht}"
         );
         assert!(
-            uebersicht.contains("sudo-Passwort: gesetzt"),
+            uebersicht.contains("Passwort für sudo: vorhanden"),
             "{uebersicht}"
         );
         assert!(
@@ -597,7 +625,10 @@ fn status_zeigt_alles_ohne_geheimnis() {
             )
             .unwrap(),
         );
-        assert!(ohne_sudo.contains("sudo-Passwort: fehlt"), "{ohne_sudo}");
+        assert!(
+            ohne_sudo.contains("Passwort für sudo: fehlt"),
+            "{ohne_sudo}"
+        );
 
         server.stoppen().await;
     });
@@ -672,7 +703,7 @@ fn schluessel_einrichten_ersetzt_den_alten_erst_nach_der_pruefung() {
 }
 
 #[test]
-fn ohne_anmelde_passwort_und_ohne_schluessel_kommt_ein_hinweis() {
+fn ohne_passwort_und_ohne_schluessel_kommt_ein_hinweis() {
     let laufzeit = Runtime::new().unwrap();
     laufzeit.block_on(async {
         let server = Attrappe::starte().await;
@@ -687,7 +718,7 @@ fn ohne_anmelde_passwort_und_ohne_schluessel_kommt_ein_hinweis() {
         );
         assert!(
             antwort.contains(
-                "Für web-01 fehlt das Anmelde-Passwort für die erste Anmeldung – bitte im quiver-Fenster unter Tools → SSH eintragen."
+                "Für web-01 fehlt das Passwort für die erste Anmeldung – bitte im quiver-Fenster unter Tools → SSH beim Eintrag „web-01“ das Feld „Passwort“ ausfüllen."
             ),
             "{antwort}"
         );

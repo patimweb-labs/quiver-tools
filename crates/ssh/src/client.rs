@@ -8,8 +8,8 @@
 //! wird. Hier stehen die Handlungen: `exec` (auch mit `sudo`), Verzeichnis
 //! lesen, hoch- und herunterladen.
 //!
-//! Kein Fehlertext enthält ein Geheimnis. Das sudo-Passwort geht ausschließlich
-//! über stdin des entfernten Befehls.
+//! Kein Fehlertext enthält ein Geheimnis. Das Passwort für `sudo` geht
+//! ausschließlich über stdin des entfernten Befehls, nie als Argument.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};

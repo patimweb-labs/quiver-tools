@@ -9,7 +9,10 @@ Crate: `crates/ssh`, Programm `quiver-ssh`. Vorlage: `~/Documents/Workspaces/pi-
 quiver kann mehrere Zugänge je Tool (`Eintrag.mehrfach`, siehe
 `~/Documents/Workspace/mcp-quiver/crates/domain/src/lib.rs`: `Mehrfach`, `Zugang`, `MEHRFACH_UMGEBUNG`).
 Der Client übergibt alle Verbindungen als JSON in `QUIVER_ZUGAENGE`:
-`[{"name":"web-01","werte":{"host":…,"port":…,"benutzer":…,"anmelde_passwort":…,"sudo_passwort":…}}]`.
+`[{"name":"web-01","werte":{"host":…,"port":…,"benutzer":…,"passwort":…}}]`.
+
+Ein Passwort gilt für beides: Die erste Anmeldung und Befehle mit `sudo` (Nachtrag 2026-11-25, siehe ADR
+0003). Frühere Einträge mit `anmelde_passwort` und `sudo_passwort` werden unverändert weiter gelesen.
 
 ### Kern erweitern (additiv, neues Modul `zugaenge.rs`)
 
@@ -23,11 +26,16 @@ Der Client übergibt alle Verbindungen als JSON in `QUIVER_ZUGAENGE`:
 
 | Feld | Art | Hilfe |
 |---|---|---|
+| `benutzer` | Text, Pflicht | Anmeldename |
 | `host` | Text, Pflicht | Hostname oder IP |
 | `port` | Zahl | Standard 22 |
-| `benutzer` | Text, Pflicht | Anmeldename |
-| `anmelde_passwort` | Passwort | **Nur für die erste Anmeldung.** Danach meldet sich quiver-ssh nur noch per Schlüssel an – das Passwort kann gelöscht werden. |
-| `sudo_passwort` | Passwort | Für Befehle mit `sudo`. Getrennt vom Anmelde-Passwort. |
+| `passwort` | Passwort | Für die Anmeldung und für sudo. Bleibt verschlüsselt auf diesem Gerät. |
+| `schreiben` | Schalter, Standard aus | Erlaubt Befehle und Dateitransfer. |
+| `austauschordner` | Ordner, optional | Nur darin werden Dateien hoch- und heruntergeladen. |
+
+**Altbestand:** Gibt es im Eintrag noch ein `sudo_passwort`, wird es weiter benutzt. Sonst gilt das Passwort aus
+`passwort` (bzw. aus dem früheren Feld `anmelde_passwort`) auch für `sudo`. Die beiden alten Felder erscheinen
+nicht mehr im quiver-Fenster.
 
 ## Pflicht: nach einer Passwort-Anmeldung immer Schlüssel
 
@@ -35,19 +43,21 @@ Schlüssel je Verbindung: `<daten>/quiver-tools/ssh/schluessel/<name>_ed25519` (
 `<daten>` = `dirs::data_dir()` bzw. `QUIVER_SSH_DATEN` (Tests).
 
 Ablauf bei jeder Verbindung:
-1. **Schlüssel vorhanden** → nur Schlüssel-Anmeldung. Schlägt sie fehl → Fehler „Schlüssel-Anmeldung an <name>
-   fehlgeschlagen. Mit `ssh_schluessel_einrichten` neu einrichten (braucht das Anmelde-Passwort).“ **Kein** stiller
-   Rückfall aufs Passwort.
-2. **Kein Schlüssel, aber Anmelde-Passwort** → Passwort-Anmeldung, dann sofort: ed25519-Schlüssel erzeugen,
+1. **Schlüssel vorhanden** → nur Schlüssel-Anmeldung. Schlägt sie fehl → Fehler „Die Anmeldung mit dem Schlüssel an
+   <name> wurde abgelehnt. Mit `ssh_schluessel_einrichten` lässt sich der Schlüssel neu einrichten – dafür wird das
+   Passwort gebraucht.“ **Kein** stiller Rückfall aufs Passwort.
+2. **Kein Schlüssel, aber Passwort** → Passwort-Anmeldung, dann sofort: ed25519-Schlüssel erzeugen,
    öffentlichen Teil in `~/.ssh/authorized_keys` des Benutzers eintragen (`~/.ssh` 700, Datei 600 anlegen, doppelten
    Eintrag vermeiden, Kommentar `quiver-ssh <name>`), **neue Verbindung nur mit Schlüssel** öffnen und prüfen,
    erst dann den Schlüssel als eingerichtet speichern. Klappt einer dieser Schritte nicht → Aufruf **abbrechen** mit
-   klarer Meldung (z. B. `PubkeyAuthentication no`), Schlüsseldateien wieder entfernen. Die eigentliche Arbeit
-   läuft erst danach, über die Schlüssel-Verbindung. Die Antwort sagt einmalig: „Schlüssel für <name> eingerichtet
-   (SHA256:…). Das Anmelde-Passwort wird nicht mehr gebraucht und kann im quiver-Fenster gelöscht werden.“
-3. **Weder noch** → Hinweis „Für <name> fehlt das Anmelde-Passwort für die erste Anmeldung – bitte im quiver-Fenster
-   unter Tools → SSH eintragen.“
-4. `ssh_schluessel_einrichten` (destruktiv): erzwingt Schritt 2 mit dem Anmelde-Passwort (z. B. nach Server-Neuaufbau),
+   klarer Meldung (z. B. wenn der Server die Schlüssel-Anmeldung abgeschaltet hat), Schlüsseldateien wieder
+   entfernen. Die eigentliche Arbeit läuft erst danach, über die Schlüssel-Verbindung. Die Antwort sagt einmalig:
+   „Schlüssel für <name> eingerichtet (SHA256:…). Die Anmeldung läuft ab jetzt über den Schlüssel. Das Passwort
+   bleibt gespeichert, weil Befehle mit sudo es weiterhin brauchen; ohne sudo kannst du es im quiver-Fenster
+   löschen.“
+3. **Weder noch** → Hinweis „Für <name> fehlt das Passwort für die erste Anmeldung – bitte im quiver-Fenster unter
+   Tools → SSH beim Eintrag „<name>“ das Feld „Passwort“ ausfüllen.“
+4. `ssh_schluessel_einrichten` (destruktiv): erzwingt Schritt 2 mit dem Passwort (z. B. nach Server-Neuaufbau),
    ersetzt den alten Schlüssel erst nach erfolgreicher Prüfung.
 
 ## Host-Schlüssel
@@ -60,15 +70,16 @@ die Antwort nennt, welche Zeile in welcher Datei der User selbst löschen muss.
 ## sudo
 
 `ssh_exec` mit `sudo: true`: Befehl als `sudo -S -p '' -- sh -c '<befehl>'` (sauber quotiert) ausführen, das
-sudo-Passwort + Zeilenende über stdin schreiben. Nie in Befehlszeile, Ausgabe, Fehlertext oder Log. Fehlt es →
-Hinweis „sudo-Passwort für <name> fehlt – im quiver-Fenster eintragen“. Falsches Passwort → klare Meldung
-(sudo-Ausgabe auswerten), ohne das Passwort.
+Passwort + Zeilenende über stdin schreiben. Nie in Befehlszeile, Ausgabe, Fehlertext oder Log. Fehlt es →
+Hinweis „Für <name> ist kein Passwort hinterlegt – Befehle mit sudo brauchen eins.“ Falsches Passwort → klare
+Meldung (sudo-Ausgabe auswerten), ohne das Passwort. Gilt ein eigenes `sudo_passwort` aus dem Altbestand, wird
+nur dieses benutzt – kein stiller Rückfall aufs Anmelde-Passwort.
 
 ## Tools
 
 | Tool | Hinweis |
 |---|---|
-| `ssh_status` | lesend: Verbindungen (Name, `benutzer@host:port`, Schlüssel eingerichtet ja/nein + Fingerabdruck, sudo-Passwort gesetzt ja/nein, Host-Schlüssel bekannt ja/nein) |
+| `ssh_status` | lesend: Verbindungen (Name, `benutzer@host:port`, Schlüssel eingerichtet ja/nein + Fingerabdruck, Passwort für sudo vorhanden ja/nein, Host-Schlüssel bekannt ja/nein) |
 | `ssh_list` | lesend: Verzeichnis über SFTP |
 | `ssh_exec` | destruktiv: `verbindung`, `befehl`, `sudo` (bool), `zeitlimit` (Standard 60 s, max 600), `max_zeichen` (8000) je stdout/stderr, Exit-Code |
 | `ssh_upload`, `ssh_download` | destruktiv |
@@ -88,8 +99,10 @@ Jedes Tool nimmt `verbindung` (Name); bei genau einer Verbindung optional. Tunne
 - Fälle: erste Anmeldung mit Passwort → Schlüssel eingerichtet, zweite Verbindung **ohne** Passwort klappt;
   Server lehnt Schlüssel ab → Abbruch, keine Schlüsseldatei übrig; Schlüssel vorhanden, Server kennt ihn nicht
   mehr → Fehler ohne Passwort-Rückfall; geänderter Host-Schlüssel → Fehler; sudo mit richtigem/falschem/fehlendem
-  Passwort (Passwort taucht in keiner Ausgabe auf); `QUIVER_ZUGAENGE` leer → Hinweis.
-- Ende-zu-Ende über stdio; `quiver-ssh eintrag` enthält `mehrfach` mit den fünf Feldern.
+  Passwort aus dem einen Feld „Passwort“ (das Passwort taucht in keiner Ausgabe und in keinem Befehl auf);
+  Altbestand mit eigenem `sudo_passwort` (wird benutzt, kein Rückfall aufs Anmelde-Passwort); `QUIVER_ZUGAENGE`
+  leer → Hinweis.
+- Ende-zu-Ende über stdio; `quiver-ssh eintrag` enthält `mehrfach` mit den sechs Feldern.
 
 ## Doku
 

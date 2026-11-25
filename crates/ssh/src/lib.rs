@@ -16,8 +16,8 @@
 //! | [`server`] | die sechs MCP-Werkzeuge | Verbindungen aus der Umgebung |
 //!
 //! Zugangsdaten stehen nie in einer Antwort: `Debug` zeigt von [`verbindung::Verbindung`]
-//! nur, *ob* ein Passwort gesetzt ist, und das sudo-Passwort geht ausschließlich
-//! über stdin des entfernten Befehls.
+//! nur, *ob* ein Passwort gesetzt ist, und das Passwort geht ausschließlich über
+//! stdin des entfernten Befehls – nie über Argumente, Logs oder Antworten.
 
 pub mod anmeldung;
 pub mod client;

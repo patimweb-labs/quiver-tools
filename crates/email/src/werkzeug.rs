@@ -70,7 +70,7 @@ impl Werkzeug for Email {
                 art: FeldArt::Text,
                 pflicht: true,
                 standard: None,
-                hilfe: "Absenderadresse, z. B. du@gmail.com",
+                hilfe: "Absenderadresse, z. B. name@example.test",
                 link: None,
             },
             Feld {
@@ -88,11 +88,8 @@ impl Werkzeug for Email {
                 art: FeldArt::Text,
                 pflicht: true,
                 standard: None,
-                hilfe: "z. B. imap.gmail.com; Proton-Bridge: 127.0.0.1",
-                link: Some((
-                    "Proton-Bridge einrichten",
-                    "https://proton.me/support/bridge",
-                )),
+                hilfe: "z. B. imap.example.test; eine lokale Brücke auf diesem Gerät: 127.0.0.1",
+                link: None,
             },
             Feld {
                 name: IMAP_PORT,
@@ -100,7 +97,7 @@ impl Werkzeug for Email {
                 art: FeldArt::Zahl,
                 pflicht: false,
                 standard: Some("993"),
-                hilfe: "Meist 993 (TLS) oder 143 (STARTTLS); Proton-Bridge: 1143",
+                hilfe: "Meist 993 (TLS) oder 143 (STARTTLS); lokale Brücke: 1143",
                 link: None,
             },
             Feld {
@@ -122,7 +119,7 @@ impl Werkzeug for Email {
                 art: FeldArt::Text,
                 pflicht: true,
                 standard: None,
-                hilfe: "z. B. smtp.gmail.com; Proton-Bridge: 127.0.0.1",
+                hilfe: "z. B. smtp.example.test; eine lokale Brücke auf diesem Gerät: 127.0.0.1",
                 link: None,
             },
             Feld {
@@ -131,7 +128,7 @@ impl Werkzeug for Email {
                 art: FeldArt::Zahl,
                 pflicht: false,
                 standard: Some("587"),
-                hilfe: "Meist 587 (STARTTLS) oder 465 (TLS); Proton-Bridge: 1025",
+                hilfe: "Meist 587 (STARTTLS) oder 465 (TLS); lokale Brücke: 1025",
                 link: None,
             },
             Feld {
@@ -162,7 +159,9 @@ impl Werkzeug for Email {
                 art: FeldArt::Passwort,
                 pflicht: true,
                 standard: None,
-                hilfe: "Bei Gmail ein App-Passwort, nicht das Kontopasswort",
+                hilfe:
+                    "Bei Konten mit Zwei-Faktor-Anmeldung oft ein eigenes App-Passwort statt des \
+                        Kontopassworts",
                 link: None,
             },
             Feld {

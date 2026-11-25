@@ -19,7 +19,7 @@ quiver-outline eintrag
 Das JSON hat das Format von `quiver_domain::Eintrag`: Name, Titel, Beschreibung, Version, die Felder
 des Zugangs und wie das Programm gestartet wird. quiver zeigt daraus unter **Tools → Outline-Wiki**
 die Felder an (Adresse und API-Schlüssel). Offene Felder stehen in der Client-Konfiguration, geheime
-im Tresor-Datei des Geräts.
+in der Tresor-Datei des Geräts.
 
 Beim Start setzt quiver die Umgebung: `OUTLINE_URL`, `OUTLINE_API_KEY` – also `<NAME>_<FELD>` in
 Großbuchstaben. Der Kern liest nur diese Umgebung, kein Profil aus einer Datei, keine Seite im Browser.
@@ -290,17 +290,19 @@ Decision record: [docs/adr/0004-zep-offizieller-mcp.md](docs/adr/0004-zep-offizi
 ## quiver-ssh (SSH und SFTP)
 
 `quiver-ssh` runs commands on remote hosts and moves files over SFTP – without a
-password sitting on disk after the first login and without the sudo password ever
-leaving the machine in a command line, a log or a tool answer.
+password travelling through a command line, a log or a tool answer.
 
 Setup (once per connection, in quiver): **Tools → SSH → Verbindungen** → add a
-connection with host, port (default 22), user, the login password and – separately –
-the sudo password. quiver keeps both passwords in the encrypted vault file and passes every
-connection to the tool as JSON in `QUIVER_ZUGAENGE`.
+connection with host, port (default 22), user and one password. That password is used
+for the first login **and** for `sudo`; quiver keeps it in the encrypted vault file and
+passes every connection to the tool as JSON in `QUIVER_ZUGAENGE`. An entry from an
+earlier version with `anmelde_passwort` and `sudo_passwort` keeps working: a stored
+`sudo_passwort` is still used, otherwise the login password also covers `sudo`. Both
+old fields are gone from the window.
 
 ### The key rule
 
-A password is only used for the **first** login. On that login the tool
+The password is only used for the **first** login. On that login the tool
 
 1. connects with the password,
 2. creates an ed25519 key under `<daten>/quiver-tools/ssh/schluessel/<name>_ed25519`
@@ -314,8 +316,8 @@ A password is only used for the **first** login. On that login the tool
 
 From then on the connection uses the key only. If the server no longer knows it, the
 tool says so and points at `ssh_schluessel_einrichten`; it never silently falls back
-to the password. The login password can be deleted in the quiver window after the
-first success.
+to the password. The password stays stored while `sudo` needs it; without `sudo` it can
+be deleted in the quiver window after the first success.
 
 ### Host keys
 
@@ -328,9 +330,10 @@ delete – never an automatic overwrite.
 ### sudo
 
 `ssh_exec` with `sudo: true` runs `sudo -S -p '' -- sh -c '<befehl>'` and writes the
-sudo password to stdin. The password appears in no command line, no output, no error
-text and no log. A wrong password is reported as such (from sudo's own output); a
-missing one is a hint to fill it in in the quiver window.
+password to stdin. The password appears in no command line, no output, no error text and
+no log. A wrong password is reported as such (from sudo's own output); a missing one is
+a hint to fill it in in the quiver window. A `sudo_passwort` from an earlier version
+still wins for `sudo` – there is no silent fallback to the login password.
 
 ### Tools
 
@@ -342,7 +345,7 @@ inside it, so neither a local path nor a remote path can leave the exchange area
 
 | Tool | Kind | What it does |
 |---|---|---|
-| `ssh_status` | read | The connections: name, user@host:port, key set up (with fingerprint), sudo password set, host key known |
+| `ssh_status` | read | The connections: name, user@host:port, key set up (with fingerprint), password for sudo present, host key known |
 | `ssh_list` | read | A remote directory over SFTP: mode, size, name |
 | `ssh_exec` | write | Run a command: stdout, stderr, exit code; `sudo`, `zeitlimit` (60 s, max 600), `max_zeichen` (8000 each) |
 | `ssh_upload` | write | Copy a file from the exchange folder to the remote host (`lokal`, relative to the folder → `entfernt`, relative) |
@@ -366,11 +369,12 @@ of `felder` and has no environment of its own – the client passes the list in
     "titel": "Verbindungen",
     "einzahl": "Verbindung",
     "felder": [
+      { "name": "benutzer", "quelle": "client", "pflicht": true },
       { "name": "host", "quelle": "client", "pflicht": true },
       { "name": "port", "quelle": "client", "pflicht": false, "standard": "22" },
-      { "name": "benutzer", "quelle": "client", "pflicht": true },
-      { "name": "anmelde_passwort", "quelle": "geheim", "pflicht": false },
-      { "name": "sudo_passwort", "quelle": "geheim", "pflicht": false }
+      { "name": "passwort", "quelle": "geheim", "pflicht": false },
+      { "name": "schreiben", "quelle": "client", "pflicht": false, "standard": "aus" },
+      { "name": "austauschordner", "quelle": "client", "pflicht": false }
     ]
   }
 }

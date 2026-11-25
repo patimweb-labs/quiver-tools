@@ -42,7 +42,7 @@ impl Werkzeug for Confluence {
     fn beschreibung(&self) -> &'static str {
         "Confluence Cloud je Site: Bereiche, Seiten (Storage-Format als Text), Unterseiten, \
          Kommentare, Anhänge (nur Liste), Labels und die Suche über CQL lesen. Anlegen und Ändern \
-         (Seite, Kommentar, Label) nur, wenn der Schalter „schreiben“ für die Site an ist."
+         (Seite, Kommentar, Label) nur, wenn der Schalter „Schreiben erlauben“ für die Site an ist."
     }
 
     fn felder(&self) -> Vec<Feld> {
@@ -53,7 +53,7 @@ impl Werkzeug for Confluence {
                 art: FeldArt::Url,
                 pflicht: true,
                 standard: None,
-                hilfe: "z. B. https://firma.atlassian.net – ohne /wiki",
+                hilfe: "z. B. https://<firma>.atlassian.net – ohne /wiki",
                 link: None,
             },
             Feld {
@@ -159,7 +159,7 @@ mod tests {
         assert_eq!(werkzeug.name(), "confluence");
         assert_eq!(werkzeug.titel(), "Confluence");
         assert!(werkzeug.beschreibung().contains("CQL"));
-        assert!(werkzeug.beschreibung().contains("schreiben"));
+        assert!(werkzeug.beschreibung().contains("Schreiben erlauben"));
         assert_eq!(werkzeug.mehrfach(), Some(("Sites", "Site")));
 
         let felder = werkzeug.felder();

@@ -27,8 +27,8 @@ noch Browser. *Preis:* vorerst genau ein Zugang je Tool (siehe unten) – außer
 DevOps, die eine Liste pflegen (§2a).
 
 - Die Felder eines Zugangs stehen im Bibliothekseintrag. Offene Felder (Quelle `client`, z. B. eine
-  Adresse) liegen in der Client-Konfiguration, geheime Felder (`geheim`, Feldart `Passwort`) im
-  Tresor-Datei des Geräts und werden nie gepusht.
+  Adresse) liegen in der Client-Konfiguration, geheime Felder (`geheim`, Feldart `Passwort`) in der
+  Tresor-Datei des Geräts und verlassen es nie.
 - quiver setzt beim Start die Umgebung des Werkzeugs: `<NAME>_<FELD>` in Großbuchstaben, z. B.
   `OUTLINE_URL` und `OUTLINE_API_KEY`. Der Kern liest nur diese Umgebung; er kennt weder quiver noch
   die Tresor-Datei.

@@ -90,8 +90,8 @@ impl SshServer {
                 "ssh_status",
                 "Verbindungen",
                 "Listet die im quiver-Fenster eingetragenen SSH-Verbindungen: Name, benutzer@host:port, \
-                 ob ein Schlüssel eingerichtet ist (mit Fingerabdruck), ob ein sudo-Passwort hinterlegt \
-                 ist und ob der Host-Schlüssel schon bekannt ist. Öffnet keine Verbindung.",
+                 ob ein Schlüssel eingerichtet ist (mit Fingerabdruck), ob ein Passwort für sudo \
+                 hinterlegt ist und ob der Host-Schlüssel schon bekannt ist. Öffnet keine Verbindung.",
             ),
             lese_werkzeug::<ListenParam>(
                 "ssh_list",
@@ -104,8 +104,9 @@ impl SshServer {
                 "Befehl ausführen",
                 "Führt einen Befehl auf der entfernten Maschine aus und gibt stdout, stderr und den \
                  Exit-Code zurück. Mit `sudo: true` läuft er als `sudo -S -p '' -- sh -c '<befehl>'`; das \
-                 sudo-Passwort kommt aus dem quiver-Fenster und geht nur über stdin. Befehle laufen ohne \
-                 TTY – interaktive Programme bleiben bis zum Zeitlimit hängen.",
+                 Passwort kommt aus dem quiver-Fenster und wird nur an sudo übergeben, nie auf der \
+                 Kommandozeile. Befehle laufen ohne Terminal – Programme, die eine Eingabe erwarten, \
+                 warten bis zum Zeitlimit.",
             ),
             schreib_werkzeug::<UploadParam>(
                 "ssh_upload",
@@ -124,7 +125,7 @@ impl SshServer {
             schreib_werkzeug::<EinrichtenParam>(
                 "ssh_schluessel_einrichten",
                 "Schlüssel einrichten",
-                "Richtet die Schlüssel-Anmeldung neu ein: meldet sich mit dem Anmelde-Passwort an, \
+                "Richtet die Schlüssel-Anmeldung neu ein: meldet sich mit dem Passwort an, \
                  erzeugt einen ed25519-Schlüssel, trägt ihn in ~/.ssh/authorized_keys ein, prüft eine \
                  neue Verbindung nur mit dem Schlüssel und ersetzt erst dann den alten Schlüssel. \
                  Nötig nach einem Server-Neuaufbau, wenn die normale Anmeldung den Schlüssel ablehnt.",
@@ -227,7 +228,7 @@ impl SshServer {
                         &verbindung.host,
                         verbindung.port,
                     ),
-                    sudo: verbindung.sudo_passwort.is_some(),
+                    sudo: verbindung.sudo_passwort().is_some(),
                 };
                 (verbindung.name.clone(), verbindung.ziel(), zustand)
             })
@@ -296,11 +297,11 @@ impl SshServer {
 
         let sudo = p.sudo.unwrap_or(false);
         let sudo_passwort = if sudo {
-            match verbindung.sudo_passwort.as_deref() {
+            match verbindung.sudo_passwort() {
                 Some(passwort) => Some(passwort),
                 None => {
                     return Ok(antwort(format!(
-                        "sudo-Passwort für {} fehlt – im quiver-Fenster eintragen.",
+                        "Für {} ist kein Passwort hinterlegt – Befehle mit sudo brauchen eins. Bitte im quiver-Fenster unter Tools → SSH das Feld „Passwort“ ausfüllen.",
                         verbindung.name
                     )))
                 }
@@ -335,7 +336,7 @@ impl SshServer {
 
         if sudo && ergebnis.status != 0 && sudo_abgelehnt(&ergebnis.stderr) {
             return Ok(antwort(format!(
-                "Das sudo-Passwort für {} wurde abgelehnt – bitte im quiver-Fenster korrigieren.\n\n{text}",
+                "Das Passwort für sudo wurde bei {} abgelehnt – bitte im quiver-Fenster unter Tools → SSH das Feld „Passwort“ prüfen.\n\n{text}",
                 verbindung.name
             )));
         }
@@ -641,7 +642,8 @@ impl ServerHandler for SshServer {
                  User im quiver-Fenster unter Tools → {TITEL} an; jedes Werkzeug nimmt `verbindung`, \
                  bei genau einer Verbindung darf der Name fehlen. Fehlt die Liste, sagen die \
                  Werkzeuge das als Text. quiver-ssh meldet sich nach der ersten Einrichtung nur noch \
-                 mit einem Schlüssel an; das Anmelde-Passwort ist nur für die Einrichtung nötig."
+                 mit einem Schlüssel an; das Passwort wird nur für die Einrichtung und für sudo \
+                 gebraucht und steht in keiner Antwort."
             ))
     }
 

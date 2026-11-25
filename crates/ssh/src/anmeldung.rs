@@ -6,10 +6,12 @@
 //!
 //! 1. **Schlüssel vorhanden** → nur Schlüssel-Anmeldung. Schlägt sie fehl, ist
 //!    das ein Fehler; es gibt keinen stillen Rückfall aufs Passwort.
-//! 2. **Kein Schlüssel, aber Anmelde-Passwort** → Passwort-Anmeldung, Schlüssel
+//! 2. **Kein Schlüssel, aber Passwort** → Passwort-Anmeldung, Schlüssel
 //!    erzeugen, öffentlichen Teil in `authorized_keys` eintragen, neue
 //!    Verbindung **nur mit Schlüssel** prüfen, erst dann den Schlüssel
 //!    übernehmen. Scheitert ein Schritt, wird abgebrochen und aufgeräumt.
+//!    Das Passwort bleibt gespeichert – für Befehle mit `sudo` wird es
+//!    weiterhin gebraucht.
 //! 3. **Weder noch** → Hinweis, das Passwort im quiver-Fenster zu hinterlegen.
 //!
 //! `ssh_schluessel_einrichten` erzwingt Schritt 2 – etwa nach einem neu
@@ -39,19 +41,19 @@ pub struct Bereit {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SshFehler {
     #[error(
-        "Für {name} fehlt das Anmelde-Passwort für die erste Anmeldung – bitte im quiver-Fenster unter Tools → SSH eintragen."
+        "Für {name} fehlt das Passwort für die erste Anmeldung – bitte im quiver-Fenster unter Tools → SSH beim Eintrag „{name}“ das Feld „Passwort“ ausfüllen."
     )]
     PasswortFehlt { name: String },
     #[error(
-        "Schlüssel-Anmeldung an {name} fehlgeschlagen. Mit `ssh_schluessel_einrichten` neu einrichten (braucht das Anmelde-Passwort)."
+        "Die Anmeldung mit dem Schlüssel an {name} wurde abgelehnt. Mit `ssh_schluessel_einrichten` lässt sich der Schlüssel neu einrichten – dafür wird das Passwort gebraucht."
     )]
     SchluesselAbgelehnt { name: String },
     #[error(
-        "Passwort-Anmeldung an {name} fehlgeschlagen – bitte das Anmelde-Passwort im quiver-Fenster prüfen."
+        "Die Anmeldung mit dem Passwort an {name} wurde abgelehnt – bitte im quiver-Fenster unter Tools → SSH das Feld „Passwort“ prüfen."
     )]
     PasswortAbgelehnt { name: String },
     #[error(
-        "Der Server {adresse} hat die Schlüssel-Anmeldung abgelehnt (evtl. `PubkeyAuthentication no` in der sshd-Konfiguration). Die Schlüsseldateien wurden wieder entfernt; {name} braucht weiterhin das Anmelde-Passwort."
+        "Der Server {adresse} hat die Anmeldung mit dem Schlüssel abgelehnt (vielleicht ist die Schlüssel-Anmeldung dort abgeschaltet). Die Schlüsseldateien wurden wieder entfernt; {name} braucht weiterhin das Passwort."
     )]
     EinbauAbgelehnt { name: String, adresse: String },
     #[error(transparent)]
@@ -103,7 +105,7 @@ pub async fn bereit(verbindung: &Verbindung, pfade: &Pfade) -> Result<Bereit, Ss
         });
     }
 
-    if verbindung.anmelde_passwort.is_some() {
+    if verbindung.anmelde_passwort().is_some() {
         return einrichten(verbindung, pfade, false).await;
     }
 
@@ -117,7 +119,7 @@ pub async fn schluessel_einrichten(
     verbindung: &Verbindung,
     pfade: &Pfade,
 ) -> Result<Bereit, SshFehler> {
-    if verbindung.anmelde_passwort.is_none() {
+    if verbindung.anmelde_passwort().is_none() {
         return Err(SshFehler::PasswortFehlt {
             name: verbindung.name.clone(),
         });
@@ -134,13 +136,11 @@ async fn einrichten(
     pfade: &Pfade,
     ersetzen: bool,
 ) -> Result<Bereit, SshFehler> {
-    let passwort =
-        verbindung
-            .anmelde_passwort
-            .as_deref()
-            .ok_or_else(|| SshFehler::PasswortFehlt {
-                name: verbindung.name.clone(),
-            })?;
+    let passwort = verbindung
+        .anmelde_passwort()
+        .ok_or_else(|| SshFehler::PasswortFehlt {
+            name: verbindung.name.clone(),
+        })?;
     let ziel = pfade.schluessel(&verbindung.name)?;
     let vorlaeufig = pfade.vorlaeufig(&verbindung.name)?;
     let ersetzt_wurde = ziel.exists();
@@ -187,7 +187,7 @@ async fn einrichten(
                 hinweis.push_str("Der bisherige Schlüssel wurde ersetzt. ");
             }
             hinweis.push_str(&format!(
-                "Schlüssel für {} eingerichtet ({}). Das Anmelde-Passwort wird nicht mehr gebraucht und kann im quiver-Fenster gelöscht werden.",
+                "Schlüssel für {} eingerichtet ({}). Die Anmeldung läuft ab jetzt über den Schlüssel. Das Passwort bleibt gespeichert, weil Befehle mit sudo es weiterhin brauchen; ohne sudo kannst du es im quiver-Fenster löschen.",
                 verbindung.name, uebernommen.fingerprint
             ));
             Ok(Bereit {

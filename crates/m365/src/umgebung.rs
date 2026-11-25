@@ -143,7 +143,7 @@ pub fn eintrag(befehl: Option<&str>) -> serde_json::Value {
         "id": "microsoft-365",
         "version": env!("CARGO_PKG_VERSION"),
         "titel": "Microsoft 365",
-        "beschreibung": "Mail, Kalender, Teams, Dateien, Planner, Kontakte und OneNote über Microsoft Graph – mit einer Anmeldung im Browser.",
+        "beschreibung": "Mail, Kalender, Teams, Dateien, Planner, Kontakte und OneNote über Microsoft Graph. Angemeldet wird einmal im Browser; eine eigene App-Registrierung ist nicht nötig.",
         "herkunft": "eigen",
         "laufzeit": {
             "art": "stdio",
@@ -250,6 +250,18 @@ mod schreibschutz_tests {
     fn der_eintrag_hat_je_bereich_einen_schalter_standard_aus() {
         let eintrag = eintrag(Some("/opt/quiver-m365"));
         assert_eq!(eintrag["id"], "microsoft-365");
+        // Der Einrichtungstext nennt die eingebaute App, aber keine Firma.
+        let beschreibung = eintrag["beschreibung"].as_str().unwrap();
+        assert!(
+            beschreibung.contains("eigene App-Registrierung"),
+            "{beschreibung}"
+        );
+        for wort in ["firma", "gmbh", "kunde", "tenant", "example.test"] {
+            assert!(
+                !beschreibung.to_lowercase().contains(wort),
+                "Einrichtungstext nennt „{wort}“: {beschreibung}"
+            );
+        }
         assert_eq!(eintrag["laufzeit"]["befehl"], "/opt/quiver-m365");
         let felder = eintrag["felder"].as_array().unwrap();
         assert_eq!(felder.len(), BEREICHE.len() - 1);

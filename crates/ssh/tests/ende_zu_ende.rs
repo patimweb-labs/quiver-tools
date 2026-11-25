@@ -264,7 +264,7 @@ fn ohne_zugaenge_kommt_der_hinweis_und_kein_fehler() {
 }
 
 #[test]
-fn eintrag_enthaelt_mehrfach_mit_fuenf_feldern() {
+fn eintrag_enthaelt_mehrfach_mit_sechs_feldern() {
     let ausgabe = Command::new(env!("CARGO_BIN_EXE_quiver-ssh"))
         .args(["eintrag", "--befehl", "/pfad/quiver-ssh"])
         .output()
@@ -291,12 +291,12 @@ fn eintrag_enthaelt_mehrfach_mit_fuenf_feldern() {
         "{eintrag}"
     );
 
-    // … sondern eine Liste von Verbindungen mit fünf Feldern.
+    // … sondern eine Liste von Verbindungen mit sechs Feldern.
     let mehrfach = &eintrag["mehrfach"];
     assert_eq!(mehrfach["titel"], json!("Verbindungen"));
     assert_eq!(mehrfach["einzahl"], json!("Verbindung"));
     let felder = mehrfach["felder"].as_array().unwrap();
-    assert_eq!(felder.len(), 7, "{mehrfach}");
+    assert_eq!(felder.len(), 6, "{mehrfach}");
     let namen: Vec<&str> = felder
         .iter()
         .map(|feld| feld["name"].as_str().unwrap())
@@ -308,7 +308,6 @@ fn eintrag_enthaelt_mehrfach_mit_fuenf_feldern() {
             "host",
             "port",
             "anmelde_passwort",
-            "sudo_passwort",
             "schreiben",
             "austauschordner"
         ]
@@ -316,12 +315,13 @@ fn eintrag_enthaelt_mehrfach_mit_fuenf_feldern() {
     assert_eq!(felder[0]["quelle"], json!("client"));
     assert_eq!(felder[0]["pflicht"], json!(true));
     assert_eq!(felder[2]["standard"], json!("22"));
+    // Ein Passwort für Anmeldung und sudo; ein eigenes sudo-Feld gibt es nicht mehr.
+    assert_eq!(felder[3]["titel"], json!("Passwort"));
     assert_eq!(felder[3]["quelle"], json!("geheim"));
-    assert_eq!(felder[4]["quelle"], json!("geheim"));
-    assert!(felder[3]["beschreibung"]
-        .as_str()
-        .unwrap()
-        .contains("Nur für die erste Anmeldung"));
+    assert_eq!(
+        felder[3]["beschreibung"],
+        json!("Für die Anmeldung und für sudo. Bleibt verschlüsselt auf diesem Gerät.")
+    );
 }
 
 #[test]

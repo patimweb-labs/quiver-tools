@@ -43,7 +43,8 @@ impl Werkzeug for Zephyr {
     fn beschreibung(&self) -> &'static str {
         "Zephyr Scale Cloud (REST v2): Testfälle, Testzyklen und Ausführungen lesen, Status und \
          Ordner ansehen. Verändernd: einen Testfall anlegen, Testfälle einem Zyklus zuordnen und \
-         ein Ergebnis eintragen – aber nur, wenn der Schalter „schreiben“ für den Zugang an ist."
+         ein Ergebnis eintragen – aber nur, wenn der Schalter „Schreiben erlauben“ für den Zugang \
+         an ist."
     }
 
     fn felder(&self) -> Vec<Feld> {
@@ -163,7 +164,7 @@ mod tests {
         assert_eq!(werkzeug.name(), "zephyr");
         assert_eq!(werkzeug.titel(), "Zephyr");
         assert!(werkzeug.beschreibung().contains("Testzyklen"));
-        assert!(werkzeug.beschreibung().contains("schreiben"));
+        assert!(werkzeug.beschreibung().contains("Schreiben erlauben"));
         assert_eq!(werkzeug.mehrfach(), Some(("Zugänge", "Zugang")));
 
         let felder = werkzeug.felder();

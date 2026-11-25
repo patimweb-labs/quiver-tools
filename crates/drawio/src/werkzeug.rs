@@ -83,8 +83,9 @@ impl Werkzeug for Drawio {
                 art: FeldArt::Schalter,
                 pflicht: false,
                 standard: Some("an"),
-                hilfe: "Erlaubt Anlegen und Ändern im Arbeitsordner – nie über Vorhandenes und \
-                        nur mit dem gelesenen `stand`. Lesen, Zeichnen und Öffnen geht immer.",
+                hilfe: "Erlaubt Anlegen und Ändern im Arbeitsordner – nur in bestehenden Dateien \
+                        mit dem vorher gelesenen Stand; Vorhandenes wird nie überschrieben. Lesen, \
+                        Zeichnen und Öffnen geht immer.",
                 link: None,
             },
         ]

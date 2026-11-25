@@ -16,7 +16,7 @@ je Organisation.
 
 `STANDARD_SCOPES` ergänzen, delegiert, Graph: `Team.ReadBasic.All`, `Channel.ReadBasic.All`,
 `ChannelMessage.Read.All`, `ChannelMessage.Send`, `Chat.ReadWrite`, `User.ReadBasic.All`.
-In der App-Registrierung sind sie eingetragen, und die Admin-Zustimmung für example.test ist
+In der App-Registrierung sind sie eingetragen, und die Admin-Zustimmung im Herausgeber-Tenant ist
 erteilt (`docs/entra-app.md`).
 
 Fehlt einem User die Zustimmung für einen neuen Scope, liefert der Token-Endpunkt

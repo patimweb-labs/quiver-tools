@@ -43,8 +43,8 @@ impl Werkzeug for Abap {
     fn beschreibung(&self) -> &'static str {
         "ABAP über SAP ADT: Objekte suchen und lesen, Tabellen abfragen, Syntax, Unit-Tests, ATC, \
          Dumps, Traces und Transporte ansehen. Schreibende Werkzeuge (Sperren, Quelltext \
-         schreiben, Aktivieren, Anlegen, Textelemente) nur, wenn der Schalter „schreiben“ im \
-         quiver-Fenster für das System an ist."
+         schreiben, Aktivieren, Anlegen, Textelemente) nur, wenn der Schalter „Schreiben \
+         erlauben“ im quiver-Fenster für das System an ist."
     }
 
     fn felder(&self) -> Vec<Feld> {
@@ -64,7 +64,7 @@ impl Werkzeug for Abap {
                 art: FeldArt::Url,
                 pflicht: true,
                 standard: None,
-                hilfe: "Adresse des ADT-Dienstes, z. B. https://sap-dev.firma.de:44300",
+                hilfe: "Adresse des ADT-Dienstes, z. B. https://sap-dev.example.test:44300",
                 link: None,
             },
             Feld {
@@ -73,7 +73,8 @@ impl Werkzeug for Abap {
                 art: FeldArt::Text,
                 pflicht: true,
                 standard: None,
-                hilfe: "Mandantennummer, z. B. 100",
+                hilfe: "Nummer des Mandanten im SAP-System, z. B. 100. Ein SAP-System kann \
+                        mehrere Mandanten haben; der Mandant bestimmt, welche Daten du siehst.",
                 link: None,
             },
             Feld {
@@ -101,9 +102,9 @@ impl Werkzeug for Abap {
                 pflicht: false,
                 standard: Some("an"),
                 hilfe:
-                    "Firmen-CAs erkennt der Client über den Zertifikatsspeicher des Systems. \
-                        Abschalten gilt nur für 127.0.0.1, localhost und [::1]; für andere Hosts \
-                        stattdessen das CA-Zertifikat eintragen.",
+                    "Zertifikate der eigenen Firma erkennt der Rechner über seinen \
+                        Zertifikatsspeicher. Abschalten gilt nur für 127.0.0.1, localhost und [::1]; \
+                        für andere Hosts stattdessen das CA-Zertifikat eintragen.",
                 link: None,
             },
             Feld {
@@ -209,6 +210,10 @@ mod tests {
         assert!(felder[1].pflicht);
         assert_eq!(felder[2].art, FeldArt::Text);
         assert!(felder[2].pflicht);
+        // „Mandant“ wird erklärt, nicht nur genannt; das Beispiel ist neutral.
+        assert!(felder[2].hilfe.contains("SAP-System"));
+        assert!(felder[2].hilfe.contains("welche Daten"));
+        assert!(felder[1].hilfe.contains("example.test"));
         assert_eq!(felder[3].art, FeldArt::Text);
         assert!(!felder[3].pflicht);
         assert_eq!(felder[3].standard, Some("DE"));

@@ -42,7 +42,7 @@ Aufruf:
                                    (Exit 0 = angemeldet, 1 = nicht angemeldet, 2 = Fehler)
   quiver-m365 abmelden             Refresh-Token löschen
   quiver-m365 freigeben [--tenant <id|domain>]
-                                   Admin-Freigabe im Browser, einmal pro Firma
+                                   Admin-Freigabe im Browser, einmal je Organisation
   quiver-m365 eintrag [--befehl <pfad>]
                                    Bibliothekseintrag für quiver ausgeben (JSON)
   quiver-m365 --version            Version ausgeben

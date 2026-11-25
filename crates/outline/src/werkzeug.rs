@@ -56,7 +56,7 @@ impl Werkzeug for Outline {
                 art: FeldArt::Url,
                 pflicht: true,
                 standard: None,
-                hilfe: "z. B. https://wiki.firma.de oder https://firma.getoutline.com",
+                hilfe: "z. B. https://wiki.example.test oder https://<firma>.getoutline.com",
                 link: None,
             },
             Feld {
@@ -261,7 +261,7 @@ mod tests {
         assert_eq!(felder[0].name, "url");
         assert_eq!(felder[0].art, FeldArt::Url);
         assert!(felder[0].pflicht);
-        assert!(felder[0].hilfe.contains("https://firma.getoutline.com"));
+        assert!(felder[0].hilfe.contains("https://<firma>.getoutline.com"));
         assert_eq!(felder[1].name, "api_key");
         assert_eq!(felder[1].art, FeldArt::Passwort);
         assert!(felder[1].pflicht);

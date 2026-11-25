@@ -43,8 +43,8 @@ impl Werkzeug for Jira {
     fn beschreibung(&self) -> &'static str {
         "Jira Cloud je Site: Vorgänge suchen und lesen, Kommentare, Übergänge, Projekte, Filter, \
          Personen und Verknüpfungsarten ansehen. Anlegen, Ändern, Übergänge, Kommentare und \
-         Verknüpfungen nur, wenn der Schalter „schreiben“ für die Site an ist – und nur in den \
-         Projekten, die das Feld „nur“ erlaubt."
+         Verknüpfungen nur, wenn der Schalter „Schreiben erlauben“ für die Site an ist – und nur \
+         in den Projekten aus dem Feld „Nur diese Projekte“."
     }
 
     fn felder(&self) -> Vec<Feld> {
@@ -55,7 +55,7 @@ impl Werkzeug for Jira {
                 art: FeldArt::Url,
                 pflicht: true,
                 standard: None,
-                hilfe: "z. B. https://firma.atlassian.net",
+                hilfe: "z. B. https://<firma>.atlassian.net",
                 link: None,
             },
             Feld {
@@ -162,8 +162,8 @@ mod tests {
         assert_eq!(werkzeug.name(), "jira");
         assert_eq!(werkzeug.titel(), "Jira");
         assert!(werkzeug.beschreibung().contains("Vorgänge"));
-        assert!(werkzeug.beschreibung().contains("schreiben"));
-        assert!(werkzeug.beschreibung().contains("„nur“"));
+        assert!(werkzeug.beschreibung().contains("Schreiben erlauben"));
+        assert!(werkzeug.beschreibung().contains("Nur diese Projekte"));
         assert_eq!(werkzeug.mehrfach(), Some(("Sites", "Site")));
 
         let felder = werkzeug.felder();

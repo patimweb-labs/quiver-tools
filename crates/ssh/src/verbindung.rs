@@ -5,8 +5,12 @@
 //!
 //! quiver übergibt **alle** Verbindungen als JSON in `QUIVER_ZUGAENGE`
 //! (`quiver_domain::Mehrfach`): Name plus Werte der Felder `host`, `port`,
-//! `benutzer`, `anmelde_passwort`, `sudo_passwort`. Dieses Modul macht daraus
-//! geprüfte [`Verbindung`]en und wählt die richtige aus.
+//! `benutzer`, `anmelde_passwort`. Dieses Modul macht daraus geprüfte [`Verbindung`]en
+//! und wählt die richtige aus.
+//!
+//! Frühere Versionen hatten zwei Felder (`anmelde_passwort`, `sudo_passwort`).
+//! Heute gilt `anmelde_passwort` (Anzeige: „Passwort“) für die Anmeldung **und**
+//! für `sudo`; ein noch übergebenes `sudo_passwort` hat Vorrang.
 
 use std::collections::BTreeMap;
 
@@ -18,9 +22,14 @@ pub const HOST: &str = "host";
 pub const PORT: &str = "port";
 /// Feldname des Anmeldenamens (Pflicht).
 pub const BENUTZER: &str = "benutzer";
-/// Feldname des Anmelde-Passworts (geheim, nur für die erste Anmeldung).
-pub const ANMELDE_PASSWORT: &str = "anmelde_passwort";
-/// Feldname des sudo-Passworts (geheim, getrennt vom Anmelde-Passwort).
+/// Feldname des Passworts (geheim): Anmeldung und `sudo`.
+///
+/// Der Name stammt aus früheren Versionen und bleibt: quiver übergibt nur
+/// Felder, die der Eintrag noch kennt – ein neuer Name verlöre das gespeicherte
+/// Passwort.
+pub const PASSWORT: &str = "anmelde_passwort";
+/// Feldname des früheren sudo-Passworts – wird nur noch gelesen und, wenn
+/// gesetzt, weiter benutzt.
 pub const SUDO_PASSWORT: &str = "sudo_passwort";
 /// Feldname des Schalters „Schreiben erlauben“ (Standard **aus**).
 pub const SCHREIBEN: &str = quiver_tools_kern::FELD_SCHREIBEN;
@@ -38,10 +47,11 @@ pub struct Verbindung {
     pub host: String,
     pub port: u16,
     pub benutzer: String,
-    /// Nur für die erste Anmeldung; danach meldet sich quiver-ssh per Schlüssel an.
-    pub anmelde_passwort: Option<String>,
-    /// Nur für Befehle mit `sudo`.
-    pub sudo_passwort: Option<String>,
+    /// Ein Passwort für beides: die erste Anmeldung und Befehle mit `sudo`.
+    pub passwort: Option<String>,
+    /// Aus früheren Versionen: ein eigenes sudo-Passwort. Wird weiter benutzt,
+    /// wenn es gesetzt ist.
+    pub sudo_alt: Option<String>,
     /// Erlaubt Befehle und Dateitransfer. Standard **aus**.
     pub schreiben: bool,
     /// Ordner für Hoch- und Herunterladen; nur darin werden Dateien angefasst.
@@ -55,8 +65,8 @@ impl std::fmt::Debug for Verbindung {
             .field("host", &self.host)
             .field("port", &self.port)
             .field("benutzer", &self.benutzer)
-            .field("anmelde_passwort", &self.anmelde_passwort.is_some())
-            .field("sudo_passwort", &self.sudo_passwort.is_some())
+            .field("passwort", &self.passwort.is_some())
+            .field("sudo_alt", &self.sudo_alt.is_some())
             .field("schreiben", &self.schreiben)
             .field("austauschordner", &self.austauschordner.is_some())
             .finish()
@@ -104,11 +114,27 @@ impl Verbindung {
             host,
             port,
             benutzer,
-            anmelde_passwort: wert(ANMELDE_PASSWORT),
-            sudo_passwort: wert(SUDO_PASSWORT),
+            passwort: wert(PASSWORT),
+            sudo_alt: wert(SUDO_PASSWORT),
             schreiben: quiver_tools_kern::schalter_aus(zugang.wert(SCHREIBEN)),
             austauschordner: wert(AUSTAUSCHORDNER),
         })
+    }
+
+    /// Das Passwort für die erste Anmeldung.
+    ///
+    /// Aus dem Feld „Passwort“; bei einem alten Eintrag aus dem früheren Feld
+    /// `anmelde_passwort`.
+    pub fn anmelde_passwort(&self) -> Option<&str> {
+        self.passwort.as_deref()
+    }
+
+    /// Das Passwort für `sudo`.
+    ///
+    /// Ein früheres eigenes sudo-Passwort hat Vorrang; sonst gilt dasselbe
+    /// Passwort wie für die Anmeldung.
+    pub fn sudo_passwort(&self) -> Option<&str> {
+        self.sudo_alt.as_deref().or(self.passwort.as_deref())
     }
 
     /// Erlaubt diese Verbindung Befehle und Dateitransfer?
@@ -338,8 +364,8 @@ mod tests {
         assert_eq!(verbindung.benutzer, "admin");
         assert_eq!(verbindung.ziel(), "admin@web.example.test");
         assert_eq!(verbindung.adresse(), "web.example.test");
-        assert!(verbindung.anmelde_passwort.is_none());
-        assert!(verbindung.sudo_passwort.is_none());
+        assert!(verbindung.anmelde_passwort().is_none());
+        assert!(verbindung.sudo_passwort().is_none());
 
         let mit_port = Verbindung::aus_zugang(&zugang(
             "db-02",
@@ -348,12 +374,45 @@ mod tests {
                 ("port", "2222"),
                 ("benutzer", "root"),
                 ("anmelde_passwort", "geheim-4711"),
-                ("sudo_passwort", "geheim-4712"),
             ],
         ))
         .unwrap();
         assert_eq!(mit_port.ziel(), "root@db.example.test:2222");
         assert_eq!(mit_port.adresse(), "[db.example.test]:2222");
+        assert_eq!(mit_port.anmelde_passwort(), Some("geheim-4711"));
+        // Ein Passwort gilt für die Anmeldung und für sudo.
+        assert_eq!(mit_port.sudo_passwort(), Some("geheim-4711"));
+    }
+
+    #[test]
+    fn ein_alter_eintrag_bleibt_gueltig_und_behaelt_sein_sudo_passwort() {
+        // Altbestand: getrennte Felder, kein „passwort“.
+        let alt = Verbindung::aus_zugang(&zugang(
+            "web-01",
+            &[
+                ("host", "web.example.test"),
+                ("benutzer", "admin"),
+                ("anmelde_passwort", "anmelde-4711"),
+                ("sudo_passwort", "sudo-4712"),
+            ],
+        ))
+        .unwrap();
+        assert_eq!(alt.anmelde_passwort(), Some("anmelde-4711"));
+        // Das gespeicherte sudo-Passwort gilt weiter.
+        assert_eq!(alt.sudo_passwort(), Some("sudo-4712"));
+
+        // Altbestand ohne eigenes sudo-Passwort: das Anmelde-Passwort gilt auch für sudo.
+        let nur_anmeldung = Verbindung::aus_zugang(&zugang(
+            "web-01",
+            &[
+                ("host", "web.example.test"),
+                ("benutzer", "admin"),
+                ("anmelde_passwort", "anmelde-4711"),
+            ],
+        ))
+        .unwrap();
+        assert_eq!(nur_anmeldung.anmelde_passwort(), Some("anmelde-4711"));
+        assert_eq!(nur_anmeldung.sudo_passwort(), Some("anmelde-4711"));
     }
 
     #[test]
@@ -371,7 +430,8 @@ mod tests {
         let text = format!("{verbindung:?}");
         assert!(!text.contains("anmelde-4711"), "{text}");
         assert!(!text.contains("sudo-4712"), "{text}");
-        assert!(text.contains("anmelde_passwort: true"), "{text}");
+        assert!(text.contains("passwort: true"), "{text}");
+        assert!(text.contains("sudo_alt: true"), "{text}");
     }
 
     #[test]

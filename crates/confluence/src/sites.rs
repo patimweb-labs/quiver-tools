@@ -273,8 +273,9 @@ pub enum SiteFehler {
     #[error("Bei der Site „{name}“ fehlt das Feld „{feld}“ – bitte im quiver-Fenster eintragen.")]
     Feld { name: String, feld: &'static str },
     #[error(
-        "Die Adresse „{url}“ von „{name}“ muss mit https:// beginnen – nur 127.0.0.1, localhost \
-         und [::1] dürfen für die Attrappe http:// sein."
+        "Die Adresse „{url}“ von „{name}“ muss mit https:// beginnen. Ohne Verschlüsselung sind \
+         nur 127.0.0.1, localhost und [::1] erlaubt; für einen anderen Host bitte im \
+         quiver-Fenster das Feld „Unverschlüsselt erlauben“ einschalten."
     )]
     Url { name: String, url: String },
 }

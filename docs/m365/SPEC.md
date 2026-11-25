@@ -24,7 +24,8 @@ Client Credentials (App-Rechte statt User-Rechte – widerspricht dem Rechtemode
 ## 2a. Eine Registrierung für alle, Freigabe im Browser
 
 **Festlegung:** `quiver-m365` ist **eine** Multi-Tenant-App (öffentlicher Client), registriert im
-Tenant von example.test, Client-ID `9ae8e0db-e05f-4db8-adde-83d70d416eeb` – eingebaut als Standard.
+Tenant des Herausgebers, Client-ID `9ae8e0db-e05f-4db8-adde-83d70d416eeb` – eingebaut als Standard.
+Der Tenant wird hier nicht namentlich genannt; die Client-ID genügt.
 *Begründung:* Kein User und keine Firma muss etwas registrieren oder konfigurieren. Beim ersten Login
 sieht der User die Zustimmungsseite von Microsoft („quiver-m365 möchte: …“) und gibt frei.
 *Preis:* Der Herausgeber auf der Zustimmungsseite ist dieser Tenant. Firmen, die Usern keine eigene
@@ -107,7 +108,7 @@ Admin-Zustimmung. Kommt ein Scope später dazu, antwortet der Token-Endpunkt ein
 *Begründung:* SharePoint/OneDrive, Planner/To Do, Kontakte/Personen und OneNote laufen alle über
 Graph und handeln **als der User**; auch hier keine App-Berechtigung. `Sites.ReadWrite.All` und
 `Files.ReadWrite.All` decken Lesen **und** Schreiben ab, weil Dateien und Listen angelegt werden.
-*Preis:* Diese Scopes verlangen fast überall eine Admin-Zustimmung; die ist für example.test
+*Preis:* Diese Scopes verlangen fast überall eine Admin-Zustimmung; die ist für den Herausgeber-Tenant
 erteilt (`docs/entra-app.md`), andere Tenants geben einmal im Browser frei. Fehlt sie, sagt das
 Tool es – ohne Browser und ohne das Refresh-Token zu löschen.
 
@@ -212,7 +213,7 @@ Der „Browser“ ist im Test eine Funktion, die die Authorize-URL direkt aufruf
 
 ## 7. Offene Punkte
 
-1. Admin-Freigabe im Tenant von example.test für den ersten echten Test (`quiver-m365 freigeben`).
+1. Admin-Freigabe im Herausgeber-Tenant für den ersten echten Test (`quiver-m365 freigeben`).
 4. Herausgeber-Verifizierung (Verified Publisher) – macht die Zustimmungsseite vertrauenswürdiger und erlaubt in vielen Tenants die User-Zustimmung.
 2. ~~Teams-Chats und Kanäle (`Chat.ReadWrite`, `ChannelMessage.Send`) – nach dem MVP.~~
    → Aufgabe 05: 16 Tools, siehe `docs/offen.md` für den Rest (Dateien in Kanälen, Präsenz,

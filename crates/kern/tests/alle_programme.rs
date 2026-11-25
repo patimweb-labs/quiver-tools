@@ -92,6 +92,49 @@ fn ist_lesend(werkzeug: &rmcp::model::Tool) -> Option<bool> {
         .and_then(|annotationen| annotationen.read_only_hint)
 }
 
+/// Die Hilfetexte stehen im quiver-Fenster neben dem Feld und werden von
+/// Menschen gelesen: verständliches Deutsch, neutrale Beispiele und keine
+/// Entwicklersprache aus dem Testbetrieb.
+#[test]
+fn die_hilfetexte_sind_verstaendlich_und_neutral() {
+    /// Wörter, die im quiver-Fenster nichts zu suchen haben.
+    const VERBOTEN: [&str; 6] = [
+        "attrappe", "gepusht", "firma.de", "kunde.de", "@gmail", "proton",
+    ];
+
+    for programm in programme() {
+        for feld in &programm.felder {
+            assert!(
+                !feld.hilfe.trim().is_empty(),
+                "{}: „{}“ hat keine Hilfe",
+                programm.titel,
+                feld.name
+            );
+            let hilfe = feld.hilfe.to_lowercase();
+            for wort in VERBOTEN {
+                assert!(
+                    !hilfe.contains(wort),
+                    "{}: „{}“ enthält „{wort}“: {}",
+                    programm.titel,
+                    feld.name,
+                    feld.hilfe
+                );
+            }
+            // Ein Beispiel mit Adresse zeigt auf example.test oder einen Platzhalter,
+            // nie auf eine echte Firma.
+            if hilfe.contains("z. b.") && hilfe.contains("://") {
+                assert!(
+                    hilfe.contains("example.test") || hilfe.contains("<firma>"),
+                    "{}: „{}“ nennt ein echtes Beispiel: {}",
+                    programm.titel,
+                    feld.name,
+                    feld.hilfe
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn jedes_werkzeug_ist_lesend_gekennzeichnet_oder_hat_einen_schreibschalter() {
     for programm in programme() {

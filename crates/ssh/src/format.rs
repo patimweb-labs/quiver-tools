@@ -18,7 +18,7 @@ pub struct Zustand {
     pub schluessel: Option<String>,
     /// `SHA256:…`, wenn der Host-Schlüssel bekannt ist.
     pub host_schluessel: Option<String>,
-    /// Ob ein sudo-Passwort hinterlegt ist.
+    /// Ob ein Passwort für `sudo` hinterlegt ist.
     pub sudo: bool,
 }
 
@@ -30,13 +30,17 @@ pub fn status(zeilen: &[(String, String, Zustand)]) -> String {
         match &zustand.schluessel {
             Some(fingerprint) => text.push(format!("  Schlüssel: eingerichtet ({fingerprint})")),
             None => text.push(
-                "  Schlüssel: fehlt (die nächste Verbindung richtet ihn mit dem Anmelde-Passwort ein)"
+                "  Schlüssel: fehlt (die nächste Verbindung richtet ihn mit dem Passwort ein)"
                     .to_string(),
             ),
         }
         text.push(format!(
-            "  sudo-Passwort: {}",
-            if zustand.sudo { "gesetzt" } else { "fehlt" }
+            "  Passwort für sudo: {}",
+            if zustand.sudo {
+                "vorhanden"
+            } else {
+                "fehlt – im quiver-Fenster das Feld „Passwort“ ausfüllen"
+            }
         ));
         match &zustand.host_schluessel {
             Some(fingerprint) => text.push(format!("  Host-Schlüssel: bekannt ({fingerprint})")),
@@ -182,13 +186,13 @@ mod tests {
             ),
             "{text}"
         );
-        assert!(text.contains("  sudo-Passwort: gesetzt"), "{text}");
+        assert!(text.contains("  Passwort für sudo: vorhanden"), "{text}");
         assert!(
             text.contains("  Host-Schlüssel: bekannt (SHA256:bbb)"),
             "{text}"
         );
         assert!(text.contains("Schlüssel: fehlt"), "{text}");
-        assert!(text.contains("sudo-Passwort: fehlt"), "{text}");
+        assert!(text.contains("Passwort für sudo: fehlt"), "{text}");
         assert!(
             text.contains("Host-Schlüssel: noch nicht bekannt"),
             "{text}"

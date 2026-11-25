@@ -1,6 +1,7 @@
 # 0003 – SSH: Verbindungen im quiver-Fenster, Schlüssel statt Passwort
 
-> Stand: 2026-11-23. Aufgabe: [docs/aufgaben/05-ssh.md](../../docs/aufgaben/05-ssh.md) (Fassung 2).
+> Stand: 2026-11-23, Nachtrag 2026-11-25 (ein Passwort für Anmeldung und sudo).
+> Aufgabe: [docs/aufgaben/05-ssh.md](../../docs/aufgaben/05-ssh.md) (Fassung 2).
 
 ## Kontext
 
@@ -24,21 +25,21 @@ Felder noch eine `umgebung`. quiver übergibt alle Verbindungen als JSON in
 gibt es keine Verbindungen; kaputtes JSON ist ein Fehler **ohne Inhalt**, weil die
 Variable Geheimnisse enthalten kann.
 
-**Fünf Felder je Verbindung:** `host`, `port` (Standard 22), `benutzer`,
-`anmelde_passwort`, `sudo_passwort`. Die beiden Passwörter sind getrennt und gehen in den
-Schlüsselbund von quiver.
+**Sechs Felder je Verbindung:** `benutzer`, `host`, `port` (Standard 22), `anmelde_passwort`,
+`schreiben`, `austauschordner`. Das Passwort gilt für die Anmeldung **und** für `sudo`
+(Nachtrag unten) und liegt im Schlüsselbund von quiver.
 
-**Das Anmelde-Passwort ist nur für die erste Anmeldung.** Jede Verbindung läuft durch
+**Das Passwort dient der ersten Anmeldung und sudo.** Jede Verbindung läuft durch
 `anmeldung::bereit`:
 
 1. Schlüssel vorhanden → nur Schlüssel-Anmeldung. Scheitert sie, ist das ein Fehler mit
    Verweis auf `ssh_schluessel_einrichten` – **kein** stiller Rückfall aufs Passwort.
-2. Kein Schlüssel, aber Anmelde-Passwort → Passwort-Anmeldung, ed25519-Schlüssel
+2. Kein Schlüssel, aber Passwort → Passwort-Anmeldung, ed25519-Schlüssel
    erzeugen, öffentlichen Teil in `~/.ssh/authorized_keys` eintragen (700/600, kein
    doppelter Eintrag, Kommentar `quiver-ssh <name>`), **neue Verbindung nur mit dem
    Schlüssel** prüfen, erst dann den Schlüssel übernehmen. Scheitert ein Schritt, wird
    abgebrochen und aufgeräumt.
-3. Weder noch → Hinweis, das Anmelde-Passwort im quiver-Fenster zu hinterlegen.
+3. Weder noch → Hinweis, das Passwort im quiver-Fenster zu hinterlegen.
 
 `ssh_schluessel_einrichten` erzwingt Schritt 2 und ersetzt den alten Schlüssel erst,
 nachdem eine Schlüssel-Verbindung geklappt hat.
@@ -50,19 +51,20 @@ Einträge), geschrieben nie. Erste Verbindung: TOFU mit Nennung des Fingerabdruc
 Geänderter Host-Schlüssel: harter Fehler mit altem und neuem Fingerabdruck, Datei und
 Zeile – die Entscheidung trifft der User.
 
-**sudo getrennt und ohne Leck.** `ssh_exec` mit `sudo: true` startet
-`sudo -S -p '' -- sh -c '<befehl>'` und schreibt das sudo-Passwort über stdin. Fehlt es,
-kommt ein Hinweis; ist es falsch, wird die sudo-Ausgabe ausgewertet und das gemeldet.
-Das Passwort steht nie in Befehlszeile, Ausgabe, Fehlertext oder Log.
+**sudo ohne Leck.** `ssh_exec` mit `sudo: true` startet `sudo -S -p '' -- sh -c
+'<befehl>'` und schreibt das Passwort über stdin. Fehlt es, kommt ein Hinweis; ist es
+falsch, wird die sudo-Ausgabe ausgewertet und das gemeldet. Das Passwort steht nie in
+Befehlszeile, Ausgabe, Fehlertext oder Log.
 
 ## Warum so
 
 1. **Zugangsdaten bleiben dort, wo der User sie einträgt.** quiver zeigt die Felder,
    speichert Geheimes im Schlüsselbund und setzt die Umgebung. Das Tool kennt weder
    quiver noch einen Schlüsselbund.
-2. **Ein Passwort, das nur einmal gebraucht wird, kann gelöscht werden.** Nach der
-   ersten Anmeldung gibt es keinen Grund mehr, es aufzubewahren. Der Ablauf beweist die
-   Schlüssel-Anmeldung, bevor er den Schlüssel behält.
+2. **Das Passwort wird nur noch für sudo gebraucht.** Nach der ersten Anmeldung beweist
+   der Ablauf die Schlüssel-Anmeldung, bevor er den Schlüssel behält. Wer kein sudo
+   braucht, kann das Passwort danach löschen; wer sudo braucht, behält es im
+   Schlüsselbund.
 3. **Kein stiller Rückfall.** Ein Rückfall aufs Passwort würde einen kaputten Schlüssel
    verstecken und das Passwort dauerhaft aktuell halten. Ein Fehler mit Anleitung ist
    ehrlicher.
@@ -71,8 +73,35 @@ Das Passwort steht nie in Befehlszeile, Ausgabe, Fehlertext oder Log.
    vorhandene `known_hosts` wird trotzdem gelesen, damit bereits besuchte Hosts bekannt
    sind.
 5. **`ssh_schluessel_einrichten` ist ein Werkzeug, kein Setup-Tool.** Es ändert etwas am
-   Server (destruktiv) und braucht das Anmelde-Passwort – darum ist es ein normaler,
-   ausdrücklich aufgerufener Schritt, kein `*_setup`, das beim Start läuft.
+   Server (destruktiv) und braucht das Passwort – darum ist es ein normaler, ausdrücklich
+   aufgerufener Schritt, kein `*_setup`, das beim Start läuft.
+
+## Nachtrag 2026-11-25: ein Passwort statt zwei
+
+**Entscheidung (Nutzer):** Anmelde- und sudo-Passwort werden **ein** Feld „Passwort“.
+Der gespeicherte Feldname bleibt `anmelde_passwort`, damit vorhandene Passwörter weiter gelten (quiver
+übergibt nur Felder, die der Eintrag noch kennt). Hilfe im quiver-Fenster: „Für die Anmeldung und für sudo. Bleibt
+verschlüsselt auf diesem Gerät.“
+
+*Begründung:* In der Praxis ist es fast immer dasselbe Passwort – zwei Felder mit
+demselben Wert sind eine Fehlerquelle, und ein leeres sudo-Feld führte zu „sudo-Passwort
+fehlt“, obwohl das Passwort direkt daneben stand.
+
+**Altbestand bleibt gültig.** Der Leser nimmt in dieser Reihenfolge:
+
+1. `anmelde_passwort` – gilt für Anmeldung und sudo.
+2. `sudo_passwort` (früher) – hat bei sudo Vorrang, falls es noch übergeben wird. Das Feld
+   erscheint nicht mehr im quiver-Fenster.
+
+`Debug` zeigt von `Verbindung` weiterhin nur, *ob* ein Passwort gesetzt ist. Das Passwort
+geht ausschließlich über stdin an `sudo`, steht nie in Argumenten, Logs, Antworten oder
+Fehlern, und eine abgelehnte Schlüssel-Anmeldung fällt **nicht** still auf das Passwort
+zurück.
+
+*Preis:* Wer für Anmeldung und sudo wirklich verschiedene Passwörter braucht, kann das
+nur noch über einen alten Eintrag mit `sudo_passwort` abbilden. Das ist bewusst: die
+Regel „ein Passwort“ ist der Normalfall, der Sonderfall bleibt lesbar, wird aber nicht
+mehr angeboten.
 
 ## Abweichungen bei den Abhängigkeiten
 

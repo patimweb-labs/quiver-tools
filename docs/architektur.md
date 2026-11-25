@@ -263,7 +263,7 @@ Schlüssel-Anmeldung** nach der ersten Passwort-Anmeldung.
 
 | Modul | Aufgabe | Zustand |
 |---|---|---|
-| `werkzeug` | `Ssh` (fünf Felder, `mehrfach`, `testen`), Namen der Feldkonstanten | keiner |
+| `werkzeug` | `Ssh` (sechs Felder, `mehrfach`, `testen`), Namen der Feldkonstanten | keiner |
 | `verbindung` | `QUIVER_ZUGAENGE` → geprüfte `Verbindung`en, Auswahl (`waehlen`) | Umgebungsvariable |
 | `pfade` | `<daten>/quiver-tools/ssh/{schluessel,known_hosts}`, Rechte 0600/0700 | Dateien |
 | `schluessel` | ed25519 erzeugen, laden, `uebernehmen`, `gleiches_material` | Dateien |
@@ -280,7 +280,7 @@ Verbindung gewählt
   ├── Schlüssel vorhanden?      → nur Schlüssel; scheitert das → Fehler (kein Rückfall)
   ├── sonst Passwort vorhanden? → Passwort → Schlüssel erzeugen → authorized_keys →
   │                               Prüf-Verbindung nur mit Schlüssel → erst dann übernehmen
-  └── sonst                     → Hinweis: Anmelde-Passwort im quiver-Fenster eintragen
+  └── sonst                     → Hinweis: Passwort im quiver-Fenster eintragen
 ```
 
 Regeln, die dort gelten:
@@ -312,8 +312,10 @@ Regeln, die dort gelten:
 
 Warum Vermittler statt Nachbau, warum eine eigene Routine und wie der Sperrschutz
 funktioniert: [adr/0004-zep-offizieller-mcp.md](adr/0004-zep-offizieller-mcp.md).
-- **Zwei Passwörter, zwei Rollen.** `anmelde_passwort` dient nur der ersten Anmeldung,
-  `sudo_passwort` nur `sudo -S`. `Debug` zeigt von `Verbindung` nur, *ob* eines gesetzt ist.
+- **Ein Passwort, zwei Rollen.** `anmelde_passwort` dient der ersten Anmeldung und `sudo -S`
+  (ADR 0003, Nachtrag). Ein Altbestand mit `anmelde_passwort`/`sudo_passwort` wird
+  weiter gelesen; ein vorhandenes `sudo_passwort` hat Vorrang. `Debug` zeigt von
+  `Verbindung` nur, *ob* eines gesetzt ist.
 - **Erst prüfen, dann übernehmen.** Der neue Schlüssel liegt bis zur erfolgreichen
   Prüf-Verbindung als `.neu` neben dem Ziel; scheitert etwas, werden beide Dateien
   entfernt und der alte Schlüssel bleibt unberührt.

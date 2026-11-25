@@ -42,8 +42,8 @@ impl Werkzeug for Devops {
     fn beschreibung(&self) -> &'static str {
         "Azure DevOps je Organisation: Arbeitsitems, Kommentare, Iterationen, Repos, Branches, \
          Pull Requests, Pipelines und Läufe lesen. Anlegen und Ändern (Arbeitsitems, Kommentare, \
-         Links, Pull Requests, Abstimmungen, Pipeline-Läufe) nur, wenn der Schalter „schreiben“ \
-         für die Organisation an ist."
+         Links, Pull Requests, Abstimmungen, Pipeline-Läufe) nur, wenn der Schalter „Schreiben \
+         erlauben“ für die Organisation an ist."
     }
 
     fn felder(&self) -> Vec<Feld> {
@@ -54,8 +54,8 @@ impl Werkzeug for Devops {
                 art: FeldArt::Url,
                 pflicht: true,
                 standard: None,
-                hilfe: "z. B. https://dev.azure.com/beispiel oder ein Azure DevOps Server \
-                        https://tfs.kunde.de/tfs/DefaultCollection",
+                hilfe: "z. B. https://dev.azure.com/<firma> oder ein Azure DevOps Server \
+                        https://tfs.example.test/tfs/DefaultCollection",
                 link: None,
             },
             Feld {
@@ -153,7 +153,7 @@ mod tests {
         assert_eq!(werkzeug.name(), "devops");
         assert_eq!(werkzeug.titel(), "DevOps");
         assert!(werkzeug.beschreibung().contains("Pull Requests"));
-        assert!(werkzeug.beschreibung().contains("schreiben"));
+        assert!(werkzeug.beschreibung().contains("Schreiben erlauben"));
         assert_eq!(
             werkzeug.mehrfach(),
             Some(("Organisationen", "Organisation"))

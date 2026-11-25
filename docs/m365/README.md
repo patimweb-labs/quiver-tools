@@ -59,8 +59,8 @@ aber auch einen Versatz tragen (`…+01:00`, `…Z`) – der Zeitpunkt bleibt da
 Die Teams-Tools handeln **als der User**: Sie lesen, was er lesen darf, und was sie senden, kommt von
 ihm. Delegierte Rechte: `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`,
 `ChannelMessage.Send`, `TeamMember.Read.All`, `Chat.ReadWrite`, `User.ReadBasic.All` (in der
-App-Registrierung eingetragen,
-Admin-Zustimmung für example.test erteilt – siehe [entra-app.md](entra-app.md)).
+App-Registrierung eingetragen, Admin-Zustimmung im Herausgeber-Tenant erteilt – siehe
+[entra-app.md](entra-app.md)).
 
 | Tool | Was es tut | Graph |
 |---|---|---|
@@ -113,8 +113,8 @@ Admin-Zustimmung für example.test erteilt – siehe [entra-app.md](entra-app.md
 
 ## SharePoint, OneDrive, Planner, To Do, Kontakte, Personen und OneNote
 
-Delegierte Rechte (Aufgabe 06, in der App-Registrierung eingetragen, Admin-Zustimmung für
-example.test erteilt): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.ReadWrite`,
+Delegierte Rechte (Aufgabe 06, in der App-Registrierung eingetragen, Admin-Zustimmung im
+Herausgeber-Tenant erteilt): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.ReadWrite`,
 `Group.Read.All`, `Contacts.ReadWrite`, `People.Read`, `Notes.ReadWrite.All` – siehe
 [entra-app.md](entra-app.md).
 
@@ -352,7 +352,7 @@ Zustimmungsseite „quiver-m365 möchte: …“ → *Akzeptieren*. Erlaubt der T
 User (häufig bei `Mail.Send`), gibt ein Admin **einmal** frei:
 
 ```bash
-quiver-m365 freigeben --tenant firma.de
+quiver-m365 freigeben --tenant example.test
 ```
 
 Der Befehl öffnet die Admin-Zustimmungsseite (Rechte mit Graph-Präfix, ohne `offline_access`) und

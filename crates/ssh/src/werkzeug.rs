@@ -13,9 +13,7 @@ use quiver_tools_kern::{hinweis_zugang, Feld, FeldArt, Profil, Werkzeug};
 
 use crate::anmeldung;
 use crate::pfade::Pfade;
-use crate::verbindung::{
-    Sammlung, ANMELDE_PASSWORT, AUSTAUSCHORDNER, BENUTZER, HOST, PORT, SCHREIBEN, SUDO_PASSWORT,
-};
+use crate::verbindung::{Sammlung, AUSTAUSCHORDNER, BENUTZER, HOST, PASSWORT, PORT, SCHREIBEN};
 
 /// Kurzname: Teil der Werkzeugnamen (`ssh_exec`) und des Programms.
 pub const NAME: &str = "ssh";
@@ -51,7 +49,7 @@ impl Werkzeug for Ssh {
                 art: FeldArt::Text,
                 pflicht: true,
                 standard: None,
-                hilfe: "Anmeldename",
+                hilfe: "Anmeldename auf dem entfernten Rechner",
                 link: None,
             },
             Feld {
@@ -60,7 +58,7 @@ impl Werkzeug for Ssh {
                 art: FeldArt::Text,
                 pflicht: true,
                 standard: None,
-                hilfe: "Hostname oder IP-Adresse",
+                hilfe: "Name oder IP-Adresse des Servers",
                 link: None,
             },
             Feld {
@@ -69,26 +67,16 @@ impl Werkzeug for Ssh {
                 art: FeldArt::Zahl,
                 pflicht: false,
                 standard: Some("22"),
-                hilfe: "Standard 22",
+                hilfe: "Standard 22 – nur ändern, wenn der Server einen anderen Port nutzt",
                 link: None,
             },
             Feld {
-                name: ANMELDE_PASSWORT,
-                titel: "Anmelde-Passwort",
+                name: PASSWORT,
+                titel: "Passwort",
                 art: FeldArt::Passwort,
                 pflicht: false,
                 standard: None,
-                hilfe: "Nur für die erste Anmeldung. Danach meldet sich quiver-ssh nur noch per \
-                        Schlüssel an – das Passwort kann gelöscht werden.",
-                link: None,
-            },
-            Feld {
-                name: SUDO_PASSWORT,
-                titel: "sudo-Passwort",
-                art: FeldArt::Passwort,
-                pflicht: false,
-                standard: None,
-                hilfe: "Für Befehle mit sudo. Getrennt vom Anmelde-Passwort.",
+                hilfe: "Für die Anmeldung und für sudo. Bleibt verschlüsselt auf diesem Gerät.",
                 link: None,
             },
             Feld {
@@ -98,8 +86,8 @@ impl Werkzeug for Ssh {
                 pflicht: false,
                 standard: Some("aus"),
                 hilfe:
-                    "Erlaubt ssh_exec, ssh_schluessel_einrichten sowie Hoch- und Herunterladen. \
-                        Standard: aus – ohne diesen Schalter geht kein Befehl an den Host.",
+                    "Erlaubt Befehle, das Einrichten des Schlüssels sowie Hoch- und Herunterladen. \
+                        Standard: aus – ohne diesen Schalter geht nichts an den Server.",
                 link: None,
             },
             Feld {
@@ -108,8 +96,8 @@ impl Werkzeug for Ssh {
                 art: FeldArt::Ordner,
                 pflicht: false,
                 standard: None,
-                hilfe: "Ordner auf diesem Gerät für ssh_upload und ssh_download. Ohne dieses Feld \
-                        gibt es beide Werkzeuge nicht; Dateien bleiben immer in diesem Ordner.",
+                hilfe: "Ordner auf diesem Gerät für das Hoch- und Herunterladen. Ohne dieses Feld \
+                        werden keine Dateien übertragen; jede Datei bleibt in diesem Ordner.",
                 link: None,
             },
         ]
@@ -158,7 +146,7 @@ mod tests {
         assert_eq!(werkzeug.mehrfach(), Some(("Verbindungen", "Verbindung")));
 
         let felder = werkzeug.felder();
-        assert_eq!(felder.len(), 7);
+        assert_eq!(felder.len(), 6);
         assert_eq!(
             felder.iter().map(|feld| feld.name).collect::<Vec<_>>(),
             vec![
@@ -166,7 +154,6 @@ mod tests {
                 "host",
                 "port",
                 "anmelde_passwort",
-                "sudo_passwort",
                 "schreiben",
                 "austauschordner"
             ]
@@ -179,17 +166,29 @@ mod tests {
         assert_eq!(felder[2].art, FeldArt::Zahl);
         assert_eq!(felder[2].standard, Some("22"));
         assert!(!felder[2].pflicht);
+        // Ein Feld für Anmeldung und sudo; ein eigenes sudo-Feld gibt es nicht mehr.
+        assert_eq!(felder[3].titel, "Passwort");
         assert_eq!(felder[3].art, FeldArt::Passwort);
         assert!(!felder[3].pflicht);
-        assert!(felder[3].hilfe.contains("erste Anmeldung"));
-        assert!(felder[3].hilfe.contains("gelöscht"));
-        assert_eq!(felder[4].art, FeldArt::Passwort);
-        assert!(felder[4].hilfe.contains("sudo"));
+        assert_eq!(
+            felder[3].hilfe,
+            "Für die Anmeldung und für sudo. Bleibt verschlüsselt auf diesem Gerät."
+        );
+        assert!(
+            !felder.iter().any(|feld| feld.name == "sudo_passwort"),
+            "das alte sudo-Feld steht noch im Eintrag"
+        );
         // Der Schreibschalter ist im Zweifel aus; der Austauschordner ist eine Ordnerwahl.
-        assert_eq!(felder[5].art, FeldArt::Schalter);
-        assert_eq!(felder[5].standard, Some("aus"));
-        assert_eq!(felder[6].art, FeldArt::Ordner);
+        assert_eq!(felder[4].art, FeldArt::Schalter);
+        assert_eq!(felder[4].standard, Some("aus"));
+        assert_eq!(felder[5].art, FeldArt::Ordner);
         // Alle Hilfe-Texte erklären das Feld, keiner ist leer.
         assert!(felder.iter().all(|feld| !feld.hilfe.is_empty()));
+        // Keine Entwicklersprache in den Hilfetexten.
+        for feld in &felder {
+            let hilfe = feld.hilfe.to_lowercase();
+            assert!(!hilfe.contains("attrappe"), "{}", feld.name);
+            assert!(!hilfe.contains("gepusht"), "{}", feld.name);
+        }
     }
 }

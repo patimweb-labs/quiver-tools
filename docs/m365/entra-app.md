@@ -2,7 +2,8 @@
 
 ## Die eine Registrierung (erledigt)
 
-`quiver-m365` ist **eine** Multi-Tenant-App im Tenant von example.test:
+`quiver-m365` ist **eine** Multi-Tenant-App im Tenant des Herausgebers (die Firma steht hier
+absichtlich nicht; die eingebaute Client-ID genügt):
 
 | | |
 |---|---|
@@ -11,7 +12,7 @@
 | Plattform | Public client/native, Redirects `http://127.0.0.1` und `http://localhost` (jeder Port) |
 | Öffentliche Client-Flows | **aus** (2026-11-24): keine Gerätecode-Anmeldung; Browser mit PKCE und Loopback braucht sie nicht |
 | Rechte (delegiert, Graph) | `User.Read`, `Mail.ReadWrite`, `Mail.Send`, `Calendars.ReadWrite`, `Files.Read.All`, `offline_access`; für Teams (2026-11-24): `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`, `ChannelMessage.Send`, `TeamMember.Read.All`, `Chat.ReadWrite`, `User.ReadBasic.All`; für SharePoint/OneDrive, Planner/To Do, Kontakte/Personen und OneNote (2026-11-24): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.ReadWrite`, `Group.Read.All`, `Contacts.ReadWrite`, `People.Read`, `Notes.ReadWrite.All` |
-| Zuweisung erforderlich (example.test) | **an** (2026-11-24): nur zugewiesene User oder Gruppen dürfen sich anmelden; andere sehen AADSTS50105. Freischalten im Entra-Portal: Unternehmensanwendungen → quiver-m365 → Benutzer und Gruppen |
+| Zuweisung erforderlich (Herausgeber-Tenant) | **an** (2026-11-24): nur zugewiesene User oder Gruppen dürfen sich anmelden; andere sehen AADSTS50105. Freischalten im Entra-Portal: Unternehmensanwendungen → quiver-m365 → Benutzer und Gruppen |
 | Azure DevOps | Recht am 2026-11-24 entfernt (quiver-devops nutzt PAT). **Offen:** die Admin-Zustimmung `user_impersonation` im Entra-Portal widerrufen |
 | Secret | keins |
 
@@ -19,7 +20,7 @@ Angelegt 2026-11-23 mit der Azure CLI (`az ad app create … --sign-in-audience 
 `--public-client-redirect-uris http://localhost --is-fallback-public-client true`, dann
 `az ad app permission add`).
 
-**Admin-Zustimmung für example.test** erteilt am 2026-11-23, für Teams und DevOps erneut am
+**Admin-Zustimmung im Herausgeber-Tenant** erteilt am 2026-11-23, für Teams und DevOps erneut am
 2026-11-24 und für die Rechte aus Aufgabe 06 (`Sites.ReadWrite.All`, `Files.ReadWrite.All`,
 `Tasks.ReadWrite`, `Group.Read.All`, `Contacts.ReadWrite`, `People.Read`, `Notes.ReadWrite.All`)
 am 2026-11-24 (`az ad app permission admin-consent`, alle User des Tenants). Wer vor dem 24.11.
@@ -36,13 +37,13 @@ Rohfehler zu zeigen. Auch dafür ist nach dem Nachtrag ein **neues** Anmelden n�
   `quiver-m365 anmelden` auf) zeigt Microsoft „quiver-m365 möchte: …“ → *Akzeptieren*. Fertig.
   Ein Tool-Aufruf öffnet **keinen** Browser.
 - **Firma (Admin):** Erlaubt der Tenant keine User-Zustimmung, gibt ein Admin **einmal** frei:
-  `quiver-m365 freigeben --tenant firma.de` (öffnet die Admin-Zustimmungsseite im Browser).
+  `quiver-m365 freigeben --tenant example.test` (öffnet die Admin-Zustimmungsseite im Browser).
 
 ## Für Kollegen und Firmen: mitgelieferte App benutzen
 
 Nichts anzulegen. Einmal freigeben, dann meldet sich jeder im quiver-Fenster an.
 
-1. **Freigeben (Admin, einmal je Tenant):** `quiver-m365 freigeben --tenant firma.de` öffnet die Zustimmungsseite. Als Admin anmelden, Rechte prüfen, **Akzeptieren**. Danach gibt es im Tenant die Unternehmensanwendung „quiver-m365“.
+1. **Freigeben (Admin, einmal je Tenant):** `quiver-m365 freigeben --tenant example.test` öffnet die Zustimmungsseite. Als Admin anmelden, Rechte prüfen, **Akzeptieren**. Danach gibt es im Tenant die Unternehmensanwendung „quiver-m365“.
 2. **Eingrenzen (empfohlen):** Entra Admin Center → **Unternehmensanwendungen → quiver-m365 → Eigenschaften → Zuweisung erforderlich: Ja**, dann unter **Benutzer und Gruppen** zuweisen. Andere sehen `AADSTS50105`.
 3. **Anmelden (jeder):** quiver-Fenster → Tools → Microsoft 365 → **Anmelden**.
 

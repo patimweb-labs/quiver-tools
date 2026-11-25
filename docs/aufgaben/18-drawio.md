@@ -1,6 +1,6 @@
 # 18 – quiver-drawio
 
-Zuerst `16-diagramme.md`. ADR 0012. Formatquellen (nur lesen): /private/tmp/claude-501/-Users-patrickweppelmann-Documents-Workspace/51619e8b-8735-441c-bc49-6a3f3919e02d/scratchpad/diagramme/drawio (`mxfile.xsd`, Referenzen; `index.js` zeigt den Link).
+Zuerst `16-diagramme.md`. ADR 0012. Formatquellen (nur lesen): lokaler Arbeitsordner (`drawio`) (`mxfile.xsd`, Referenzen; `index.js` zeigt den Link).
 
 - `mxfile > diagram(id,name) > mxGraphModel > root > mxCell`, Zellen 0 und 1, mehrere Seiten (`seite` als Id oder Name; mehrdeutig → Kandidaten; `drawio_seite_hinzufuegen`). **Komprimierte** `diagram`-Inhalte lesen (Base64 → raw inflate → URL-dekodieren, höchstens 20 MB entpackt) und unkomprimiert schreiben.
 - XML sicher: DTD/Entities ablehnen, Tiefe und Größe begrenzt, Attribute sauber maskiert. `UserObject`/`object`-Hüllen und HTML-Labels erhalten. Neue Labels als Text (HTML maskiert). Stil-Zeichenkette einzeln ändern, Unbekanntes bleibt. Keine `link`s außer http(s)/mailto.

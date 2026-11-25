@@ -1130,28 +1130,59 @@ fn kaputter_server(nur_aenderungen: bool) -> String {
                 break;
             };
             std::thread::spawn(move || {
-                let mut puffer = [0u8; 8192];
-                let gelesen = std::io::Read::read(&mut verbindung, &mut puffer).unwrap_or(0);
-                let anfrage = String::from_utf8_lossy(&puffer[..gelesen]).to_string();
+                let anfrage = anfrage_lesen(&mut verbindung);
                 let lesend = anfrage.starts_with("GET");
                 let antwort = if nur_aenderungen && lesend {
                     format!(
-                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: \
+                        "HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: \
                          {}\r\n\r\n{KAPUTTE_SEITE}",
                         KAPUTTE_SEITE.len()
                     )
                 } else {
                     // Der Rumpf ist kürzer als angekündigt: das Lesen scheitert.
-                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: \
+                    "HTTP/1.1 200 OK\r\nconnection: close\r\ncontent-type: application/json\r\ncontent-length: \
                      1000\r\n\r\n{\"results\":["
                         .to_string()
                 };
                 let _ = std::io::Write::write_all(&mut verbindung, antwort.as_bytes());
                 let _ = std::io::Write::flush(&mut verbindung);
+                // Geordnet schließen: erst das eigene Ende, dann warten, bis
+                // die Gegenseite fertig ist. Sonst bricht Windows hart ab (RST)
+                // und der Client sieht die Antwort nie.
+                let _ = verbindung.shutdown(std::net::Shutdown::Write);
+                let mut rest = [0u8; 1024];
+                while matches!(std::io::Read::read(&mut verbindung, &mut rest), Ok(n) if n > 0) {}
             });
         }
     });
     adresse
+}
+
+/// Die ganze Anfrage lesen: Kopf und so viel Rumpf, wie `Content-Length` nennt.
+/// Bleiben Bytes ungelesen, verwirft Windows beim Schließen die Antwort.
+fn anfrage_lesen(verbindung: &mut std::net::TcpStream) -> String {
+    let _ = verbindung.set_read_timeout(Some(std::time::Duration::from_secs(5)));
+    let mut daten = Vec::new();
+    let mut puffer = [0u8; 8192];
+    loop {
+        let gelesen = std::io::Read::read(verbindung, &mut puffer).unwrap_or(0);
+        if gelesen == 0 {
+            break;
+        }
+        daten.extend_from_slice(&puffer[..gelesen]);
+        let text = String::from_utf8_lossy(&daten).to_ascii_lowercase();
+        if let Some(ende) = daten.windows(4).position(|teil| teil == b"\r\n\r\n") {
+            let laenge = text
+                .lines()
+                .find_map(|zeile| zeile.strip_prefix("content-length:"))
+                .and_then(|wert| wert.trim().parse::<usize>().ok())
+                .unwrap_or(0);
+            if daten.len() >= ende + 4 + laenge {
+                break;
+            }
+        }
+    }
+    String::from_utf8_lossy(&daten).to_string()
 }
 
 /// Jede Antwort ist nicht lesbar.

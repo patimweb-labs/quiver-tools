@@ -669,7 +669,14 @@ fn suchwert(wert: &Option<String>) -> Option<String> {
     wert.as_deref()
         .map(str::trim)
         .filter(|wert| !wert.is_empty())
-        .map(|wert| format!("\"{}\"", wert.replace('\\', "\\\\").replace('"', "\\\"")))
+        .map(|wert| {
+            // Ein Umbruch beendete den Befehl: Steuerzeichen werden Leerzeichen.
+            let wert: String = wert
+                .chars()
+                .map(|c| if c.is_control() { ' ' } else { c })
+                .collect();
+            format!("\"{}\"", wert.replace('\\', "\\\\").replace('"', "\\\""))
+        })
 }
 
 /// `YYYY-MM-DD` → `02-Sep-2026` (RFC 3501 verlangt dieses Format).

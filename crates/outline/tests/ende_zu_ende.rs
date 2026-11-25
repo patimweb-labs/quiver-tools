@@ -261,11 +261,26 @@ fn eintrag_liefert_den_bibliothekseintrag_als_json() {
         eintrag["laufzeit"]["umgebung"]["OUTLINE_API_KEY"],
         json!("${api_key}")
     );
-    assert_eq!(eintrag["felder"].as_array().unwrap().len(), 2);
+    assert_eq!(eintrag["felder"].as_array().unwrap().len(), 6);
     assert_eq!(eintrag["felder"][0]["name"], json!("url"));
     assert_eq!(eintrag["felder"][0]["quelle"], json!("client"));
     assert_eq!(eintrag["felder"][0]["pflicht"], json!(true));
     assert_eq!(eintrag["felder"][1]["quelle"], json!("geheim"));
+    // Härtung: Adresse ohne TLS nur mit Schalter, eigenes CA-Zertifikat,
+    // Arbeitsordner und ein Schreibschalter, der im Zweifel aus ist.
+    assert_eq!(
+        eintrag["laufzeit"]["umgebung"]["OUTLINE_UNVERSCHLUESSELT_ERLAUBEN"],
+        json!("${unverschluesselt_erlauben}")
+    );
+    let schalter = eintrag["felder"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|feld| feld["name"] == json!("schreiben"))
+        .expect("Schreibschalter fehlt");
+    assert_eq!(schalter["art"], json!("schalter"));
+    assert_eq!(schalter["standard"], json!("aus"));
+    assert_eq!(schalter["quelle"], json!("client"));
     assert!(eintrag.get("einrichtung").is_none(), "{eintrag}");
 }
 

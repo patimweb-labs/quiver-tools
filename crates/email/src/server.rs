@@ -12,6 +12,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use quiver_tools_kern::mcp::{profile_antwort, profile_tool};
+use quiver_tools_kern::schutz::{schreibschutz, TITEL_SCHREIBEN};
 use quiver_tools_kern::{antwort, zugang, OhneProfil, Profil, Zugang};
 use rmcp::handler::server::tool::schema_for_type;
 use rmcp::model::{
@@ -153,8 +154,27 @@ impl<F: Fabrik> EmailServer<F> {
         ]
     }
 
+    /// Ist das Schreiben für diesen Zugang freigegeben? (Standard: nein.)
+    pub fn schreiben_erlaubt(&self) -> bool {
+        quiver_tools_kern::schalter_aus(self.zugang.wert(crate::werkzeug::SCHREIBEN))
+    }
+
     /// Ein Werkzeug aufrufen. Auch der Weg, den die Tests nehmen.
+    ///
+    /// Die Schreibsperre steht vor dem Verteiler: ohne Schalter antwortet ein
+    /// veränderndes Werkzeug mit einem Hinweis, und es geht keine Verbindung
+    /// zum Postfach hinaus.
     pub async fn aufrufen(&self, name: &str, argumente: Option<JsonObject>) -> Ergebnis {
+        if let Err(antwort) = schreibschutz(
+            &self.werkzeuge(),
+            name,
+            self.zugang.profil().is_ok(),
+            self.schreiben_erlaubt(),
+            self.zugang.titel(),
+            TITEL_SCHREIBEN,
+        ) {
+            return Ok(antwort);
+        }
         match name {
             "email_list_mailboxes" => self.postfaecher().await,
             "email_fetch" => self.liste(argumente).await,
@@ -495,13 +515,15 @@ impl<F: Fabrik> EmailServer<F> {
             .unwrap_or_default()
             .iter()
             .map(|f| imap_flag(f))
-            .collect();
+            .collect::<Result<_, _>>()
+            .map_err(|text| McpError::invalid_params(text, None))?;
         let weg: Vec<String> = p
             .remove
             .unwrap_or_default()
             .iter()
             .map(|f| imap_flag(f))
-            .collect();
+            .collect::<Result<_, _>>()
+            .map_err(|text| McpError::invalid_params(text, None))?;
         let profil = match self.hole_profil() {
             Ok(profil) => profil,
             Err(ohne) => return ohne.in_ergebnis(),

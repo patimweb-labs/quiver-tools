@@ -18,6 +18,10 @@
 //! Formulare, und diese Steuerung meldet Schritt für Schritt, was sie sieht –
 //! Formular- und Feldnamen, **nie** Werte. Eine Seite, die sie nicht einordnen
 //! kann, beendet den Ablauf mit einer Meldung.
+//!
+//! Ob Benutzer und Passwort tatsächlich abgeschickt wurden, sagt der Ablauf
+//! hinterher ([`Routine::zugangsdaten_gesendet`]): nur dann zählt ein
+//! Fehlschlag bei ZEP als Fehlversuch (Aufgabe 11).
 
 use std::time::Duration;
 
@@ -95,6 +99,9 @@ pub struct Routine<'a> {
     bericht: Vec<String>,
     /// Das Gerüst der Seite, an der der Ablauf hängen blieb (ohne Werte).
     unklare_seite: Option<String>,
+    /// Wurden Benutzer und Passwort abgeschickt und beantwortet? Nur dann
+    /// zählt ein Fehlschlag bei ZEP als Fehlversuch.
+    zugangsdaten_gesendet: bool,
 }
 
 impl<'a> Routine<'a> {
@@ -105,6 +112,7 @@ impl<'a> Routine<'a> {
             passwort,
             bericht: Vec::new(),
             unklare_seite: None,
+            zugangsdaten_gesendet: false,
         }
     }
 
@@ -116,6 +124,15 @@ impl<'a> Routine<'a> {
     /// Das Gerüst der Seite, an der der Ablauf hängen blieb – ohne Werte.
     pub fn unklare_seite(&self) -> Option<&str> {
         self.unklare_seite.as_deref()
+    }
+
+    /// Wurden Benutzer und Passwort abgeschickt und beantwortet?
+    ///
+    /// Nur dann hat ZEP einen Anmeldeversuch gesehen; ein Fehler davor (Netz,
+    /// Metadaten, Registrierung, unbekannte Seite vor dem Formular, fremder
+    /// Host) ist kein Fehlversuch und darf die Routine nicht sperren.
+    pub fn zugangsdaten_gesendet(&self) -> bool {
+        self.zugangsdaten_gesendet
     }
 
     /// Den Bericht übernehmen.
@@ -157,6 +174,8 @@ impl<'a> Routine<'a> {
         let mut methode = Methode::Get;
         let mut rumpf: Option<Vec<(String, String)>> = None;
         let mut anmeldung_gesendet = false;
+        // Trägt die nächste Anfrage Benutzer und Passwort?
+        let mut sendet_zugangsdaten = false;
         // Wurde nach dem Absenden weitergeleitet? Dann hat der Dienst die
         // Anmeldung angenommen.
         let mut nach_anmeldung_weitergeleitet = false;
@@ -164,6 +183,13 @@ impl<'a> Routine<'a> {
         for nummer in 2..=MAX_SCHRITTE {
             let gesendet = kekse.namen_fuer(&ziel);
             let antwort = self.sende(methode, &ziel, rumpf.take(), &mut kekse).await?;
+            // Erst wenn die Anfrage mit den Zugangsdaten beantwortet wurde, hat
+            // ZEP einen Anmeldeversuch gesehen. Ein Netzfehler beim Absenden
+            // selbst zählt nicht: die Zugangsdaten kamen nicht an.
+            if sendet_zugangsdaten {
+                self.zugangsdaten_gesendet = true;
+                sendet_zugangsdaten = false;
+            }
             // Nur Namen, Domain und Pfad – nie Werte.
             self.melde(format!(
                 "{nummer}. Kekse gesendet: {gesendet}; danach gespeichert: {}",
@@ -258,6 +284,7 @@ impl<'a> Routine<'a> {
                         methode = methode_von(&formular.methode);
                         rumpf = Some(paare);
                         anmeldung_gesendet = true;
+                        sendet_zugangsdaten = true;
                         continue;
                     }
 
@@ -388,13 +415,14 @@ impl<'a> Routine<'a> {
             )));
         }
 
-        let text = antwort.text().await.map_err(|fehler| {
-            RoutineFehler::Netz(format!(
-                "Die Antwort von {} ist nicht lesbar: {}",
-                kurz(ziel),
-                fehler.without_url()
-            ))
-        })?;
+        let text = quiver_tools_kern::net::text_begrenzt(antwort)
+            .await
+            .map_err(|fehler| {
+                RoutineFehler::Netz(format!(
+                    "Die Antwort von {} ist nicht lesbar: {fehler}",
+                    kurz(ziel)
+                ))
+            })?;
         Ok(Antwort::Seite(text))
     }
 

@@ -857,6 +857,7 @@ mod tests {
             projekt: Some("SCODA".into()),
             pat: "pat-4711".into(),
             schreiben: false,
+            ca_zertifikat: None,
         }
     }
 
@@ -881,7 +882,10 @@ mod tests {
         let text = status(&[organisation()]);
         assert!(text.contains("1 Organisation(en)"), "{text}");
         assert!(text.contains("neoimpulse"), "{text}");
-        assert!(text.contains("Projekt SCODA"), "{text}");
+        assert!(
+            text.contains("Standardprojekt SCODA (frei wählbar)"),
+            "{text}"
+        );
         assert!(text.contains("Schreiben aus"), "{text}");
         assert!(!text.contains("pat-4711"), "{text}");
         assert_eq!(status(&[]), "Keine Azure-DevOps-Organisation eingerichtet.");

@@ -92,13 +92,24 @@ Delegierte Berechtigungen (Mail, Kalender, Dateien):
 
 **Teams (Aufgabe 05, 2026-11-24)** ergänzt delegiert:
 `Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send
-Chat.ReadWrite User.ReadBasic.All`.
+Chat.ReadWrite User.ReadBasic.All`; **Aufgabe 07 (2026-11-24)** ergänzt `TeamMember.Read.All`
+(ohne dieses Recht antwortet Graph auf `GET /teams/{id}/members` mit 403).
 *Begründung:* Alle Teams-Tools handeln **als der User**; es gibt bewusst keine App-Berechtigung
 (`*.All` mit Application-Rechten), weil sie jedes Postfach und jeden Chat lesen dürfte.
 *Preis:* `ChannelMessage.Read.All` und `ChannelMessage.Send` verlangen in vielen Tenants eine
 Admin-Zustimmung. Kommt ein Scope später dazu, antwortet der Token-Endpunkt einmal mit
 `AADSTS65001`/`consent_required`; das Tool sagt dann, der User solle im quiver-Fenster erneut auf
 „Anmelden“ klicken – es öffnet keinen Browser und löscht das Refresh-Token nicht.
+
+**Aufgabe 06 (2026-11-24)** ergänzt delegiert: `Sites.ReadWrite.All`,
+`Files.ReadWrite.All`, `Tasks.ReadWrite`, `Group.Read.All`, `Contacts.ReadWrite`,
+`People.Read`, `Notes.ReadWrite.All`.
+*Begründung:* SharePoint/OneDrive, Planner/To Do, Kontakte/Personen und OneNote laufen alle über
+Graph und handeln **als der User**; auch hier keine App-Berechtigung. `Sites.ReadWrite.All` und
+`Files.ReadWrite.All` decken Lesen **und** Schreiben ab, weil Dateien und Listen angelegt werden.
+*Preis:* Diese Scopes verlangen fast überall eine Admin-Zustimmung; die ist für neoimpulse.de
+erteilt (`docs/entra-app.md`), andere Tenants geben einmal im Browser frei. Fehlt sie, sagt das
+Tool es – ohne Browser und ohne das Refresh-Token zu löschen.
 
 ### Teams-Tools
 
@@ -126,6 +137,46 @@ Nachrichten werden HTML→Text gewandelt und auf `max_zeichen` (Standard 2000) g
 System-Nachrichten fehlen; Senden escaped Text und wiederholt **nie** automatisch (429 beim Lesen
 schon, höchstens zweimal).
 
+### Tools aus Aufgabe 06
+
+| Tool | Annotation | Graph |
+|---|---|---|
+| `sharepoint_sites` | lesend | `GET /sites?search=` |
+| `sharepoint_bibliotheken` | lesend | `GET /sites/{site}/drives` |
+| `dateien_liste` | lesend | `GET /me/drive/root/children`, `…/root:/{pfad}:/children` |
+| `datei_lesen` | lesend | `GET …/items/{id}`, `…/items/{id}/content` (Text; Office als PDF) |
+| `datei_hochladen` | destruktiv | `PUT …/root:/{pfad}:/content` (≤ 4 MB, `conflictBehavior=rename`) |
+| `ordner_anlegen` | destruktiv | `POST …/children` |
+| `sharepoint_listen` | lesend | `GET /sites/{site}/lists` |
+| `sharepoint_listeneintraege` | lesend | `GET …/lists/{liste}/items?$expand=fields` |
+| `sharepoint_listeneintrag_anlegen` | destruktiv | `POST …/lists/{liste}/items` |
+| `sharepoint_listeneintrag_aendern` | destruktiv | `PATCH …/items/{id}/fields` |
+| `planner_plaene` | lesend | `GET /me/planner/plans`, `GET /groups/{gruppe}/planner/plans` |
+| `planner_aufgaben` | lesend | `GET /planner/plans/{plan}/tasks` (+ Buckets), `GET /me/planner/tasks` |
+| `planner_aufgabe_anlegen` | destruktiv | `POST /planner/tasks` |
+| `planner_aufgabe_aendern` | destruktiv | `PATCH /planner/tasks/{id}` mit `If-Match` (ETag) |
+| `todo_listen` | lesend | `GET /me/todo/lists` |
+| `todo_aufgaben` | lesend | `GET /me/todo/lists/{liste}/tasks` |
+| `todo_aufgabe_anlegen` | destruktiv | `POST /me/todo/lists/{liste}/tasks` |
+| `todo_aufgabe_erledigen` | destruktiv | `PATCH …/tasks/{id}` (`status`) |
+| `kontakte_suchen` | lesend | `GET /me/contacts?$search=` |
+| `kontakt_anlegen` | destruktiv | `POST /me/contacts` |
+| `personen_suchen` | lesend | `GET /me/people?$search=` |
+| `onenote_notizbuecher` | lesend | `GET /me/onenote/notebooks` |
+| `onenote_abschnitte` | lesend | `GET /me/onenote/sections`, `…/notebooks/{id}/sections` |
+| `onenote_seiten` | lesend | `GET …/sections/{id}/pages` |
+| `onenote_seite_lesen` | lesend | `GET …/pages/{id}`, `…/pages/{id}/content` (HTML → Text) |
+| `onenote_seite_anlegen` | destruktiv | `POST …/sections/{id}/pages` (Titel und Text escaped) |
+
+Festlegungen: Namen werden zu Ids aufgelöst (mehrdeutig → Kandidaten, keine Aktion); Text wird auf
+`max_zeichen` gekürzt und mit `gekuerzt`/`laenge_gesamt` ausgewiesen; Office-Dateien liefert Graph
+nur als PDF (kein Text), PDF und Binäres nur als Metadaten; ein Upload über 4 MB wird **ohne
+Anfrage** abgelehnt; Planner ändert nur mit `If-Match`, ohne ETag gar nicht; POST/PATCH/PUT werden
+nie automatisch wiederholt, lesende Aufrufe nach 429/503 höchstens zweimal.
+
+**Offen** (siehe `docs/offen.md`): echte Office-/PDF-Textextraktion, Upload-Sessions über 4 MB,
+`If-Match` bei Listeneinträgen, Löschen von Planner-Aufgaben, Checklisten in To Do.
+
 | Tool | Graph | Hinweis |
 |---|---|---|
 | `profil` | `GET /me` | Name, Mail, Abteilung |
@@ -144,8 +195,11 @@ Fehler von Graph kommen als MCP-Fehler mit Graph-Code und Text (ohne Tokens).
 
 ```
 crates/anmeldung   PKCE-Ablauf, Loopback-Lauscher, Erneuern, Tresor (Datei/Speicher)
-crates/graph       Graph-Client: GET/POST mit Token, 401 → erneuern, Modelle der Antworten
+crates/graph       Graph-Client: GET/POST/PATCH/PUT mit Token, 401 → erneuern, Text und JSON,
+                   Modelle der Antworten
 crates/mcp         rmcp-Server über stdio, die Tools aus §4; Programm `quiver-m365`
+                   (Teams: `teams*.rs`, Aufgabe 06: `dateien*`, `planner*`, `kontakte*`,
+                   `onenote*`, dazu `aufloesen.rs` für Namen → Ids)
 ```
 
 Richtung: `anmeldung ← graph ← mcp`.

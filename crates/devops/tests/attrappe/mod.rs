@@ -62,6 +62,15 @@ pub const LAUF: u64 = 1234;
 pub const LOG: u64 = 5;
 /// Die Iteration der Attrappe.
 pub const ITERATION: &str = "sprint-1";
+/// Die einzige `api-version`, die die Attrappe für `connectionData` annimmt.
+///
+/// Absichtlich eine eigene Zeichenkette und **nicht** die Konstante aus dem
+/// Client: sonst würde eine falsche Version im Code nicht auffallen.
+pub const VORSCHAU_VERSION: &str = "7.1-preview.1";
+/// Die Meldung, die Azure DevOps für einen Vorschau-Endpunkt mit falscher
+/// `api-version` gibt (`InvalidApiVersionException`).
+pub const VORSCHAU_MELDUNG: &str = "The resource is under preview. Please, use the \
+     api-version '7.1-preview.1' or later.";
 
 /// Ein Aufruf, den die Attrappe gesehen hat.
 #[derive(Debug, Clone)]
@@ -156,6 +165,8 @@ struct Zustand {
     anmeldeseite: AtomicBool,
     /// So viele der nächsten Aufrufe werden mit `429` abgelehnt.
     zu_viele: AtomicUsize,
+    /// `connectionData` antwortet mit `400` – auch bei richtiger `api-version`.
+    verbindungsdaten_fehler: AtomicBool,
 }
 
 /// Eine laufende Attrappe.
@@ -182,6 +193,7 @@ impl Attrappe {
             pat_ungueltig: AtomicBool::new(false),
             anmeldeseite: AtomicBool::new(false),
             zu_viele: AtomicUsize::new(0),
+            verbindungsdaten_fehler: AtomicBool::new(false),
         });
 
         let app = Router::new()
@@ -217,6 +229,16 @@ impl Attrappe {
     /// Die nächsten `anzahl` Aufrufe werden mit `429` abgelehnt.
     pub fn zu_viele_anfragen(&self, anzahl: usize) {
         self.zustand.zu_viele.store(anzahl, Ordering::SeqCst);
+    }
+
+    /// `connectionData` antwortet mit `400` und der Vorschau-Meldung.
+    ///
+    /// Damit lässt sich prüfen, dass ein solcher Fehler als Fehler ankommt –
+    /// und nicht etwa als Benutzer-ID weiterläuft.
+    pub fn verbindungsdaten_ablehnen(&self) {
+        self.zustand
+            .verbindungsdaten_fehler
+            .store(true, Ordering::SeqCst);
     }
 }
 
@@ -273,17 +295,17 @@ async fn bearbeiten(State(zustand): State<Arc<Zustand>>, anfrage: Request) -> Re
     }
 
     let muster = pfad.to_lowercase();
+
+    // `connectionData` mit `400` ablehnen (Testfall): der Fehler muss ankommen.
+    if zustand.verbindungsdaten_fehler.load(Ordering::SeqCst)
+        && muster.contains("/_apis/connectiondata")
+    {
+        return als_antwort(vorschau_fehler());
+    }
+
     let antwort = beantworten(&muster, &methode, &abfrage, &rumpf);
     match antwort {
-        Some(Antwort::Json(wert)) => (
-            StatusCode::OK,
-            [("content-type", "application/json")],
-            wert.to_string(),
-        )
-            .into_response(),
-        Some(Antwort::Text(text)) => {
-            (StatusCode::OK, [("content-type", "text/plain")], text).into_response()
-        }
+        Some(antwort) => als_antwort(antwort),
         None => (
             StatusCode::NOT_FOUND,
             [("content-type", "application/json")],
@@ -293,14 +315,58 @@ async fn bearbeiten(State(zustand): State<Arc<Zustand>>, anfrage: Request) -> Re
     }
 }
 
+/// Eine Antwort der Attrappe in eine HTTP-Antwort übersetzen.
+fn als_antwort(antwort: Antwort) -> Response {
+    match antwort {
+        Antwort::Json(wert) => (
+            StatusCode::OK,
+            [("content-type", "application/json; charset=utf-8")],
+            wert.to_string(),
+        )
+            .into_response(),
+        Antwort::Text(text) => {
+            (StatusCode::OK, [("content-type", "text/plain")], text).into_response()
+        }
+        Antwort::Fehler { status, text } => (
+            status,
+            [("content-type", "application/json; charset=utf-8")],
+            text,
+        )
+            .into_response(),
+    }
+}
+
 /// Was die Attrappe antwortet.
 enum Antwort {
     Json(Value),
     Text(String),
+    /// Ein Fehler mit Status und Rumpf (etwa `400` bei falscher `api-version`).
+    Fehler {
+        status: StatusCode,
+        text: String,
+    },
 }
 
 fn json_wert(wert: Value) -> Option<Antwort> {
     Some(Antwort::Json(wert))
+}
+
+/// Der `400`, den Azure DevOps für einen Vorschau-Endpunkt mit falscher
+/// `api-version` gibt.
+fn vorschau_fehler() -> Antwort {
+    Antwort::Fehler {
+        status: StatusCode::BAD_REQUEST,
+        text: json!({
+            "$id": "1",
+            "innerException": null,
+            "message": VORSCHAU_MELDUNG,
+            "typeName": "Microsoft.TeamFoundation.Framework.Server.InvalidApiVersionException, Microsoft.TeamFoundation.Framework.Server",
+            "typeKey": "InvalidApiVersionException",
+            "errorCode": 0,
+            "eventId": 3000
+        })
+        .to_string(),
+    }
 }
 
 fn beantworten(
@@ -315,6 +381,11 @@ fn beantworten(
 
     // ---------------------------------------------------------- Verbindung
     if werte("/_apis/connectiondata") {
+        // Wie der echte Dienst: `connectionData` gibt es in 7.1 nur als
+        // Vorschau. Jede andere `api-version` ist ein `400`.
+        if abfrage.get("api-version").map(String::as_str) != Some(VORSCHAU_VERSION) {
+            return Some(vorschau_fehler());
+        }
         return json_wert(json!({
             "authenticatedUser": {
                 "id": BENUTZER_ID,
@@ -330,8 +401,18 @@ fn beantworten(
         return json_wert(json!({
             "count": 2,
             "value": [
-                { "id": PROJEKT_ID, "name": PROJEKT, "state": "wellFormed", "visibility": "private" },
-                { "id": "p2", "name": "Anderes", "state": "wellFormed", "visibility": "public" }
+                {
+                    "id": PROJEKT_ID, "name": PROJEKT, "state": "wellFormed",
+                    "visibility": "private", "revision": 12,
+                    "url": format!("https://dev.azure.com/x/_apis/projects/{PROJEKT_ID}"),
+                    "_links": { "self": { "href": format!("https://dev.azure.com/x/_apis/projects/{PROJEKT_ID}") } }
+                },
+                {
+                    "id": "p2", "name": "Anderes", "state": "wellFormed",
+                    "visibility": "public",
+                    "url": "https://dev.azure.com/x/_apis/projects/p2",
+                    "_links": { "self": { "href": "https://dev.azure.com/x/_apis/projects/p2" } }
+                }
             ]
         }));
     }
@@ -593,8 +674,13 @@ fn beantworten(
     if pfad.ends_with("/_apis/git/repositories") {
         return json_wert(json!({
             "count": 1,
-            "value": [ { "id": REPO_ID, "name": REPO,
-                         "defaultBranch": "refs/heads/main", "size": 4096 } ]
+            "value": [ {
+                "id": REPO_ID, "name": REPO,
+                "defaultBranch": "refs/heads/main", "size": 4096,
+                "url": format!("https://dev.azure.com/x/_apis/git/repositories/{REPO_ID}"),
+                "remoteUrl": format!("https://dev.azure.com/x/{PROJEKT}/_git/{REPO}"),
+                "_links": { "self": { "href": format!("https://dev.azure.com/x/_apis/git/repositories/{REPO_ID}") } }
+            } ]
         }));
     }
 
@@ -603,10 +689,15 @@ fn beantworten(
 
 /// Ein Arbeitsitem der Attrappe.
 fn item(id: u64) -> Value {
+    // Form nach der Azure-DevOps-REST-Spezifikation 7.1: `url`, `_links.self`,
+    // `rev`, `fields` und `relations`. Der Client liest nur einen Teil davon;
+    // die Attrappe antwortet trotzdem wie der Dienst (Lehre aus dem 404).
     json!({
         "id": id,
+        "url": format!("https://dev.azure.com/x/_apis/wit/workItems/{id}"),
         "rev": 3,
         "fields": {
+            "System.TeamProject": PROJEKT,
             "System.WorkItemType": "User Story",
             "System.State": "Active",
             "System.Title": "Login kaputt",
@@ -618,7 +709,10 @@ fn item(id: u64) -> Value {
             "System.Description": "<div>Der Anmelden-Knopf tut nichts.</div>",
             "Microsoft.VSTS.Common.AcceptanceCriteria": "<ul><li>Anmelden klappt</li></ul>"
         },
-        "_links": { "html": { "href": format!("https://dev.azure.com/x/_workitems/edit/{id}") } },
+        "_links": {
+            "self": { "href": format!("https://dev.azure.com/x/_apis/wit/workItems/{id}") },
+            "html": { "href": format!("https://dev.azure.com/x/_workitems/edit/{id}") }
+        },
         "relations": [
             { "rel": "System.LinkTypes.Hierarchy-Reverse",
               "url": "https://dev.azure.com/x/_apis/wit/workItems/100" }

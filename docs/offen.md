@@ -42,7 +42,7 @@
 - [ ] DevOps: Testpläne (Pläne, Suiten, Punkte, Läufe, Ergebnisse), Kapazität, Board-Spalten, Branch-Policies (`policy-evaluations`), Auto-complete, Läufe **abbrechen** und **wiederholen**, Artefakte eines Laufs – die Vorlage `pi-azure-devops` hat sie, Aufgabe 09 nennt 26 Werkzeuge.
 - [ ] DevOps: `devops_pull_request_abstimmen` holt die Benutzer-ID mit einer zusätzlichen Anfrage (`_apis/connectionData`); mit einem Cache je Organisation wäre es eine Anfrage weniger.
 - [ ] DevOps: `ersteller` bei `devops_pull_requests` filtert lokal nach Anzeigename (Teiltreffer); DevOps selbst kennt nur `searchCriteria.creatorId` (GUID).
-- [ ] DevOps: Kommentar-Endpunkte laufen mit `api-version=7.1-preview.4` (DevOps führt sie noch als Vorschau); alle anderen mit `7.1`. Bei einer stabilen Fassung umstellen.
+- [ ] DevOps: Kommentar-Endpunkte laufen mit `api-version=7.1-preview.4`, `_apis/connectionData` mit `7.1-preview.1` (DevOps führt sie noch als Vorschau, `7.1` gäbe HTTP 400); alle anderen mit `7.1`. Bei einer stabilen Fassung umstellen.
 - [ ] DevOps: `devops_workitem_anlegen` schreibt `System.Description` unverändert – der Agent muss HTML oder Text liefern; eine Umschreibung von Markdown nach HTML gibt es nicht.
 - [ ] DevOps: Arbeitsitem-Felder sind Text (auch Zahlen und Daten); ein Agent, der rechnen will, muss selbst wandeln.
 - [ ] DevOps: `devops_pull_request` zeigt höchstens 20 Commits (Aufgabe) und lädt keine Dateiänderungen (`iterations`/`changes`).

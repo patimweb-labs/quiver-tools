@@ -454,17 +454,20 @@ fn list_upload_und_download_gehen_ueber_sftp() {
         let server = Attrappe::starte().await;
         let aufbau = Aufbau::neu(None);
         einrichten(&aufbau, &server, "web-01");
-        let ohne_passwort = aufbau.mit(&[attrappe::zugang("web-01", server.port, None, None)]);
-
         let lokal = tempfile::tempdir().unwrap();
-        let quelle = lokal.path().join("notiz.txt");
-        std::fs::write(&quelle, "Zeile eins\nZeile zwei\n").unwrap();
+        let ohne_passwort = aufbau.mit(&[attrappe::zugang_mit_ordner(
+            "web-01",
+            server.port,
+            lokal.path().to_str().unwrap(),
+        )]);
+
+        std::fs::write(lokal.path().join("notiz.txt"), "Zeile eins\nZeile zwei\n").unwrap();
 
         let hoch = text(
             aufruf(
                 &ohne_passwort,
                 "ssh_upload",
-                json!({ "lokal": quelle.display().to_string(), "entfernt": "notiz.txt" }),
+                json!({ "lokal": "notiz.txt", "entfernt": "notiz.txt" }),
             )
             .unwrap(),
         );
@@ -482,20 +485,57 @@ fn list_upload_und_download_gehen_ueber_sftp() {
         assert!(liste.contains("notiz.txt"), "{liste}");
         assert!(liste.contains("(1 Eintrag)"), "{liste}");
 
-        let ziel = lokal.path().join("zurueck.txt");
         let runter = text(
             aufruf(
                 &ohne_passwort,
                 "ssh_download",
-                json!({ "entfernt": "notiz.txt", "lokal": ziel.display().to_string() }),
+                json!({ "entfernt": "notiz.txt", "lokal": "zurueck.txt" }),
             )
             .unwrap(),
         );
         assert!(runter.contains("heruntergeladen"), "{runter}");
         assert_eq!(
-            std::fs::read_to_string(&ziel).unwrap(),
+            std::fs::read_to_string(lokal.path().join("zurueck.txt")).unwrap(),
             "Zeile eins\nZeile zwei\n"
         );
+
+        // Download überschreibt nie.
+        let fehler = aufruf(
+            &ohne_passwort,
+            "ssh_download",
+            json!({ "entfernt": "notiz.txt", "lokal": "zurueck.txt" }),
+        )
+        .unwrap_err();
+        assert!(
+            fehlertext(fehler).contains("nicht überschrieben"),
+            "{}",
+            fehlertext(
+                aufruf(
+                    &ohne_passwort,
+                    "ssh_download",
+                    json!({ "entfernt": "notiz.txt", "lokal": "zurueck.txt" })
+                )
+                .unwrap_err()
+            )
+        );
+
+        // Aus dem Austauschordner bricht nichts aus.
+        for (lokal, entfernt) in [
+            ("/etc/passwd", "notiz.txt"),
+            ("../raus.txt", "notiz.txt"),
+            ("notiz.txt", "../raus.txt"),
+            ("notiz.txt", "/etc/passwd"),
+        ] {
+            assert!(
+                aufruf(
+                    &ohne_passwort,
+                    "ssh_upload",
+                    json!({ "lokal": lokal, "entfernt": entfernt }),
+                )
+                .is_err(),
+                "{lokal} → {entfernt}"
+            );
+        }
 
         server.stoppen().await;
     });
@@ -725,4 +765,33 @@ fn kaputtes_json_wird_gemeldet_ohne_den_inhalt_zu_zeigen() {
     assert!(fehler.contains("kein gültiges JSON"), "{fehler}");
     assert!(!fehler.contains("geheim-4711"), "{fehler}");
     assert!(!fehler.contains("anmelde_passwort"), "{fehler}");
+}
+
+#[test]
+fn ohne_schreibschalter_geht_kein_befehl_hinaus() {
+    let laufzeit = Runtime::new().unwrap();
+    laufzeit.block_on(async {
+        let server = Attrappe::starte().await;
+        let aufbau = Aufbau::neu(None);
+        einrichten(&aufbau, &server, "web-01");
+        let vorher = server.zustand.befehle().len();
+        let ohne = aufbau.mit(&[attrappe::zugang_ohne_schreiben("web-01", server.port)]);
+
+        // Lesen geht weiter.
+        let status = text(aufruf(&ohne, "ssh_status", json!({})).unwrap());
+        assert!(status.contains("web-01"), "{status}");
+
+        // Befehle nicht – der Hinweis nennt Feld, Ort und Verbindung.
+        let text = text(aufruf(&ohne, "ssh_exec", json!({ "befehl": "id -un" })).unwrap());
+        assert!(text.contains("Schreiben erlauben"), "{text}");
+        assert!(text.contains("quiver-Fenster"), "{text}");
+        assert!(text.contains("web-01"), "{text}");
+        assert_eq!(
+            server.zustand.befehle().len(),
+            vorher,
+            "Befehl lief trotzdem"
+        );
+
+        server.stoppen().await;
+    });
 }

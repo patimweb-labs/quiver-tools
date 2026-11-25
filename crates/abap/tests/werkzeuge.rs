@@ -1297,3 +1297,69 @@ async fn beim_schreiben_zaehlt_nur_ein_exakter_treffer() {
     );
     assert_eq!(attrappe.aufzeichnung.anzahl_mit("/sap/bc/adt/", "PUT"), 0);
 }
+
+#[tokio::test]
+async fn nur_ein_select_geht_an_die_datenvorschau() {
+    let attrappe = Attrappe::starte().await;
+    let server = server(&attrappe.adresse);
+
+    for falsch in [
+        "DELETE FROM sflight",
+        "UPDATE sflight SET carrid = 'X'",
+        "SELECT carrid FROM sflight; DELETE FROM sflight",
+        "SELECT carrid INTO TABLE @data(t) FROM sflight",
+        "SELECT carrid FROM sflight FOR UPDATE",
+        "SELECT carrid FROM sflight WHERE carrid = 'LH",
+    ] {
+        let fehler = server
+            .aufrufen(
+                "abap_query",
+                Some(serde_json::from_value(json!({ "sql": falsch })).unwrap()),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            fehler.message.contains("SELECT")
+                || fehler.message.contains("Semikolon")
+                || fehler.message.contains("Kette")
+                || fehler.message.contains("INTO")
+                || fehler.message.contains("FOR UPDATE")
+                || fehler.message.contains("Zeichenkette"),
+            "{falsch}: {}",
+            fehler.message
+        );
+    }
+    // Keine einzige Anfrage an die Vorschau.
+    assert_eq!(attrappe.aufzeichnung.anzahl("datapreview"), 0);
+
+    // Ein harmloses SELECT geht weiterhin durch, auch mit Semikolon in einer
+    // Zeichenkette.
+    let text = antwort(
+        &server,
+        "abap_query",
+        json!({ "sql": "SELECT carrid FROM sflight WHERE carrid = 'a;b'" }),
+    )
+    .await;
+    assert!(text.contains("Zeile(n)"), "{text}");
+    assert_eq!(attrappe.aufzeichnung.anzahl("datapreview/freestyle"), 1);
+
+    // Der Filter von abap_table nimmt kein Semikolon und keinen Kommentar.
+    for falsch in ["CARRID = 'LH'; DELETE FROM sflight", "1 = 1 -- immer wahr"] {
+        let fehler = server
+            .aufrufen(
+                "abap_table",
+                Some(
+                    serde_json::from_value(json!({ "table": "SFLIGHT", "filter": falsch }))
+                        .unwrap(),
+                ),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            fehler.message.contains("Semikolon") || fehler.message.contains("Kommentar"),
+            "{falsch}: {}",
+            fehler.message
+        );
+    }
+    assert_eq!(attrappe.aufzeichnung.anzahl("datapreview/ddic"), 0);
+}

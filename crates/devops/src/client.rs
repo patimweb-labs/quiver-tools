@@ -9,8 +9,9 @@
 //! - **Anmeldung** mit HTTP Basic, Benutzer leer und der PAT als Passwort:
 //!   `Authorization: Basic base64(":" + PAT)`. Der PAT steht nur in dieser
 //!   Kopfzeile.
-//! - **`api-version`** hängt an jeder Anfrage (`7.1`; für die Kommentar-Endpunkte
-//!   `7.1-preview.4`, weil sie in DevOps noch Vorschau sind).
+//! - **`api-version`** hängt an jeder Anfrage (`7.1`; für `connectionData`
+//!   `7.1-preview.1` und für die Kommentar-Endpunkte `7.1-preview.4`, weil
+//!   beide in DevOps noch Vorschau sind und mit `7.1` mit HTTP 400 antworten).
 //! - **401 und 203 mit HTML** heißen „PAT gilt nicht“ (DevOps leitet zur
 //!   Anmeldung um) und werden **nicht** wiederholt.
 //! - **429** wird nur bei **lesenden** Aufrufen wiederholt, höchstens zweimal,
@@ -32,6 +33,16 @@ pub const API: &str = "7.1";
 
 /// Die Vorschau-Version der Kommentar-Endpunkte (Arbeitsitem-Kommentare).
 pub const API_KOMMENTARE: &str = "7.1-preview.4";
+
+/// Die Vorschau-Version von `_apis/connectionData`.
+///
+/// Der Endpunkt ist in Azure DevOps 7.1 **nur als Vorschau** da: mit
+/// `api-version=7.1` antwortet der Dienst mit HTTP 400 („The resource is under
+/// preview …“). Benutzt wird sie an genau einer Stelle – [`verbindungsdaten`].
+pub const API_VERBINDUNGSDATEN: &str = "7.1-preview.1";
+
+/// Der Pfad von `GET _apis/connectionData`.
+const VERBINDUNGSDATEN: &str = "_apis/connectionData";
 
 /// Wie lange ein einzelner Aufruf höchstens dauern darf.
 const ZEITLIMIT: Duration = Duration::from_secs(60);
@@ -150,6 +161,16 @@ impl Anfrage {
     }
 }
 
+/// Der Aufruf „wer ist angemeldet?“ (`GET _apis/connectionData`).
+///
+/// **Genau eine Stelle** baut diesen Aufruf. Der Endpunkt braucht eine
+/// Vorschau-Version (siehe [`API_VERBINDUNGSDATEN`]); wer ihn selbst als
+/// `Anfrage::holen("_apis/connectionData")` baut, bekommt HTTP 400. Darum gibt
+/// es diese Funktion und keine vierte Stelle, die die Version vergessen kann.
+pub fn verbindungsdaten() -> Anfrage {
+    Anfrage::holen(VERBINDUNGSDATEN).mit_abfrage("api-version", API_VERBINDUNGSDATEN)
+}
+
 /// Der `Content-Type` von JSON-Patch (Aufgabe 09).
 pub const JSON_PATCH: &str = "application/json-patch+json";
 
@@ -177,10 +198,28 @@ impl std::fmt::Debug for Client {
 impl Client {
     /// Ein Client für diese Organisation. Der PAT steht nur im Speicher.
     pub fn neu(organisation: &Organisation) -> Result<Client, DevopsFehler> {
-        let http = reqwest::Client::builder()
-            .timeout(ZEITLIMIT)
-            .user_agent(concat!("quiver-devops/", env!("CARGO_PKG_VERSION")))
-            .build()
+        // Keine Weiterleitung, feste Frist (kern::net); ein eigenes
+        // CA-Zertifikat ersetzt den Systemspeicher, sonst bleibt die Prüfung an.
+        let host = organisation
+            .url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .split(['/', ':'])
+            .next()
+            .unwrap_or(&organisation.url);
+        let (regel, _warnung) =
+            quiver_tools_kern::net::zertifikat(true, host, organisation.ca_zertifikat.as_deref());
+        let http = regel
+            .anwenden(quiver_tools_kern::net::bauen(concat!(
+                "quiver-devops/",
+                env!("CARGO_PKG_VERSION")
+            )))
+            .and_then(|bauer| {
+                bauer
+                    .timeout(ZEITLIMIT)
+                    .build()
+                    .map_err(|fehler| quiver_tools_kern::net::NetFehler::Client(fehler.to_string()))
+            })
             .map_err(|fehler| DevopsFehler::Netz {
                 text: fehler.to_string(),
             })?;
@@ -239,7 +278,9 @@ impl Client {
 
             let status = antwort.status().as_u16();
             let wartezeit = wartezeit(antwort.headers());
-            let rumpf = antwort.text().await.unwrap_or_default();
+            let rumpf = quiver_tools_kern::net::text_begrenzt(antwort)
+                .await
+                .unwrap_or_default();
 
             // 429: nur lesende Aufrufe werden wiederholt.
             if status == 429 && anfrage.ist_lesend() {
@@ -353,6 +394,7 @@ mod tests {
             projekt: Some("SCODA".into()),
             pat: "pat-4711".into(),
             schreiben: true,
+            ca_zertifikat: None,
         }
     }
 
@@ -386,6 +428,26 @@ mod tests {
         let ziel = client.ziel(&kommentare);
         assert!(ziel.contains("api-version=7.1-preview.4"), "{ziel}");
         assert!(!ziel.contains("api-version=7.1&"), "{ziel}");
+        assert_eq!(ziel.matches("api-version").count(), 1, "{ziel}");
+    }
+
+    #[test]
+    fn die_verbindungsdaten_tragen_ihre_vorschau_version() {
+        let client = Client::neu(&organisation()).unwrap();
+        let anfrage = verbindungsdaten();
+        assert_eq!(anfrage.pfad, "_apis/connectionData");
+        assert_eq!(anfrage.methode, Methode::Get);
+        assert_eq!(
+            anfrage.abfrage,
+            vec![("api-version".to_string(), API_VERBINDUNGSDATEN.to_string())]
+        );
+        // `7.1` allein antwortet mit HTTP 400: die Vorschau-Version steht
+        // genau einmal in der Adresse.
+        let ziel = client.ziel(&anfrage);
+        assert_eq!(
+            ziel,
+            "https://dev.azure.com/neoimpulse/_apis/connectionData?api-version=7.1-preview.1"
+        );
         assert_eq!(ziel.matches("api-version").count(), 1, "{ziel}");
     }
 

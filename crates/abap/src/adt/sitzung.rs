@@ -314,6 +314,7 @@ mod tests {
             passwort: "geheim-4711".into(),
             zertifikat_pruefen: true,
             schreiben: true,
+            ca_zertifikat: None,
         }
     }
 

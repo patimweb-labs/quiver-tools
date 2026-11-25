@@ -136,26 +136,11 @@ impl Konto {
     /// (Proton-Bridge, selbstsigniert) – sonst bleibt die Prüfung an und es
     /// gibt eine Warnung.
     pub fn prueft_zertifikat(gewuenscht: bool, host: &str) -> bool {
-        if gewuenscht {
-            return true;
-        }
-        if ist_lokaler_host(host) {
-            return false;
-        }
-        // Einmal je Prozess: `tracing` hat im Programm keinen Abonnenten
-        // (docs/offen.md), deshalb geht der Hinweis zusätzlich auf stderr –
-        // dort landet das Log, das quiver vom Werkzeug sieht.
-        static EINMAL: std::sync::Once = std::sync::Once::new();
-        EINMAL.call_once(|| {
-            tracing::warn!(
-                host,
-                "Zertifikatsprüfung abgeschaltet, aber der Host ist nicht lokal – Prüfung bleibt an"
-            );
-            eprintln!(
-                "Hinweis: zertifikat_pruefen ist aus, gilt aber nur für 127.0.0.1 und localhost – {host} wird weiter geprüft."
-            );
-        });
-        true
+        // Eine Regel für alle Tools (kern::net): Abschalten gilt nur auf dem
+        // Loopback; sonst bleibt die Prüfung an, und die Warnung nennt das Feld,
+        // das weiterhilft.
+        let (regel, _warnung) = quiver_tools_kern::net::zertifikat(gewuenscht, host, None);
+        !regel.ungeprueft()
     }
 }
 
@@ -409,19 +394,34 @@ pub struct LoeschErgebnis {
 ///
 /// „Seen“, „ungelesen“, `\Seen` und `\Flagged` kommen alle an; ein
 /// unbekannter Name wird zu `\<Name>`, wie es die Vorlage macht.
-pub fn imap_flag(name: &str) -> String {
+///
+/// Erlaubt sind nur Buchstaben, Ziffern und `$ _ - .` (höchstens 64 Zeichen):
+/// der Name steht unmaskiert in einem IMAP-Befehl.
+pub fn imap_flag(name: &str) -> Result<String, String> {
     let name = name.trim();
-    if name.starts_with('\\') {
-        return name.to_string();
+    let kern = name.strip_prefix('\\').unwrap_or(name);
+    let gueltig = !kern.is_empty()
+        && kern.len() <= 64
+        && kern
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '$' | '_' | '-' | '.'));
+    if !gueltig {
+        return Err(
+            "Ungültiger Name einer Flagge: erlaubt sind Buchstaben, Ziffern und $ _ - ."
+                .to_string(),
+        );
     }
-    match name.to_ascii_lowercase().as_str() {
+    if name.starts_with('\\') {
+        return Ok(name.to_string());
+    }
+    Ok(match name.to_ascii_lowercase().as_str() {
         "seen" | "read" | "gelesen" | "ungelesen" | "unread" => "\\Seen".to_string(),
         "flagged" | "starred" | "markiert" => "\\Flagged".to_string(),
         "answered" | "replied" | "beantwortet" => "\\Answered".to_string(),
         "draft" | "entwurf" => "\\Draft".to_string(),
         "deleted" | "geloescht" => "\\Deleted".to_string(),
         _ => format!("\\{name}"),
-    }
+    })
 }
 
 /// Die Empfänger einer Antwort: `to` und `cc`, als reine Mailadressen.
@@ -786,12 +786,26 @@ mod tests {
 
     #[test]
     fn flaggennamen_werden_zu_imap_flaggen() {
-        assert_eq!(imap_flag("Seen"), "\\Seen");
-        assert_eq!(imap_flag("ungelesen"), "\\Seen");
-        assert_eq!(imap_flag("Starred"), "\\Flagged");
-        assert_eq!(imap_flag("replied"), "\\Answered");
-        assert_eq!(imap_flag("\\Deleted"), "\\Deleted");
-        assert_eq!(imap_flag("$Label1"), "\\$Label1");
+        assert_eq!(imap_flag("Seen").unwrap(), "\\Seen");
+        assert_eq!(imap_flag("ungelesen").unwrap(), "\\Seen");
+        assert_eq!(imap_flag("Starred").unwrap(), "\\Flagged");
+        assert_eq!(imap_flag("replied").unwrap(), "\\Answered");
+        assert_eq!(imap_flag("\\Deleted").unwrap(), "\\Deleted");
+        assert_eq!(imap_flag("$Label1").unwrap(), "\\$Label1");
+        for boese in [
+            "",
+            "\\",
+            "\\Seen)\r\nA1 NOOP",
+            "a b",
+            "a)",
+            "(a",
+            "a\nb",
+            "a\"b",
+            "ä",
+        ] {
+            assert!(imap_flag(boese).is_err(), "{boese:?}");
+        }
+        assert!(imap_flag(&"x".repeat(65)).is_err());
     }
 
     #[test]

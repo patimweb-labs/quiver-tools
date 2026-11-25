@@ -22,6 +22,10 @@ pub const BENUTZER: &str = "benutzer";
 pub const ANMELDE_PASSWORT: &str = "anmelde_passwort";
 /// Feldname des sudo-Passworts (geheim, getrennt vom Anmelde-Passwort).
 pub const SUDO_PASSWORT: &str = "sudo_passwort";
+/// Feldname des Schalters „Schreiben erlauben“ (Standard **aus**).
+pub const SCHREIBEN: &str = quiver_tools_kern::FELD_SCHREIBEN;
+/// Feldname des Austauschordners für Hoch- und Herunterladen.
+pub const AUSTAUSCHORDNER: &str = "austauschordner";
 
 /// Port, wenn keiner eingetragen ist.
 pub const STANDARD_PORT: u16 = 22;
@@ -38,6 +42,10 @@ pub struct Verbindung {
     pub anmelde_passwort: Option<String>,
     /// Nur für Befehle mit `sudo`.
     pub sudo_passwort: Option<String>,
+    /// Erlaubt Befehle und Dateitransfer. Standard **aus**.
+    pub schreiben: bool,
+    /// Ordner für Hoch- und Herunterladen; nur darin werden Dateien angefasst.
+    pub austauschordner: Option<String>,
 }
 
 impl std::fmt::Debug for Verbindung {
@@ -49,6 +57,8 @@ impl std::fmt::Debug for Verbindung {
             .field("benutzer", &self.benutzer)
             .field("anmelde_passwort", &self.anmelde_passwort.is_some())
             .field("sudo_passwort", &self.sudo_passwort.is_some())
+            .field("schreiben", &self.schreiben)
+            .field("austauschordner", &self.austauschordner.is_some())
             .finish()
     }
 }
@@ -96,6 +106,29 @@ impl Verbindung {
             benutzer,
             anmelde_passwort: wert(ANMELDE_PASSWORT),
             sudo_passwort: wert(SUDO_PASSWORT),
+            schreiben: quiver_tools_kern::schalter_aus(zugang.wert(SCHREIBEN)),
+            austauschordner: wert(AUSTAUSCHORDNER),
+        })
+    }
+
+    /// Erlaubt diese Verbindung Befehle und Dateitransfer?
+    pub fn schreiben_erlaubt(&self) -> bool {
+        self.schreiben
+    }
+
+    /// Der Austauschordner als [`Ablage`] – nur darin werden Dateien angefasst.
+    pub fn ablage(&self) -> Result<quiver_tools_kern::Ablage, VerbindungsFehler> {
+        let ordner = self
+            .austauschordner
+            .as_deref()
+            .map(str::trim)
+            .filter(|ordner| !ordner.is_empty())
+            .ok_or_else(|| VerbindungsFehler::Austauschordner {
+                name: self.name.clone(),
+            })?;
+        quiver_tools_kern::Ablage::neu(ordner).map_err(|fehler| VerbindungsFehler::Ordner {
+            name: self.name.clone(),
+            grund: fehler.to_string(),
         })
     }
 
@@ -124,12 +157,9 @@ impl Verbindung {
 /// nichts anderes enthalten.
 pub fn name_gueltig(name: &str) -> bool {
     (1..=40).contains(&name.len())
-        && name.chars().all(|zeichen| {
-            zeichen.is_ascii_lowercase()
-                || zeichen.is_ascii_digit()
-                || zeichen == '-'
-                || zeichen == '_'
-        })
+        && name
+            .chars()
+            .all(|zeichen| zeichen.is_ascii_alphanumeric() || zeichen == '-' || zeichen == '_')
 }
 
 /// Alle Verbindungen, in der Reihenfolge der Liste.
@@ -158,7 +188,10 @@ impl Sammlung {
         let mut namen = BTreeMap::new();
         for zugang in &liste {
             let verbindung = Verbindung::aus_zugang(zugang)?;
-            if namen.insert(verbindung.name.clone(), ()).is_some() {
+            // Ohne Groß-/Kleinschreibung: so wird gewählt, und so unterscheiden
+            // macOS und Windows auch die Schlüsseldateien.
+            let schluessel = verbindung.name.to_ascii_lowercase();
+            if namen.insert(schluessel, ()).is_some() {
                 return Err(SammelFehler::Doppelt(verbindung.name));
             }
             verbindungen.push(verbindung);
@@ -189,7 +222,7 @@ impl Sammlung {
             Some(name) => self
                 .verbindungen
                 .iter()
-                .find(|verbindung| verbindung.name == name)
+                .find(|verbindung| verbindung.name.eq_ignore_ascii_case(name))
                 .ok_or_else(|| AuswahlFehler::Unbekannt {
                     name: name.to_string(),
                     bekannt: self.namen().iter().map(|n| n.to_string()).collect(),
@@ -208,7 +241,9 @@ impl Sammlung {
 /// Was an den Werten einer Verbindung nicht stimmt.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum VerbindungsFehler {
-    #[error("Der Name „{0}“ ist nicht zulässig: erlaubt sind a–z, 0–9, - und _ (1–40 Zeichen).")]
+    #[error(
+        "Der Name „{0}“ ist nicht zulässig: erlaubt sind A–Z, a–z, 0–9, - und _ (1–40 Zeichen)."
+    )]
     Name(String),
     #[error(
         "Bei der Verbindung „{name}“ fehlt das Feld „{feld}“ – bitte im quiver-Fenster eintragen."
@@ -216,6 +251,14 @@ pub enum VerbindungsFehler {
     Feld { name: String, feld: &'static str },
     #[error("Bei der Verbindung „{name}“ ist der Port „{wert}“ keine Zahl zwischen 1 und 65535.")]
     Port { name: String, wert: String },
+    #[error(
+        "Für die Verbindung „{name}“ fehlt der Austauschordner – bitte im quiver-Fenster unter \
+         Tools → SSH beim Eintrag „{name}“ das Feld „Austauschordner“ auswählen. Dateien werden \
+         nur darin hoch- und heruntergeladen."
+    )]
+    Austauschordner { name: String },
+    #[error("Der Austauschordner von „{name}“ taugt nicht: {grund}")]
+    Ordner { name: String, grund: String },
 }
 
 /// Warum die Liste nicht gelesen werden konnte.
@@ -259,6 +302,27 @@ mod tests {
                 .map(|(feld, wert)| (feld.to_string(), wert.to_string()))
                 .collect(),
         }
+    }
+
+    #[test]
+    fn schreiben_ist_im_zweifel_aus_und_der_austauschordner_optional() {
+        let ohne =
+            Verbindung::aus_zugang(&zugang("web-01", &[("host", "h"), ("benutzer", "u")])).unwrap();
+        assert!(!ohne.schreiben_erlaubt());
+        assert!(ohne.ablage().is_err());
+
+        let mit = Verbindung::aus_zugang(&zugang(
+            "web-01",
+            &[
+                ("host", "h"),
+                ("benutzer", "u"),
+                ("schreiben", "an"),
+                ("austauschordner", "/tmp/austausch"),
+            ],
+        ))
+        .unwrap();
+        assert!(mit.schreiben_erlaubt());
+        assert!(mit.ablage().is_ok());
     }
 
     #[test]
@@ -376,6 +440,16 @@ mod tests {
             zugang("a", &[("host", "h2"), ("benutzer", "u")]),
         ]);
         assert_eq!(doppelt, Err(SammelFehler::Doppelt("a".into())));
+
+        let nur_schreibweise = Sammlung::aus_zugaengen(vec![
+            zugang("Hera", &[("host", "h1"), ("benutzer", "u")]),
+            zugang("hera", &[("host", "h2"), ("benutzer", "u")]),
+        ]);
+        assert_eq!(nur_schreibweise, Err(SammelFehler::Doppelt("hera".into())));
+        assert!(name_gueltig("Artemis"));
+        for schlecht in ["", "../a", "a/b", "a b", "ä", "a.b"] {
+            assert!(!name_gueltig(schlecht), "{schlecht}");
+        }
 
         let kaputt = Sammlung::mit_umgebung(|_| Some("[{\"name\":".to_string()));
         assert!(matches!(kaputt, Err(SammelFehler::Zugaenge(_))));

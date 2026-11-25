@@ -4,7 +4,7 @@
 
 Eigene MCP-Tools für [mcp-quiver](https://github.com/patimweb-labs/mcp-quiver) in reinem Rust:
 **Outline-Wiki**, **E-Mail** (IMAP/SMTP), **ZEP** (über den offiziellen ZEP-MCP), **SSH/SFTP**,
-**ABAP** (SAP ADT) und **Azure DevOps**. Die Zugangsdaten trägt
+**ABAP** (SAP ADT), **Azure DevOps** und **Excalidraw** (lokal auf Dateien). Die Zugangsdaten trägt
 der User **im quiver-Fenster** ein – unter Tools → <Titel>. quiver legt Geheimes in die Tresor-Datei
 und setzt beim Start die Umgebung des Tools; Passwörter und API-Keys gehen nie durch einen Agenten.
 
@@ -74,9 +74,13 @@ hint instead of an error.
 A few details the agent relies on:
 
 - `outline_read` truncates the body after `max_zeichen` characters (default 8000,
-  `0` means no limit) and says how much it left out.
-- `outline_export` always needs a `target_dir`; file names are derived from the title,
-  never from the id alone, and cannot leave that directory.
+  `0` means no limit) and says how much it left out. It **never writes a file**; that is
+  what `outline_export` is for.
+- `outline_export` writes into the working folder from the quiver window (field
+  „Arbeitsordner“, a folder chooser). `target_dir` is an **optional relative
+  subfolder**; absolute paths and `..` are refused, existing files are never
+  overwritten, and symlinks are never followed. File names are derived from the title,
+  never from the id alone.
 - Outline errors become MCP errors with status and text – never with the API key.
 
 ### Entry for mcp-quiver
@@ -97,27 +101,49 @@ environment refers to them:
     "befehl": "/pfad/zu/quiver-outline",
     "umgebung": {
       "OUTLINE_URL": "${url}",
-      "OUTLINE_API_KEY": "${api_key}"
+      "OUTLINE_API_KEY": "${api_key}",
+      "OUTLINE_UNVERSCHLUESSELT_ERLAUBEN": "${unverschluesselt_erlauben}",
+      "OUTLINE_CA_ZERTIFIKAT": "${ca_zertifikat}",
+      "OUTLINE_ORDNER": "${ordner}",
+      "OUTLINE_SCHREIBEN": "${schreiben}"
     }
   },
   "felder": [
     {
       "name": "url",
-      "beschreibung": "Adresse – Adresse deines Outline, z. B. https://firma.getoutline.com",
+      "titel": "Basis-URL",
+      "beschreibung": "z. B. https://wiki.firma.de oder https://firma.getoutline.com",
+      "art": "url",
       "quelle": "client",
       "pflicht": true,
       "standard": null
     },
     {
       "name": "api_key",
-      "beschreibung": "API-Schlüssel – Einstellungen → API & Apps, beginnt mit ol_api_",
+      "titel": "API-Token",
+      "beschreibung": "In Outline unter Einstellungen → API & Access erstellen, beginnt mit ol_api_",
+      "art": "passwort",
       "quelle": "geheim",
       "pflicht": true,
-      "standard": null
-    }
+      "standard": null,
+      "link": {
+        "text": "Token in Outline erstellen",
+        "url": "${url}/settings/api-and-access"
+      }
+    },
+    { "name": "unverschluesselt_erlauben", "art": "schalter", "standard": "aus" },
+    { "name": "ca_zertifikat", "art": "text", "standard": null },
+    { "name": "ordner", "art": "ordner", "standard": null },
+    { "name": "schreiben", "art": "schalter", "standard": "aus" }
   ]
 }
 ```
+
+`titel` is the label quiver shows, `beschreibung` is only the help text below the field, and
+`art` says how the field is drawn: `text`, `passwort`, `zahl`, `schalter`, `url` or
+`auswahl` (`{ "auswahl": { "optionen": [ { "wert", "anzeige" } ] } }`). A field of art
+`passwort` is always secret, whatever its `quelle`. Tools with several accounts put the same
+fields under `mehrfach.felder`.
 
 `quelle: "geheim"` heißt: quiver legt den Wert in die Tresor-Datei und gibt ihn nur als
 Umgebungsvariable an das Tool. Ein `einrichtung`-Feld gibt es nicht – das Tool öffnet
@@ -309,14 +335,18 @@ missing one is a hint to fill it in in the quiver window.
 ### Tools
 
 Every tool takes `verbindung`; with exactly one connection the name may be omitted.
+Commands and file transfer need the per-connection switch `schreiben` (default off).
+`ssh_upload` and `ssh_download` only exist when the connection has an
+`austauschordner` (folder chooser); both sides of a transfer are plain relative names
+inside it, so neither a local path nor a remote path can leave the exchange area.
 
 | Tool | Kind | What it does |
 |---|---|---|
 | `ssh_status` | read | The connections: name, user@host:port, key set up (with fingerprint), sudo password set, host key known |
 | `ssh_list` | read | A remote directory over SFTP: mode, size, name |
 | `ssh_exec` | write | Run a command: stdout, stderr, exit code; `sudo`, `zeitlimit` (60 s, max 600), `max_zeichen` (8000 each) |
-| `ssh_upload` | write | Copy a local file to the remote host (`lokal` → `entfernt`) |
-| `ssh_download` | write | Copy a remote file to this machine (`entfernt` → `lokal`) |
+| `ssh_upload` | write | Copy a file from the exchange folder to the remote host (`lokal`, relative to the folder → `entfernt`, relative) |
+| `ssh_download` | write | Copy a remote file (`entfernt`, relative) into the exchange folder (`lokal`, relative); never overwrites |
 | `ssh_schluessel_einrichten` | write | Force the key setup again (e.g. after a rebuilt server); replaces the old key only after a key-only login succeeded |
 
 ### Entry for mcp-quiver
@@ -526,7 +556,8 @@ who is signed in.
   `Authorization: Basic base64(":" + PAT)`. That header is the only place the PAT ever
   appears – no answer, error text, log or test output contains it.
 - **`api-version`** rides on every request (`7.1`; the comment endpoints use
-  `7.1-preview.4`, where DevOps still requires the preview).
+  `7.1-preview.4` and `_apis/connectionData` uses `7.1-preview.1`, where DevOps still
+  requires the preview – plain `7.1` answers HTTP 400, "The resource is under preview").
 - **401, or 203 with an HTML login page** (DevOps redirects a rejected token), becomes
   „PAT für <verbindung> ungültig oder abgelaufen – im quiver-Fenster unter Tools → DevOps
   erneuern.“ and is **not** retried.
@@ -587,10 +618,131 @@ Browser. Die Anmeldung löst der Knopf „Anmelden“ im quiver-Fenster aus (Too
 selbst. Crates: `crates/m365-anmeldung` (PKCE, Loopback, Tresor), `crates/m365-graph`
 (Graph-Client) und `crates/m365` (Programm `quiver-m365`, MCP-Tools).
 
+Changing something needs a switch per area, all **off** by default:
+`M365_SCHREIBEN_MAIL`, `_KALENDER`, `_DATEIEN`, `_TEAMS`, `_PLANNER`, `_KONTAKTE`,
+`_ONENOTE` – or the general `M365_SCHREIBEN`. The check sits in front of the MCP
+dispatcher, so a reading tool never needs a switch and a writing tool never runs without
+one; the hint names the field. Reading tools have no side effects (no “mark as read”, no
+saving); `teams_als_gelesen` is a writing tool and stays behind the Teams switch.
+
 Ausführlich: [docs/m365/README.md](docs/m365/README.md), App-Registrierung und Freigabe:
 [docs/m365/entra-app.md](docs/m365/entra-app.md), Spezifikation:
 [docs/m365/SPEC.md](docs/m365/SPEC.md). Bis 2026-11-24 war quiver-m365 ein eigenes Repo; die
 Historie ist hier übernommen.
+
+## quiver-excalidraw (Excalidraw-Dateien)
+
+Das erste der beiden Diagramm-Werkzeuge: es erzeugt, liest und ändert `.excalidraw`-Dateien
+in einem **Arbeitsordner** und zeigt dem Agenten das Ergebnis als **PNG**. Reines Rust –
+kein Node, kein Netz, kein Browser im Hintergrund. Crates: `crates/diagramm` (Ablage,
+Modell, Layout, Zeichnen) und `crates/excalidraw` (Programm `quiver-excalidraw`).
+Aufgabe: [docs/aufgaben/17-excalidraw.md](docs/aufgaben/17-excalidraw.md), Entscheidung:
+[docs/adr/0011-excalidraw.md](docs/adr/0011-excalidraw.md).
+
+Ausführlich: [crates/excalidraw/README.md](crates/excalidraw/README.md).
+
+### Three fields, no credentials
+
+| Feld | Art | Pflicht | Standard |
+|---|---|---|---|
+| `ordner` | Text | ja | – (voller Pfad, `~` wird aufgelöst, wird angelegt) |
+| `schreiben` | Schalter | nein | **an** |
+
+There is nothing to sign in to. Everything the tool touches lives inside the working
+folder: relative paths only, no `..`, no absolute paths, no symlinks, no hidden names, no
+overwriting, no deleting. Verändern geht nur mit dem gelesenen `stand` (SHA-256).
+
+### Tools
+
+| Tool | Kind | What it does |
+|---|---|---|
+| `excalidraw_status` | read | working folder, number of files, `schreiben` on/off |
+| `excalidraw_liste` | read | every `.excalidraw` file, also in subfolders, with size and time |
+| `excalidraw_lesen` | read | per element: id, type, text, position, bindings, plus `stand`; `roh: true` for the source text |
+| `excalidraw_bild` | read | the scene as a **PNG image**, and what could not be drawn |
+| `excalidraw_oeffnen` | read | opens `https://excalidraw.com` and names the full path; `nur_link: true` opens nothing |
+| `excalidraw_erstellen` | write | a diagram from `modell` (`knoten`, `kanten`, `gruppen`, `richtung`) |
+| `excalidraw_aus_quelltext` | write | a finished file, checked strictly |
+| `excalidraw_elemente_aendern` | write | per id: `text`, `farbe`, `form`, `x`/`y`/`breite`/`hoehe`, `verbindungen` |
+| `excalidraw_elemente_hinzufuegen` | write | `rectangle`, `diamond`, `ellipse`, `text`, `line`, `arrow`, `frame`, `image` |
+| `excalidraw_elemente_entfernen` | write | removes elements and resolves both sides of every binding |
+| `excalidraw_exportieren` | write | SVG or PNG into the working folder |
+| `excalidraw_profile` | read | the entry from the environment |
+
+### What the file must contain
+
+`type "excalidraw"`, `version 2`, `source`, `elements`, `appState`, `files` – and every
+element with all **25 required fields** of the format sources. Text in a shape is bound
+twice (`containerId` and `boundElements`), an arrow likewise (`startBinding`/`endBinding`
+and `boundElements`). `link` only `https`, `http`, `mailto`. Everything the tool does not
+understand – images in `files`, `customData`, whole elements of unknown type – is carried
+through unchanged. Drawing is done by the crate itself, with the embedded font; nothing is
+uploaded, and `excalidraw_oeffnen` only opens the empty page – the file is dragged into
+the window by hand.
+
+## Hardening: secure defaults (Paket 4)
+
+Everything below is enforced by code and tests, not by documentation.
+
+### Writing is off
+
+Every tool that changes something has a switch in the quiver window. It is **off** by
+default and lives next to the access it belongs to:
+
+| Tool | Switch | Notes |
+|---|---|---|
+| `outline`, `email`, `zep` | `schreiben` | one access, one switch |
+| `ssh` | `schreiben` | per connection; commands, key setup, upload, download |
+| `abap`, `devops`, `jira`, `confluence`, `zephyr` | `schreiben` | already per access |
+| `microsoft-365` | `M365_SCHREIBEN` plus one per area | mail, calendar, files, Teams, Planner/To Do, contacts, OneNote |
+
+The check sits in front of the dispatcher (for most tools in the core, for Microsoft 365
+in the program itself), so it cannot be forgotten by a single tool: anything that is not
+annotated `read_only_hint = true` is blocked. The answer is a plain text hint that names
+the field to switch on – for example *„outline_create“ ändert etwas. … bitte im
+quiver-Fenster … das Feld „Schreiben erlauben“ einschalten.* – and **no request leaves
+the machine**. An access that worked before therefore never fails silently after the
+update: it says what to switch on. On the first start after the update the program also
+writes “Schreiben ist jetzt aus …” to stderr (the log quiver shows).
+
+The ZEP broker does not simply trust the remote annotations: a fixed list of read-only
+tool names lives in the program (`zep_projekte`, `zep_zeiten`, `zep_kunden`,
+`zep_profile`), everything else needs the switch. A 401 is retried **only** for those
+read-only tools – a write is never sent twice.
+
+`<tool>_profile` prints only an explicit allowlist of harmless fields (addresses, host,
+port, project, folder, switches). A typo in a field type can no longer print a secret.
+
+### Network
+
+- One shared HTTP client (`quiver_tools_kern::net`): **no redirects**, a 60 s deadline and
+  a hard **8 MB** limit per response (read in chunks, abort as an error).
+- Addresses: `https` always. `http` only for `127.0.0.1`, `localhost`, `[::1]` – or when
+  the user switches on **„Unverschlüsselt erlauben“** (`unverschluesselt_erlauben`,
+  default off). Plain `http` is named as a warning in the status text and in the log.
+- TLS: the certificate check can only be switched off for loopback. For any other host it
+  stays on unless the user points **„CA-Zertifikat“** (`ca_zertifikat`) at a PEM file.
+- Graph: `@odata.nextLink` and every absolute address are pinned to the Graph host
+  (scheme, host, port); a foreign host is an error and is never fetched.
+
+### Files, vault
+
+- All writing goes through one `Ablage` with a fixed root: relative names only, no `..`,
+  no absolute paths, no hidden names, no symlinks on any level, `create_new` (no
+  overwriting), 10 MB per file.
+- The tool vaults (`m365-anmeldung`, `zep`) never create a new key when the vault data is
+  there but `tresor.schluessel` is missing: the call fails, both files stay untouched, and
+  the message says to restore the key or sign in again in the quiver window.
+
+### Tests
+
+- A fuzz test (fixed seed, 20 000 generated inputs) feeds every reader: draw.io XML,
+  compressed pages, styles, colours, Excalidraw JSON. No input may panic.
+- A contract test over all programs checks that every tool is either annotated read-only
+  or belongs to a program with a write switch (default off).
+- The Azure DevOps and ABAP mocks answer in the *service shape*: REST 7.1 envelopes
+  (`count`, `value`, `url`, `_links`, `rev`) and real ADT XML with **relative** URIs and
+  version links. A tool that expects absolute URLs fails here.
 
 ## Entwickeln
 

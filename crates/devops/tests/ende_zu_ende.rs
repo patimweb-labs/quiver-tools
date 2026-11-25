@@ -391,17 +391,27 @@ fn eintrag_enthaelt_mehrfach_mit_vier_feldern_und_pat_link() {
         "{eintrag}"
     );
 
-    // … sondern eine Liste von Organisationen mit vier Feldern.
+    // … sondern eine Liste von Organisationen mit sechs Feldern.
     let mehrfach = &eintrag["mehrfach"];
     assert_eq!(mehrfach["titel"], json!("Organisationen"));
     assert_eq!(mehrfach["einzahl"], json!("Organisation"));
     let felder = mehrfach["felder"].as_array().unwrap();
-    assert_eq!(felder.len(), 4, "{mehrfach}");
+    assert_eq!(felder.len(), 6, "{mehrfach}");
     let namen: Vec<&str> = felder
         .iter()
         .map(|feld| feld["name"].as_str().unwrap())
         .collect();
-    assert_eq!(namen, vec!["url", "projekt", "pat", "schreiben"]);
+    assert_eq!(
+        namen,
+        vec![
+            "url",
+            "projekt",
+            "pat",
+            "unverschluesselt_erlauben",
+            "ca_zertifikat",
+            "schreiben"
+        ]
+    );
 
     assert_eq!(felder[0]["quelle"], json!("client"));
     assert_eq!(felder[0]["pflicht"], json!(true));
@@ -409,25 +419,32 @@ fn eintrag_enthaelt_mehrfach_mit_vier_feldern_und_pat_link() {
         .as_str()
         .unwrap()
         .contains("dev.azure.com"));
+    assert_eq!(felder[0]["art"], json!("url"));
     assert_eq!(felder[1]["quelle"], json!("client"));
     assert_eq!(felder[1]["pflicht"], json!(false));
-    assert!(felder[1]["beschreibung"]
-        .as_str()
-        .unwrap()
-        .contains("Standardprojekt"));
+    assert_eq!(felder[1]["titel"], json!("Standardprojekt"));
+    assert_eq!(felder[1]["art"], json!("text"));
     // Der PAT ist geheim und hat einen Hilfe-Link auf die Token-Seite.
     assert_eq!(felder[2]["quelle"], json!("geheim"));
+    assert_eq!(felder[2]["art"], json!("passwort"));
     assert_eq!(felder[2]["pflicht"], json!(true));
     assert_eq!(felder[2]["link"]["text"], json!("PAT erstellen"));
     assert_eq!(
         felder[2]["link"]["url"],
         json!("${url}/_usersSettings/tokens")
     );
-    // Der Schalter „schreiben“ steht am Ende und ist im Zweifel aus.
-    assert_eq!(felder[3]["name"], json!("schreiben"));
+    // Härtung: http nur mit Schalter, eigenes CA-Zertifikat.
+    assert_eq!(felder[3]["name"], json!("unverschluesselt_erlauben"));
+    assert_eq!(felder[3]["art"], json!("schalter"));
     assert_eq!(felder[3]["standard"], json!("aus"));
-    assert_eq!(felder[3]["pflicht"], json!(false));
-    assert!(felder[3]["beschreibung"]
+    assert_eq!(felder[4]["name"], json!("ca_zertifikat"));
+    assert_eq!(felder[4]["art"], json!("text"));
+    // Der Schalter „schreiben“ steht am Ende und ist im Zweifel aus.
+    assert_eq!(felder[5]["name"], json!("schreiben"));
+    assert_eq!(felder[5]["art"], json!("schalter"));
+    assert_eq!(felder[5]["standard"], json!("aus"));
+    assert_eq!(felder[5]["pflicht"], json!(false));
+    assert!(felder[5]["beschreibung"]
         .as_str()
         .unwrap()
         .contains("Pipelines starten"));
@@ -468,6 +485,12 @@ fn testen_meldet_sich_an_der_attrappe_an() {
         assert!(stdout.contains("1 Organisation(en) erreichbar"), "{stdout}");
         assert!(stdout.contains(attrappe::BENUTZER), "{stdout}");
         assert!(!stdout.contains(attrappe::PAT_A), "{stdout}");
+
+        // `connectionData` ist Vorschau: mit `7.1` antwortet der Dienst mit
+        // `400` und `testen` scheitert.
+        let aufrufe = server.aufzeichnung.zu("connectionData");
+        assert_eq!(aufrufe.len(), 1, "{:?}", aufrufe.len());
+        assert_eq!(aufrufe[0].api_version(), Some(attrappe::VORSCHAU_VERSION));
     });
 }
 

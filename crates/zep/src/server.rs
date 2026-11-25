@@ -9,7 +9,9 @@
 //!
 //! Zwei Dinge tut der Server selbst:
 //!
-//! - **Anmelden bleiben**: er startet die Hintergrund-Erneuerung des Tokens.
+//! - **Anmelden bleiben**: er startet die Hintergrund-Erneuerung des Tokens und
+//!   meldet sich beim Start sofort an, wenn kein gültiges Token da ist, die
+//!   Routine nicht gesperrt ist und Benutzer und Passwort gesetzt sind.
 //! - **Liste aktuell halten**: meldet ZEP `tools/list_changed`, holt er die
 //!   Liste neu und schickt selbst `list_changed` an seinen Client.
 //!
@@ -147,6 +149,19 @@ impl ZepServer {
             return self.profil();
         }
 
+        // Schreibschutz nach der **festen** Liste im Programm, nicht nach der
+        // Kennzeichnung der Gegenseite (Härtung Paket 4).
+        let lesend = crate::werkzeug::ist_lesend(name);
+        let schreiben =
+            quiver_tools_kern::schalter_aus(self.geteilt.zugang.wert(crate::werkzeug::SCHREIBEN));
+        if !lesend && !schreiben && self.geteilt.zugang.profil().is_ok() {
+            return Ok(antwort(quiver_tools_kern::schutz::hinweis_gesperrt(
+                name,
+                self.geteilt.zugang.titel(),
+                quiver_tools_kern::TITEL_SCHREIBEN,
+            )));
+        }
+
         // Fehlt der Zugang, sagt das der Kern – ein Text, kein Fehler.
         if self.geteilt.anmeldung.is_none() {
             return Ok(antwort(quiver_tools_kern::hinweis_zugang(
@@ -165,7 +180,7 @@ impl ZepServer {
 
         let params = CallToolRequestParams::new(name.to_string())
             .with_arguments(argumente.unwrap_or_default());
-        match vermittler.aufrufen(params).await {
+        match vermittler.aufrufen(params, lesend).await {
             Ok(ergebnis) => Ok(ergebnis),
             Err(fehler) if fehler.braucht_anmeldung() => Ok(antwort(HINWEIS_ANMELDUNG)),
             Err(fehler) => Err(McpError::internal_error(fehler.to_string(), None)),
@@ -180,6 +195,31 @@ impl ZepServer {
             )));
         }
         profile_antwort(&self.geteilt.zugang)
+    }
+
+    /// Beim Start im Hintergrund anmelden, falls nötig (Aufgabe 11).
+    ///
+    /// Ohne gültiges Token, ohne Sperre und mit Benutzer und Passwort meldet
+    /// sich das Werkzeug **sofort** an – nicht erst beim ersten Werkzeugaufruf.
+    /// Danach liegt das Refresh-Token im Tresor, und `status` in einem zweiten
+    /// Prozess sagt „Angemeldet“.
+    ///
+    /// Läuft im Hintergrund, damit der Handshake nicht wartet. Ein zweiter Weg
+    /// (die Werkzeugliste) hängt an derselben Sperre und meldet sich nicht
+    /// noch einmal an.
+    fn starte_anmeldung(&self) {
+        let Some(anmeldung) = self.geteilt.anmeldung.clone() else {
+            return;
+        };
+        tokio::spawn(async move {
+            if anmeldung.status().ist_angemeldet() || anmeldung.sperrgrund().is_some() {
+                return;
+            }
+            match anmeldung.access_token().await {
+                Ok(_) => tracing::info!("Beim Start angemeldet"),
+                Err(fehler) => tracing::warn!(%fehler, "Anmeldung beim Start nicht möglich"),
+            }
+        });
     }
 
     /// Hintergrundarbeit starten: Token erneuern, Liste nachführen.
@@ -259,6 +299,9 @@ impl ServerHandler for ZepServer {
 
     async fn on_initialized(&self, context: NotificationContext<RoleServer>) {
         self.starte_hintergrund(context.peer);
+        // Ohne Token sofort anmelden – der User soll nicht auf „Anmelden“
+        // klicken müssen (Aufgabe 11, Punkt 3).
+        self.starte_anmeldung();
         // Die Werkzeugliste beim Start holen.
         self.liste_holen().await;
     }
@@ -362,7 +405,7 @@ mod tests {
             .unwrap();
         // Der Host ist nicht erreichbar: statt eines Fehlers kommt der Hinweis.
         let ergebnis = laufzeit
-            .block_on(server.aufrufen("zep_projekte", None))
+            .block_on(server.aufrufen("get_project_info", None))
             .unwrap();
         let text = ergebnis.content[0].as_text().unwrap().text.clone();
         assert!(text.contains("ZEP-Anmeldung nötig"), "{text}");

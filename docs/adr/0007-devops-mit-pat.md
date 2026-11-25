@@ -71,8 +71,9 @@ Klick im quiver-Fenster, bevor der Agent das erste Mal kommentiert.
 
 ### 4. Grenzen, die im Client liegen
 
-- `api-version=7.1` an jeder Anfrage; die Kommentar-Endpunkte `7.1-preview.4`, weil
-  DevOps sie noch als Vorschau führt.
+- `api-version=7.1` an jeder Anfrage; die Kommentar-Endpunkte `7.1-preview.4` und
+  `_apis/connectionData` `7.1-preview.1`, weil DevOps sie noch als Vorschau führt
+  (mit `7.1` antwortet der Dienst mit HTTP 400, „The resource is under preview“).
 - **401 und 203 mit HTML** (DevOps leitet bei ungültigem PAT zur Anmeldung um) sind
   endgültig und werden nicht wiederholt.
 - **429** wird höchstens zweimal und **nur bei lesenden** Aufrufen wiederholt

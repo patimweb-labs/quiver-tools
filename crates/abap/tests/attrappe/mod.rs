@@ -789,8 +789,12 @@ const KLASSE: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <class:abapClass xmlns:class="http://www.sap.com/adt/oo/classes"
   xmlns:adtcore="http://www.sap.com/adt/core" xmlns:atom="http://www.w3.org/2005/Atom"
   adtcore:name="ZCL_DEMO" adtcore:type="CLAS/OC" adtcore:description="Demo-Klasse"
-  adtcore:responsible="DEVELOPER" adtcore:language="DE">
+  adtcore:responsible="DEVELOPER" adtcore:language="DE"
+  adtcore:version="active" adtcore:versionTitle="Aktiv">
+  <!-- Wie ADT: der eigene Pfad relativ, dazu die Versionsverweise. -->
   <atom:link href="/sap/bc/adt/oo/classes/zcl_demo" rel="self" type="text/html"/>
+  <atom:link href="/sap/bc/adt/oo/classes/zcl_demo?version=active" rel="version"/>
+  <atom:link href="/sap/bc/adt/versions/zcl_demo/versions" rel="http://www.sap.com/adt/relations/versions"/>
   <class:include class:includeType="definitions">
     <atom:link href="/sap/bc/adt/oo/classes/zcl_demo/includes/definitions" rel="self" type="text/plain"/>
   </class:include>
@@ -994,3 +998,28 @@ const AKTIVIERUNG: &str = r#"<?xml version="1.0" encoding="utf-8"?>
     </chkl:msg>
   </chkl:messages>
 </chkl:checkMessages>"#;
+
+#[cfg(test)]
+mod form_tests {
+    use super::*;
+
+    /// Die Attrappe antwortet in der Form, die ADT wirklich schickt: relative
+    /// Adressen, Namensräume, Versionsverweise. Der Test hält das fest –
+    /// ein Werkzeug, das absolute Adressen erwartet, fällt hier auf.
+    #[test]
+    fn die_objektantwort_hat_relative_adressen_und_versionsverweise() {
+        assert!(KLASSE.contains(r#"adtcore:version="active""#), "{KLASSE}");
+        assert!(KLASSE.contains(r#"href="/sap/bc/adt/oo/classes/zcl_demo" rel="self""#));
+        assert!(KLASSE.contains(r#"rel="version""#));
+        assert!(KLASSE.contains(r#"class:includeType="definitions""#));
+        // Kein `https://…`: ADT nennt Pfade relativ zur Wurzel.
+        assert!(!KLASSE.contains("https://"), "{KLASSE}");
+    }
+
+    #[test]
+    fn suche_und_verwendung_nennen_relative_uris() {
+        assert!(SUCHE.contains(r#"adtcore:uri="/sap/bc/adt/oo/classes/zcl_demo""#));
+        assert!(VERWENDUNGEN.contains(r#"uri="/sap/bc/adt/"#));
+        assert!(!SUCHE.contains("https://"), "{SUCHE}");
+    }
+}

@@ -37,6 +37,10 @@ async fn main() -> ExitCode {
             eprintln!("Unbekanntes Argument {argument:?}.\n\n{HILFE}");
             ExitCode::FAILURE
         }
+        Befehl::Eintrag { befehl } => {
+            println!("{:#}", quiver_m365::umgebung::eintrag(befehl.as_deref()));
+            ExitCode::SUCCESS
+        }
         Befehl::Freigeben { tenant } => freigeben_ausfuehren(tenant).await,
         Befehl::Anmelden => anmelden_ausfuehren().await,
         Befehl::Status => status_ausfuehren().await,

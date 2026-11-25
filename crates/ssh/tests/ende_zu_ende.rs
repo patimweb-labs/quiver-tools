@@ -177,12 +177,10 @@ fn kindprozess_richtet_den_schluessel_ein_und_nutzt_ihn_danach() {
         let server = attrappe::Attrappe::starte().await;
         let (daten, home) = pfade();
 
-        let mit_passwort = json!([attrappe::zugang(
-            "web-01",
-            server.port,
-            Some(attrappe::PASSWORT),
-            None
-        )]);
+        let austausch = tempfile::tempdir().unwrap();
+        let mut eintrag = attrappe::zugang("web-01", server.port, Some(attrappe::PASSWORT), None);
+        eintrag["werte"]["austauschordner"] = json!(austausch.path().to_str().unwrap());
+        let mit_passwort = json!([eintrag]);
 
         // Erster Lauf: Passwort-Anmeldung richtet den Schlüssel ein.
         let mut kind = Kind::starte(&umgebung(daten.path(), home.path(), &mit_passwort));
@@ -298,7 +296,7 @@ fn eintrag_enthaelt_mehrfach_mit_fuenf_feldern() {
     assert_eq!(mehrfach["titel"], json!("Verbindungen"));
     assert_eq!(mehrfach["einzahl"], json!("Verbindung"));
     let felder = mehrfach["felder"].as_array().unwrap();
-    assert_eq!(felder.len(), 5, "{mehrfach}");
+    assert_eq!(felder.len(), 7, "{mehrfach}");
     let namen: Vec<&str> = felder
         .iter()
         .map(|feld| feld["name"].as_str().unwrap())
@@ -310,7 +308,9 @@ fn eintrag_enthaelt_mehrfach_mit_fuenf_feldern() {
             "host",
             "port",
             "anmelde_passwort",
-            "sudo_passwort"
+            "sudo_passwort",
+            "schreiben",
+            "austauschordner"
         ]
     );
     assert_eq!(felder[0]["quelle"], json!("client"));

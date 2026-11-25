@@ -1,0 +1,37 @@
+[package]
+name = "quiver-zephyr"
+description = "Zephyr Scale Cloud (REST v2) als MCP-Tool: Testfälle, Testzyklen, Ausführungen und Ergebnisse je Zugang."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "quiver-zephyr"
+path = "src/main.rs"
+
+[dependencies]
+quiver-tools-kern = { path = "../kern" }
+anyhow = "1"
+# rustls + die Wurzeln des System-Zertifikatsspeichers: damit erkennt der Client
+# Firmen-CAs, ohne dass der User etwas abschaltet.
+reqwest = { version = "0.12", default-features = false, features = [
+  "rustls-tls-native-roots",
+  "json",
+] }
+rmcp = { version = "3.11", features = ["server", "transport-io", "macros", "schemars"] }
+schemars = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+# Zerlegt und prüft Adressen (Schema, Host, Port, Benutzer): keine eigene
+# Zeichenketten-Arithmetik an URLs (Aufgabe 15 b, Regel 4).
+url = "2"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+# Die Zephyr-Attrappe ist ein kleines axum-Programm (SPEC §7).
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }

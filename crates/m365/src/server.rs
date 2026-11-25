@@ -9,6 +9,10 @@
 //! (Aufgabe 03); fehlt die Zustimmung für einen neuen Scope (Teams), sagt es
 //! dasselbe (Aufgabe 05); Fehler von Graph werden zu MCP-Fehlern mit Graph-Code
 //! und Text – ohne Token.
+//!
+//! Aufgabe 09: `termin_loeschen` und `mail_loeschen` sind destruktiv, nehmen eine
+//! Id und melden, was verschwindet. Eine Mail wandert in den Papierkorb
+//! (`POST …/move`), sie wird nie endgültig gelöscht.
 
 use m365_anmeldung::{AnmeldeFehler, Anmeldung};
 use m365_graph::{
@@ -39,6 +43,12 @@ pub const NICHT_ANGEMELDET_HINWEIS: &str =
 /// **Kein** MCP-Fehler, kein Browser, das Refresh-Token bleibt.
 pub const ZUSTIMMUNG_HINWEIS: &str =
     "Für Teams fehlt die Zustimmung – im quiver-Fenster unter Tools → Microsoft 365 erneut auf „Anmelden“ klicken.";
+
+/// Derselbe Fall für die Rechte aus Aufgabe 06 (SharePoint, Planner, To Do,
+/// Kontakte, Personen, OneNote). Der Teams-Satz bleibt unverändert, damit
+/// bestehende Antworten gleich bleiben.
+pub const ZUSTIMMUNG_ERWEITERT_HINWEIS: &str =
+    "Für SharePoint, Planner, To Do, Kontakte oder OneNote fehlt die Zustimmung – im quiver-Fenster unter Tools → Microsoft 365 erneut auf „Anmelden“ klicken.";
 
 /// Kopfzeile für `mail_lesen`: Text statt HTML (SPEC.md §4).
 const PREFER_TEXT: &str = "outlook.body-content-type=\"text\"";
@@ -154,6 +164,20 @@ pub struct DateienSuchenAnfrage {
     pub anzahl: Option<u32>,
 }
 
+/// Parameter für `termin_loeschen`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TerminLoeschenAnfrage {
+    /// Id des Termins (aus `termine`).
+    pub id: String,
+}
+
+/// Parameter für `mail_loeschen`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MailLoeschenAnfrage {
+    /// id der Mail (aus `mails_suchen`).
+    pub id: String,
+}
+
 // ---------------------------------------------------------------------------
 // Der Server
 // ---------------------------------------------------------------------------
@@ -170,10 +194,15 @@ pub struct Quiver<A: Anmeldung> {
 impl<A: Anmeldung + 'static> Quiver<A> {
     /// Baut den Server aus Graph-Client und Zeitzone.
     pub fn neu(graph: GraphClient<A>, zeitzone: impl Into<String>) -> Self {
-        // Mail/Kalender/Dateien (SPEC.md §4) und Teams (Aufgabe 05) sind zwei
-        // Router, damit die Dateien nicht ins Unermessliche wachsen.
+        // Mail/Kalender/Dateien (SPEC.md §4), Teams (Aufgabe 05) und die
+        // Erweiterung (Aufgabe 06) sind getrennte Router, damit die Dateien
+        // nicht ins Unermessliche wachsen.
         let mut tool_router = Self::tool_router();
         tool_router.merge(Self::teams_router());
+        tool_router.merge(Self::dateien_router());
+        tool_router.merge(Self::planner_router());
+        tool_router.merge(Self::kontakte_router());
+        tool_router.merge(Self::onenote_router());
         Self {
             graph,
             zeitzone: Zeitzone::neu(zeitzone),
@@ -475,10 +504,119 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             .map_err(|fehler| ErrorData::internal_error(format!("Abmelden: {fehler}"), None))?;
         als_json(&json!({"abgemeldet": true}))
     }
+
+    /// Einen Termin löschen.
+    #[tool(
+        description = "Einen Termin aus dem Kalender löschen. Absagen an Teilnehmer verschickt Graph dabei nicht. Verändert den Kalender.",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn termin_loeschen(
+        &self,
+        Parameters(anfrage): Parameters<TerminLoeschenAnfrage>,
+    ) -> Result<String, ErrorData> {
+        let id = anfrage.id.trim();
+        if id.is_empty() {
+            return Err(ErrorData::invalid_params("id fehlt", None));
+        }
+        let pfad = format!("/me/events/{}", kodieren(id));
+        // Erst lesen: der Betreff gehört in die Meldung, und eine falsche Id soll
+        // keinen DELETE auslösen.
+        let abfrage = self
+            .graph
+            .get::<Termin>(
+                &pfad,
+                &[("$select", "id,subject,start,webLink".to_string())],
+            )
+            .await;
+        let termin = match abfrage {
+            Ok(termin) => termin,
+            Err(fehler) => return hinweis_oder_fehler(fehler),
+        };
+        // 204 mit leerem Rumpf: der Termin ist weg (Aufgabe 09).
+        match self.graph.delete(&pfad, &[]).await {
+            Ok(()) => als_json(&json!({
+                "geloescht": true,
+                "id": id,
+                "betreff": termin.subject,
+                "start": zeit_text(termin.start.as_ref(), &self.zeitzone, false),
+            })),
+            Err(fehler) => hinweis_oder_fehler(fehler),
+        }
+    }
+
+    /// Eine Mail in den Papierkorb legen.
+    #[tool(
+        description = "Eine Mail in den Papierkorb legen (nicht endgültig löschen – wiederherstellbar). Verändert das Postfach.",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn mail_loeschen(
+        &self,
+        Parameters(anfrage): Parameters<MailLoeschenAnfrage>,
+    ) -> Result<String, ErrorData> {
+        let id = anfrage.id.trim();
+        if id.is_empty() {
+            return Err(ErrorData::invalid_params("id fehlt", None));
+        }
+        let pfad = format!("/me/messages/{}", kodieren(id));
+        // Erst lesen: der Betreff gehört in die Meldung.
+        let abfrage = self
+            .graph
+            .get::<Nachricht>(&pfad, &[("$select", "id,subject".to_string())])
+            .await;
+        let mail = match abfrage {
+            Ok(mail) => mail,
+            Err(fehler) => return hinweis_oder_fehler(fehler),
+        };
+        // `move` nach `deleteditems` ist der Papierkorb – nicht `DELETE`.
+        match self
+            .graph
+            .post_ohne_antwort(
+                &format!("{pfad}/move"),
+                &json!({"destinationId": "deleteditems"}),
+            )
+            .await
+        {
+            Ok(()) => als_json(&json!({
+                "geloescht": true,
+                "papierkorb": true,
+                "id": id,
+                "betreff": mail.subject,
+            })),
+            Err(fehler) => hinweis_oder_fehler(fehler),
+        }
+    }
 }
 
 #[tool_handler(router = self.tool_router, name = "quiver-m365")]
-impl<A: Anmeldung + 'static> ServerHandler for Quiver<A> {}
+impl<A: Anmeldung + 'static> ServerHandler for Quiver<A> {
+    /// Der Schreibschutz steht **vor** dem Verteiler: ein veränderndes Werkzeug
+    /// ohne Schalter antwortet mit einem Hinweis, und es geht keine Anfrage an
+    /// Graph (Härtung Paket 4). Lesende Werkzeuge sind nicht betroffen.
+    async fn call_tool(
+        &self,
+        request: rmcp::model::CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<rmcp::model::CallToolResponse, ErrorData> {
+        let name = request.name.to_string();
+        let werkzeug = self.tool_router.get(&name);
+        let lesend = werkzeug
+            .and_then(|werkzeug| werkzeug.annotations.as_ref())
+            .and_then(|annotationen| annotationen.read_only_hint)
+            == Some(true);
+        if werkzeug.is_some() && !lesend {
+            let bereich = crate::umgebung::bereich_fuer(&name);
+            if !crate::umgebung::schreiben_erlaubt(bereich) {
+                return Ok(rmcp::model::CallToolResponse::from(
+                    rmcp::model::CallToolResult::success(vec![rmcp::model::ContentBlock::text(
+                        crate::umgebung::hinweis_gesperrt(&name, bereich),
+                    )]),
+                ));
+            }
+        }
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        self.tool_router.call(tcc).await
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Reine Hilfen: Antwortform und Grenzen
@@ -516,6 +654,24 @@ impl From<ErrorData> for ToolFehler {
     }
 }
 
+impl ToolFehler {
+    /// Der Hinweis auf eine fehlende Zustimmung nennt bei den neuen Rechten
+    /// nicht mehr nur Teams (Aufgabe 06); alles andere bleibt gleich.
+    pub(crate) fn fuer_erweiterung(self) -> Self {
+        match self {
+            ToolFehler::Hinweis(text) if text == ZUSTIMMUNG_HINWEIS => {
+                ToolFehler::Hinweis(ZUSTIMMUNG_ERWEITERT_HINWEIS.to_string())
+            }
+            anderes => anderes,
+        }
+    }
+}
+
+/// Wie [`ergebnis`], aber mit dem Hinweis für die neuen Rechte (Aufgabe 06).
+pub(crate) fn ergebnis_erweitert(inner: Result<String, ToolFehler>) -> Result<String, ErrorData> {
+    ergebnis(inner.map_err(ToolFehler::fuer_erweiterung))
+}
+
 /// Ergebnis eines Teams-Tools: Hinweise werden Text, Fehler bleiben Fehler.
 pub(crate) fn ergebnis(inner: Result<String, ToolFehler>) -> Result<String, ErrorData> {
     match inner {
@@ -538,10 +694,16 @@ fn aus_ergebnis<T>(
 ) -> Result<String, ErrorData> {
     match ergebnis {
         Ok(wert) => weiter(wert),
-        Err(fehler) => match ToolFehler::from(fehler) {
-            ToolFehler::Hinweis(text) => Ok(text),
-            ToolFehler::Fehler(fehler) => Err(fehler),
-        },
+        Err(fehler) => hinweis_oder_fehler(fehler),
+    }
+}
+
+/// Ein Graph-Fehler, der **kein** Modell mehr liefert: Hinweise (Anmeldung,
+/// Zustimmung) werden Text, alles andere ein MCP-Fehler.
+pub(crate) fn hinweis_oder_fehler(fehler: GraphFehler) -> Result<String, ErrorData> {
+    match ToolFehler::from(fehler) {
+        ToolFehler::Hinweis(text) => Ok(text),
+        ToolFehler::Fehler(fehler) => Err(fehler),
     }
 }
 
@@ -912,5 +1074,42 @@ mod tests {
         let text = format!("{fehler}");
         assert!(text.contains("ErrorInvalidRecipients"));
         assert!(text.contains("Die Empfänger sind ungültig."));
+    }
+}
+
+#[cfg(test)]
+mod schreibschutz_tests {
+    use rmcp::model::ToolAnnotations;
+
+    /// Jedes Werkzeug ist entweder lesend gekennzeichnet oder über einen
+    /// Bereichsschalter gesperrt (Härtung Paket 4).
+    #[test]
+    fn jedes_schreibende_werkzeug_hat_einen_bereich() {
+        let werkzeuge: Vec<(String, bool)> = vec![
+            ("mail_senden".to_string(), true),
+            ("mail_loeschen".to_string(), true),
+            ("termin_anlegen".to_string(), true),
+            ("termin_loeschen".to_string(), true),
+            ("datei_hochladen".to_string(), true),
+            ("teams_kanal_senden".to_string(), true),
+            ("planner_aufgabe_anlegen".to_string(), true),
+            ("kontakt_anlegen".to_string(), true),
+            ("onenote_seite_anlegen".to_string(), true),
+        ];
+        for (name, schreibend) in werkzeuge {
+            let annotationen = ToolAnnotations::from_raw(
+                None,
+                Some(!schreibend),
+                Some(schreibend),
+                Some(!schreibend),
+                Some(false),
+            );
+            let lesend = annotationen.read_only_hint == Some(true);
+            assert!(schreibend && !lesend, "{name} sollte schreibend sein");
+            let bereich = crate::umgebung::bereich_fuer(&name);
+            assert_ne!(bereich, "unbekannt", "{name}");
+            // Ohne Schalter ist jeder Bereich gesperrt.
+            assert!(!crate::umgebung::schreiben_erlaubt_mit(bereich, |_| None));
+        }
     }
 }

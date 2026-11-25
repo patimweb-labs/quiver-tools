@@ -13,6 +13,18 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
 tracing = "0.1"
+reqwest = { workspace = true }
+url = "2"
 
 [dev-dependencies]
+tempfile = "3"
+quiver-outline = { path = "../outline" }
+quiver-email = { path = "../email" }
+quiver-ssh = { path = "../ssh" }
+quiver-abap = { path = "../abap" }
+quiver-devops = { path = "../devops" }
+quiver-jira = { path = "../jira" }
+quiver-confluence = { path = "../confluence" }
+quiver-zephyr = { path = "../zephyr" }
+quiver-zep = { path = "../zep" }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }

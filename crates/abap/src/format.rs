@@ -639,6 +639,7 @@ mod tests {
             passwort: "geheim-4711".into(),
             zertifikat_pruefen: true,
             schreiben: false,
+            ca_zertifikat: None,
         }
     }
 

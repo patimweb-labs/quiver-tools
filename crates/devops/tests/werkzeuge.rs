@@ -143,11 +143,28 @@ async fn testen_meldet_sich_an_und_nennt_den_benutzer() {
     assert!(text.contains("Konto neoimpulse"), "{text}");
     ohne_pat(&text);
 
-    // Genau eine Anfrage, mit `api-version` und Basic-Anmeldung.
+    // Genau eine Anfrage, mit Vorschau-`api-version` und Basic-Anmeldung.
     assert_eq!(attrappe.aufzeichnung.anzahl("connectionData"), 1);
     let aufruf = attrappe.aufzeichnung.letzter().unwrap();
-    assert_eq!(aufruf.api_version(), Some("7.1"));
+    // `connectionData` ist Vorschau: mit `7.1` antwortet DevOps mit `400`.
+    assert_eq!(aufruf.api_version(), Some(attrappe::VORSCHAU_VERSION));
     assert!(aufruf.anmeldung.unwrap().starts_with("Basic "));
+}
+
+#[tokio::test]
+async fn testen_meldet_einen_400_auf_connectiondata_als_fehler() {
+    let attrappe = Attrappe::starte().await;
+    let server = eine(&attrappe.adresse);
+
+    // Der Dienst antwortet mit `400` (falsche `api-version`, Vorschau): das ist
+    // ein Fehler und keine Anmeldung als „unbekannt“.
+    attrappe.verbindungsdaten_ablehnen();
+    let fehler = aufruf(&server, "devops_testen", json!({}))
+        .await
+        .unwrap_err();
+    assert!(fehler.message.contains("400"), "{}", fehler.message);
+    assert!(fehler.message.contains("preview"), "{}", fehler.message);
+    ohne_pat(&fehler.message);
 }
 
 #[tokio::test]
@@ -1018,6 +1035,9 @@ async fn ein_pull_request_wird_kommentiert_und_abgestimmt() {
         "{text}"
     );
     assert_eq!(attrappe.aufzeichnung.anzahl("connectionData"), 1);
+    let verbindung = attrappe.aufzeichnung.erster("connectionData").unwrap();
+    // `connectionData` ist Vorschau: mit `7.1` käme ein `400` statt der ID.
+    assert_eq!(verbindung.api_version(), Some(attrappe::VORSCHAU_VERSION));
     let aufruf = attrappe
         .aufzeichnung
         .zu_mit("reviewers/", "PUT")
@@ -1031,6 +1051,33 @@ async fn ein_pull_request_wird_kommentiert_und_abgestimmt() {
         aufruf.pfad
     );
     assert_eq!(aufruf.json()["vote"], json!(10));
+}
+
+#[tokio::test]
+async fn eine_abstimmung_bricht_bei_400_auf_connectiondata_ab() {
+    let attrappe = Attrappe::starte().await;
+    let server = eine(&attrappe.adresse);
+
+    // Antwortet `connectionData` mit `400`, gibt es keine Benutzer-ID: der
+    // Fehler muss ankommen, und nichts darf als ID weiterlaufen.
+    attrappe.verbindungsdaten_ablehnen();
+    let fehler = aufruf(
+        &server,
+        "devops_pull_request_abstimmen",
+        json!({ "repo": REPO, "id": PR, "stimme": "approve" }),
+    )
+    .await
+    .unwrap_err();
+    assert!(fehler.message.contains("400"), "{}", fehler.message);
+    assert!(fehler.message.contains("preview"), "{}", fehler.message);
+    ohne_pat(&fehler.message);
+
+    // Genau ein Aufruf (die Benutzer-ID), keine Stimme.
+    assert_eq!(attrappe.aufzeichnung.anzahl("connectionData"), 1);
+    assert_eq!(attrappe.aufzeichnung.anzahl_mit("reviewers/", "PUT"), 0);
+    for aufruf in attrappe.aufzeichnung.alle() {
+        assert!(!aufruf.pfad.contains("400"), "{}", aufruf.pfad);
+    }
 }
 
 #[tokio::test]
@@ -1135,6 +1182,10 @@ async fn jede_anfrage_traegt_die_api_version_und_keinen_pat_in_der_antwort() {
             .api_version()
             .unwrap_or_else(|| panic!("keine api-version an {} {}", aufruf.methode, aufruf.pfad));
         assert!(version.starts_with("7.1"), "{}: {version}", aufruf.pfad);
+        // `connectionData` braucht die Vorschau-Version; überall sonst gilt 7.1.
+        if aufruf.pfad.contains("connectionData") {
+            assert_eq!(version, attrappe::VORSCHAU_VERSION, "{}", aufruf.pfad);
+        }
         // Der PAT steckt nur in der Kopfzeile.
         assert!(!aufruf.pfad.contains(PAT_A));
         assert!(!aufruf.rumpf.contains(PAT_A));

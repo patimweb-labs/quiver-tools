@@ -90,6 +90,11 @@ impl Zugang {
         &self.felder
     }
 
+    /// Der rohe Wert eines Feldes, falls gesetzt (auch Schalter und Auswahlen).
+    pub fn wert(&self, feld: &str) -> Option<&str> {
+        self.werte.get(feld).map(String::as_str)
+    }
+
     /// Pflichtfelder ohne Wert – in der Reihenfolge der Felder.
     pub fn fehlende(&self) -> Vec<&Feld> {
         self.felder
@@ -240,5 +245,12 @@ mod tests {
         assert_eq!(zugang.titel(), "Attrappen-Tool");
         assert_eq!(zugang.werkzeug(), "attrappe");
         assert_eq!(zugang.felder().len(), 3);
+        assert_eq!(zugang.wert("umgebung"), None);
+    }
+
+    #[test]
+    fn ein_roher_wert_ist_lesbar() {
+        let zugang = zugang(&[("ATTRAPPE_UMGEBUNG", "test")]);
+        assert_eq!(zugang.wert("umgebung"), Some("test"));
     }
 }

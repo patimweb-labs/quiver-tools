@@ -228,65 +228,109 @@ async fn schreibende_werkzeuge_senden_den_erwarteten_rumpf() {
 }
 
 #[tokio::test]
-async fn export_schreibt_markdown_dateien() {
+async fn export_schreibt_markdown_dateien_in_den_arbeitsordner() {
     let mock = Attrappe::starte().await;
-    let server = OutlineServer::neu(attrappe::zugang(&mock.adresse));
     let ziel = tempfile::tempdir().unwrap();
-    let ziel_pfad = ziel.path().join("wiki");
+    let server = OutlineServer::neu(attrappe::zugang_mit_ordner(
+        &mock.adresse,
+        ziel.path().to_str().unwrap(),
+    ));
 
     let text = ruf(
         &server,
         "outline_export",
-        json!({
-            "target_dir": ziel_pfad.to_str().unwrap(),
-            "collection_id": "c1"
-        }),
+        json!({ "target_dir": "wiki", "collection_id": "c1" }),
     )
     .await
     .unwrap();
 
     assert!(text.contains("2 Dokument(e) nach"), "{text}");
     assert_eq!(mock.aufzeichnung.anzahl("documents.export"), 2);
-    let erste = std::fs::read_to_string(ziel_pfad.join("betriebshandbuch.md")).unwrap();
+    let erste = std::fs::read_to_string(ziel.path().join("wiki/betriebshandbuch.md")).unwrap();
     assert!(erste.contains("Markdown aus der Attrappe"), "{erste}");
-    assert!(ziel_pfad.join("notfall.md").exists());
+    assert!(ziel.path().join("wiki/notfall.md").exists());
 
-    // Ein Dokument ohne Ziel ist ein Parameterfehler – und kostet kein Netz.
-    let vorher = mock.aufzeichnung.alle().len();
-    let fehler = ruf(
+    // Kein Überschreiben: ein zweiter Lauf legt nichts neu an und sagt es.
+    let text = ruf(
         &server,
         "outline_export",
-        json!({ "target_dir": ziel_pfad.to_str().unwrap() }),
+        json!({ "target_dir": "wiki", "collection_id": "c1" }),
     )
     .await
-    .unwrap_err();
-    assert!(fehler.message.contains("document_id"), "{}", fehler.message);
-    let fehler = ruf(
+    .unwrap();
+    assert!(text.contains("0 Dokument(e) nach"), "{text}");
+    assert!(text.contains("nicht überschrieben"), "{text}");
+    assert_eq!(
+        std::fs::read_to_string(ziel.path().join("wiki/betriebshandbuch.md")).unwrap(),
+        erste
+    );
+
+    // Ein absoluter Unterordner bricht nicht aus dem Arbeitsordner aus.
+    let text = ruf(
         &server,
         "outline_export",
-        json!({
-            "target_dir": ziel_pfad.to_str().unwrap(),
-            "document_id": "d1",
-            "collection_id": "c1"
-        }),
+        json!({ "target_dir": "/etc", "collection_id": "c1" }),
     )
     .await
-    .unwrap_err();
-    assert_eq!(mock.aufzeichnung.alle().len(), vorher);
-    assert!(fehler.message.contains("schließen einander aus"));
+    .unwrap();
+    assert!(text.contains("0 Dokument(e) nach"), "{text}");
+    assert!(text.contains("außerhalb des Arbeitsordners"), "{text}");
+}
+
+#[tokio::test]
+async fn ohne_arbeitsordner_wird_nichts_geschrieben() {
+    let mock = Attrappe::starte().await;
+    let server = OutlineServer::neu(attrappe::zugang(&mock.adresse));
+    let fehler = ruf(&server, "outline_export", json!({ "collection_id": "c1" }))
+        .await
+        .unwrap_err();
+    assert!(
+        fehler.message.contains("Arbeitsordner"),
+        "{}",
+        fehler.message
+    );
+    assert_eq!(mock.aufzeichnung.alle().len(), 0);
+}
+
+#[tokio::test]
+async fn ohne_schreibschalter_geht_keine_anfrage_hinaus() {
+    let mock = Attrappe::starte().await;
+    let server = OutlineServer::neu(attrappe::zugang_ohne_schreiben(&mock.adresse));
+
+    // Lesen geht weiter.
+    let text = ruf(&server, "outline_collections", json!({}))
+        .await
+        .unwrap();
+    assert!(text.contains("Sammlungen"), "{text}");
+
+    // Schreiben nicht – der Hinweis nennt das Feld im quiver-Fenster.
+    let text = ruf(
+        &server,
+        "outline_create",
+        json!({ "title": "Neu", "text": "x", "collection_id": "c1" }),
+    )
+    .await
+    .unwrap();
+    assert!(text.contains("Schreiben erlauben"), "{text}");
+    assert!(text.contains("quiver-Fenster"), "{text}");
+    assert!(text.contains("outline_create"), "{text}");
+    assert_eq!(mock.aufzeichnung.anzahl("documents.create"), 0);
+    assert_eq!(mock.aufzeichnung.anzahl("collections.list"), 1);
 }
 
 #[tokio::test]
 async fn eine_seite_mit_kindern_exportieren() {
     let mock = Attrappe::starte().await;
-    let server = OutlineServer::neu(attrappe::zugang(&mock.adresse));
     let ziel = tempfile::tempdir().unwrap();
+    let server = OutlineServer::neu(attrappe::zugang_mit_ordner(
+        &mock.adresse,
+        ziel.path().to_str().unwrap(),
+    ));
 
     let text = ruf(
         &server,
         "outline_export",
         json!({
-            "target_dir": ziel.path().to_str().unwrap(),
             "document_id": "d1",
             "include_children": true
         }),

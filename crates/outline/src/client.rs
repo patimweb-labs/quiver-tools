@@ -54,6 +54,12 @@ pub enum OutlineFehler {
     Meldung(String),
     #[error("Die Antwort von Outline war nicht lesbar: {0}")]
     Unlesbar(String),
+    /// Die Adresse selbst taugt nicht (Text nennt das Feld, das weiterhilft).
+    #[error("{0}")]
+    Adresse(String),
+    /// Die Antwort war zu groß, um sie einem Modell zu zeigen.
+    #[error("{0}")]
+    ZuGross(String),
 }
 
 /// Ein Ausschnitt aus einer Liste: wo sie weitergeht und wie lang sie ist.
@@ -114,8 +120,21 @@ impl Client {
         if adresse.is_empty() {
             return Err(OutlineFehler::KeineAdresse);
         }
-        let wurzel = crate::werkzeug::wurzel(adresse)
-            .map_err(|_| OutlineFehler::UngueltigeAdresse(adresse.to_string()))?;
+        let unverschluesselt = quiver_tools_kern::schalter_aus(
+            profil
+                .werte
+                .get(crate::werkzeug::UNVERSCHLUESSELT)
+                .map(String::as_str),
+        );
+        let wurzel =
+            crate::werkzeug::wurzel_geprueft(adresse, unverschluesselt).map_err(|fehler| {
+                match fehler {
+                    crate::werkzeug::AdressFehler::Ungueltig(url) => {
+                        OutlineFehler::UngueltigeAdresse(url)
+                    }
+                    sonst => OutlineFehler::Adresse(sonst.to_string()),
+                }
+            })?;
 
         let schluessel = profil
             .geheim
@@ -127,10 +146,35 @@ impl Client {
             return Err(OutlineFehler::KeinSchluessel);
         }
 
-        let http = reqwest::Client::builder()
-            .timeout(ZEITLIMIT)
-            .user_agent(concat!("quiver-outline/", env!("CARGO_PKG_VERSION")))
-            .build()
+        // Keine Weiterleitung, feste Frist, Grenze beim Lesen (kern::net).
+        let host = adresse
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .split(['/', ':'])
+            .next()
+            .unwrap_or(adresse);
+        let ca = profil
+            .werte
+            .get(crate::werkzeug::CA_ZERTIFIKAT)
+            .map(String::as_str);
+        let pruefen = !quiver_tools_kern::schalter_aus(
+            profil
+                .werte
+                .get("zertifikat_pruefen")
+                .map(String::as_str)
+                .map(|wert| if wert.trim().is_empty() { "an" } else { wert }),
+        );
+        let (regel, _warnung) = quiver_tools_kern::net::zertifikat(pruefen, host, ca);
+        let http = regel
+            .anwenden(quiver_tools_kern::net::bauen(concat!(
+                "quiver-outline/",
+                env!("CARGO_PKG_VERSION")
+            )))
+            .and_then(|bauer| {
+                bauer
+                    .build()
+                    .map_err(|fehler| quiver_tools_kern::net::NetFehler::Client(fehler.to_string()))
+            })
             .map_err(|fehler| OutlineFehler::NichtErreichbar {
                 wurzel: wurzel.clone(),
                 ursache: fehler.to_string(),
@@ -166,20 +210,25 @@ impl Client {
             .map_err(|fehler| self.netzfehler(methode, fehler))?;
 
         let status = antwort.status();
-        let koerper = antwort
-            .bytes()
-            .await
-            .map_err(|fehler| OutlineFehler::NichtErreichbar {
-                wurzel: self.wurzel.clone(),
-                ursache: self.ohne_schluessel(&fehler.to_string()),
-            })?;
+        let koerper_roh = quiver_tools_kern::net::text_begrenzt(antwort).await;
+        let koerper = match koerper_roh {
+            Ok(text) => text,
+            Err(quiver_tools_kern::net::NetFehler::ZuGross { max_mb }) => {
+                return Err(OutlineFehler::ZuGross(format!(
+                    "Outline hat mehr als {max_mb} MB geschickt – das wird nicht gelesen. \
+                     Bitte die Abfrage eingrenzen."
+                )))
+            }
+            Err(fehler) => {
+                return Err(OutlineFehler::NichtErreichbar {
+                    wurzel: self.wurzel.clone(),
+                    ursache: self.ohne_schluessel(&fehler.to_string()),
+                })
+            }
+        };
 
-        let gelesen: Option<Rahmen<T>> = serde_json::from_slice(&koerper).ok();
-        let ist_html = koerper
-            .iter()
-            .copied()
-            .find(|byte| !byte.is_ascii_whitespace())
-            == Some(b'<');
+        let gelesen: Option<Rahmen<T>> = serde_json::from_str(&koerper).ok();
+        let ist_html = koerper.chars().find(|zeichen| !zeichen.is_whitespace()) == Some('<');
 
         if !status.is_success() {
             if ist_html {
@@ -201,10 +250,7 @@ impl Client {
             }
             None => {
                 return Err(OutlineFehler::Unlesbar(
-                    match std::str::from_utf8(&koerper) {
-                        Ok(text) => self.ohne_schluessel(&kuerzen_roh(text, 200)),
-                        Err(_) => "kein JSON".to_string(),
-                    },
+                    self.ohne_schluessel(&kuerzen_roh(&koerper, 200)),
                 ));
             }
         };

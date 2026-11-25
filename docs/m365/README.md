@@ -2,8 +2,8 @@
 
 > **Status: in Arbeit.** Spezifikation in [SPEC.md](SPEC.md).
 
-**Microsoft 365 für jeden Agenten** – ein MCP-Server für Mail, Kalender, Dateien und Teams über
-Microsoft Graph. Der User meldet sich **im Browser** an seinem Konto an (inkl. MFA); alle Aufrufe
+**Microsoft 365 für jeden Agenten** – ein MCP-Server für Mail, Kalender, Dateien, Teams,
+SharePoint, Planner/To Do, Kontakte/Personen und OneNote über Microsoft Graph. Der User meldet sich **im Browser** an seinem Konto an (inkl. MFA); alle Aufrufe
 laufen mit seinen eigenen Rechten. Reines Rust, ein Programm, MCP über stdio.
 
 Die Anmeldung löst der User im [quiver](https://github.com/patimweb-labs/mcp-quiver)-Fenster aus
@@ -21,6 +21,8 @@ selbst auf – es läuft mit jedem MCP-Client.
 | `mail_senden` | Mail senden (**verändernd**) | `POST /me/sendMail` |
 | `termine` | Termine eines Zeitraums | `GET /me/calendarView` |
 | `termin_anlegen` | Termin anlegen (**verändernd**) | `POST /me/events` |
+| `termin_loeschen` | Termin endgültig löschen (**verändernd**) | `DELETE /me/events/{id}` |
+| `mail_loeschen` | Mail in den Papierkorb legen, nicht endgültig (**verändernd**) | `POST /me/messages/{id}/move` |
 | `dateien_suchen` | Dateien in OneDrive suchen | `GET /me/drive/root/search(q='…')` |
 | `abmelden` | Refresh-Token löschen | – |
 
@@ -56,8 +58,9 @@ aber auch einen Versatz tragen (`…+01:00`, `…Z`) – der Zeitpunkt bleibt da
 
 Die Teams-Tools handeln **als der User**: Sie lesen, was er lesen darf, und was sie senden, kommt von
 ihm. Delegierte Rechte: `Team.ReadBasic.All`, `Channel.ReadBasic.All`, `ChannelMessage.Read.All`,
-`ChannelMessage.Send`, `Chat.ReadWrite`, `User.ReadBasic.All` (in der App-Registrierung eingetragen,
-Admin-Zustimmung für neoimpulse.de erteilt – siehe [docs/entra-app.md](docs/entra-app.md)).
+`ChannelMessage.Send`, `TeamMember.Read.All`, `Chat.ReadWrite`, `User.ReadBasic.All` (in der
+App-Registrierung eingetragen,
+Admin-Zustimmung für neoimpulse.de erteilt – siehe [entra-app.md](entra-app.md)).
 
 | Tool | Was es tut | Graph |
 |---|---|---|
@@ -77,6 +80,7 @@ Admin-Zustimmung für neoimpulse.de erteilt – siehe [docs/entra-app.md](docs/e
 | `teams_person_finden` | Personen über Name, E-Mail oder UPN finden | `GET /users?$search=…` (`ConsistencyLevel: eventual`) |
 | `teams_reagieren` | auf eine Nachricht reagieren oder die Reaktion entfernen (**verändernd**) | `POST …/setReaction`, `…/unsetReaction` |
 | `teams_als_gelesen` | Chat als gelesen oder wieder ungelesen markieren | `POST /chats/{chat}/markChatReadForUser`, `…/markChatUnreadForUser` |
+| `teams_nachricht_loeschen` | eine **eigene** Nachricht löschen (softDelete, wiederherstellbar) (**verändernd**) | `POST …/messages/{id}/softDelete` |
 
 - **Namen statt Ids:** `team`, `kanal` und `chat` dürfen Id **oder** Name sein, bei Chats auch das
   Thema oder ein Mitglied. Aufgelöst wird über die Listen. Passen mehrere, nennt das Tool die
@@ -94,6 +98,162 @@ Admin-Zustimmung für neoimpulse.de erteilt – siehe [docs/entra-app.md](docs/e
   „Missing scope“), antwortet das Tool mit: „Für Teams fehlt die Zustimmung – im quiver-Fenster unter
   Tools → Microsoft 365 erneut auf ‚Anmelden‘ klicken.“ Es öffnet **keinen** Browser und löscht das
   Refresh-Token **nicht**.
+- **Reaktionen** nimmt `reaktion` als Wort (`like`, `love`, `laugh`, `surprised`, `sad`, `angry`) oder
+  als Emoji (👍 ❤️ 😆 😮 😢 😡); gesendet wird immer das Emoji, denn Graph akzeptiert als
+  `reactionType` nur Unicode (`Unicode 'heart' in the payload is not supported`). Ein unbekannter
+  Wert ergibt eine Meldung mit den erlaubten Emojis und **keine** Anfrage.
+- **Ein Chat mit sich selbst** lässt sich nicht anlegen: der eigene User ist immer Teilnehmer und
+  wird nie doppelt gebunden – bleibt niemand anderes übrig, sagt das Tool das und legt nichts an.
+- **Eigenheiten von Graph** (aus dem Live-Test, `docs/aufgaben/07-fehler-aus-dem-livetest.md`):
+  `$top` ist auf `/me/joinedTeams` und `/teams/{id}/channels` **nicht** erlaubt – die Tools begrenzen
+  clientseitig. `markChatReadForUser` braucht den Mandanten des Users im Rumpf (`tid` aus dem Token).
+  Ein neuer Chat bindet das eigene Mitglied als `users('<eigene-id>')`, **nicht** als `…/me`.
+  `teams_mitglieder` braucht `TeamMember.Read.All`; fehlt es (403), sagt das Tool das im Klartext
+  statt den Rohfehler zu zeigen.
+
+## SharePoint, OneDrive, Planner, To Do, Kontakte, Personen und OneNote
+
+Delegierte Rechte (Aufgabe 06, in der App-Registrierung eingetragen, Admin-Zustimmung für
+neoimpulse.de erteilt): `Sites.ReadWrite.All`, `Files.ReadWrite.All`, `Tasks.ReadWrite`,
+`Group.Read.All`, `Contacts.ReadWrite`, `People.Read`, `Notes.ReadWrite.All` – siehe
+[entra-app.md](entra-app.md).
+
+### SharePoint und OneDrive
+
+| Tool | Was es tut | Graph |
+|---|---|---|
+| `sharepoint_sites` | Sites suchen (Id `host,site,web` und Name) | `GET /sites?search=` |
+| `sharepoint_bibliotheken` | Bibliotheken (Drives) einer Site | `GET /sites/{site}/drives` |
+| `dateien_liste` | Ordnerinhalt – in OneDrive oder einer Bibliothek, mit Pfad oder Id | `GET /me/drive/root/children`, `…/root:/{pfad}:/children` |
+| `datei_lesen` | eine Datei als Text (gekürzt auf `max_zeichen`, Standard 20 000) | `GET …/items/{id}`, `…/items/{id}/content` |
+| `datei_hochladen` | Text hochladen, bis 4 MB, einfacher PUT, Konflikt `rename` (**verändernd**) | `PUT …/root:/{pfad}:/content` |
+| `ordner_anlegen` | Ordner anlegen (**verändernd**) | `POST …/children` |
+| `sharepoint_listen` | Listen einer Site | `GET /sites/{site}/lists` |
+| `sharepoint_listeneintraege` | Einträge einer Liste samt Spalten | `GET …/lists/{liste}/items?$expand=fields` |
+| `sharepoint_listeneintrag_anlegen` | Eintrag anlegen (**verändernd**) | `POST …/lists/{liste}/items` |
+| `sharepoint_listeneintrag_aendern` | Spaltenwerte ändern (**verändernd**) | `PATCH …/items/{id}/fields` |
+| `datei_loeschen` | Datei oder Ordner in den Papierkorb legen (**verändernd**) | `DELETE /me/drive/items/{id}`, `DELETE /drives/{d}/items/{id}` |
+| `sharepoint_listeneintrag_loeschen` | Listeneintrag löschen (**verändernd**) | `DELETE …/lists/{liste}/items/{id}` |
+
+- **Wo liegt die Datei?** Ohne `site` arbeiten die Datei-Tools im OneDrive des Users (`/me/drive`).
+  Mit `site` (Id oder Name) in einer Bibliothek; ohne `bibliothek` in der Dokumente-Bibliothek.
+- **Lesen:** Text, Markdown, CSV, JSON und andere Textdateien kommen als Text zurück. Ist der Text
+  länger als `max_zeichen`, wird an einer Wortgrenze gekürzt und die Antwort trägt `"gekuerzt": true`
+  und `"laenge_gesamt"`. **Office-Dateien** gibt Microsoft Graph höchstens als PDF aus (die Antwort
+  sagt mit `als_pdf`, ob das ging) – Text liefert Graph dort nicht. **PDF und Binärdateien** liefern
+  nur Metadaten und Link, keinen Inhalt.
+- **Hochladen:** `inhalt` ist Text; mehr als 4 MB lehnt das Tool **ohne Anfrage** ab (dafür bräuchte
+  es eine Upload-Session). `verhalten` ist `rename` (Standard), `replace` oder `fail`.
+- **Seiten** über `@odata.nextLink`, aber nie mehr als für `anzahl` nötig.
+
+### Planner und To Do
+
+| Tool | Was es tut | Graph |
+|---|---|---|
+| `planner_plaene` | Pläne des Users – insgesamt oder je Gruppe | `GET /me/planner/plans`, `GET /groups/{gruppe}/planner/plans` |
+| `planner_aufgaben` | Aufgaben eines Plans (mit Bucket-Namen) oder alle eigenen | `GET /planner/plans/{plan}/tasks`, `…/buckets`, `GET /me/planner/tasks` |
+| `planner_aufgabe_anlegen` | Aufgabe anlegen (**verändernd**) | `POST /planner/tasks` |
+| `planner_aufgabe_aendern` | Fortschritt, Fälligkeit, Zuweisung – **mit ETag** (**verändernd**) | `PATCH /planner/tasks/{id}` (`If-Match`) |
+| `todo_listen` | To-Do-Listen | `GET /me/todo/lists` |
+| `todo_aufgaben` | Aufgaben einer Liste, optional nur offene | `GET /me/todo/lists/{liste}/tasks` |
+| `todo_aufgabe_anlegen` | Aufgabe anlegen (**verändernd**) | `POST /me/todo/lists/{liste}/tasks` |
+| `todo_aufgabe_erledigen` | Aufgabe erledigen oder wieder öffnen (**verändernd**) | `PATCH …/tasks/{id}` |
+| `planner_aufgabe_loeschen` | Aufgabe endgültig löschen – **mit ETag** (**verändernd**) | `DELETE /planner/tasks/{id}` (`If-Match`) |
+| `todo_aufgabe_loeschen` | Aufgabe aus einer To-Do-Liste löschen (**verändernd**) | `DELETE /me/todo/lists/{liste}/tasks/{id}` |
+
+- **Planner verlangt ein ETag:** Erst wird die Aufgabe gelesen, dann mit `If-Match` geändert. Liefert
+  Graph kein ETag, gibt es **keinen** PATCH – das Tool meldet es und ändert nichts.
+- **Fälligkeiten:** Planner rechnet in UTC; `2026-11-30` wird zu `2026-11-30T00:00:00Z`, ein Zeitpunkt
+  mit Versatz wird umgerechnet. To Do bekommt Ortszeit **und** Zone (`M365_ZEITZONE`).
+- **Zuweisen** nimmt Name, E-Mail, UPN oder Id; mehrdeutige Namen ergeben Kandidaten und keine Aktion.
+
+### Kontakte und Personen
+
+| Tool | Was es tut | Graph |
+|---|---|---|
+| `kontakte_suchen` | Adressbuch des Users durchsuchen | `GET /me/contacts?$search=` |
+| `kontakt_anlegen` | Kontakt anlegen (**verändernd**) | `POST /me/contacts` |
+| `kontakt_loeschen` | Kontakt löschen (**verändernd**) | `DELETE /me/contacts/{id}` |
+| `personen_suchen` | Kollegen mit Abteilung, Telefon und Mail | `GET /me/people?$search=` |
+
+### OneNote
+
+| Tool | Was es tut | Graph |
+|---|---|---|
+| `onenote_notizbuecher` | Notizbücher | `GET /me/onenote/notebooks` |
+| `onenote_abschnitte` | Abschnitte – alle oder eines Notizbuchs | `GET /me/onenote/sections`, `…/notebooks/{id}/sections` |
+| `onenote_seiten` | Seiten eines Abschnitts | `GET …/sections/{id}/pages` |
+| `onenote_seite_lesen` | Seite als Text (HTML → Text, `max_zeichen`) | `GET …/pages/{id}`, `…/pages/{id}/content` |
+| `onenote_seite_anlegen` | Seite anlegen (**verändernd**) | `POST …/sections/{id}/pages` |
+| `onenote_seite_loeschen` | Seite löschen (**verändernd**) | `DELETE /me/onenote/pages/{id}` |
+
+Bei `onenote_seite_anlegen` werden Titel und Text **HTML-escaped** eingesetzt: ein `<b>` im Text
+bleibt Text und wird nicht zu Markup.
+
+OneNote kennt bei Notizbüchern, Abschnitten **und Seiten** **kein** `webUrl` (Graph antwortet mit
+400); der Link steht unter `links.oneNoteWebUrl.href` und wird von dort gelesen.
+`/me/todo/lists` verträgt weder
+`$top` noch `$select` – begrenzt wird clientseitig, geblättert über `@odata.nextLink`; To-Do-Aufgaben
+kommen ohne `$select`, `$top` ist dort erlaubt (`docs/aufgaben/07-fehler-aus-dem-livetest.md`).
+
+### Regeln für alle neuen Tools
+
+- **Namen statt Ids.** Site, Bibliothek, Liste, Plan, Bucket, To-Do-Liste, Abschnitt und Notizbuch
+  dürfen Id **oder** Name sein. Passen mehrere, nennt das Tool die Kandidaten und **tut nichts**.
+- **429/503** mit `Retry-After` werden bei **lesenden** Aufrufen höchstens zweimal wiederholt. Ein
+  POST, PATCH, PUT oder DELETE wird **nie** automatisch wiederholt – sonst entstünden doppelte
+  Einträge.
+- **Fehlt die Zustimmung** für die neuen Rechte, antwortet das Tool mit einem Hinweis (kein Fehler):
+  „Für SharePoint, Planner, To Do, Kontakte oder OneNote fehlt die Zustimmung – im quiver-Fenster
+  unter Tools → Microsoft 365 erneut auf ‚Anmelden‘ klicken.“ Es öffnet **keinen** Browser und
+  löscht das Refresh-Token **nicht**. Der Teams-Hinweis bleibt unverändert.
+
+### Leere Antworten sind Erfolg (204)
+
+Microsoft Graph antwortet auf `PATCH`, `setReaction`, `markChatReadForUser`, `softDelete` und
+`DELETE` mit **204 und leerem Rumpf**. Das ist der Erfolg, kein Fehler. Der Graph-Client trennt
+deshalb „Antwort mit Inhalt“ von „Antwort ohne Inhalt“: `patch_ohne_antwort`, `post_ohne_antwort`
+und `delete` lesen nichts aus dem Rumpf – ein 2xx ist Erfolg, ein 4xx/5xx bleibt ein Fehler
+(`docs/aufgaben/09-leere-antworten-und-loeschen.md`).
+
+Die Tool-Antworten bleiben trotzdem vollständig: wo der neue Stand gebraucht wird, liest das Tool ihn
+mit **einem GET** danach (`planner_aufgabe_aendern`, `todo_aufgabe_erledigen`,
+`sharepoint_listeneintrag_aendern`). Vorher sah das aus wie ein Fehlschlag – „invalid type: null,
+expected struct PlannerAufgabe“ –, obwohl die Änderung längst geschrieben war.
+
+### Löschen
+
+Für alles, was m365 anlegen kann, gibt es ein Löschen-Tool. Alle sind **destruktiv**
+(`destructiveHint`), nehmen eine Id (Dateien auch einen Pfad, To-Do-Aufgaben auch einen Titel in
+der genannten Liste), werden nie wiederholt und melden genau, was verschwunden ist (Titel bzw.
+Name):
+
+| Tool | Graph | Was passiert mit den Daten |
+|---|---|---|
+| `termin_loeschen` | `DELETE /me/events/{id}` | endgültig weg; Absagen an Teilnehmer verschickt Graph dabei **nicht** |
+| `mail_loeschen` | `POST /me/messages/{id}/move` → `deleteditems` | Papierkorb, **nicht** endgültig |
+| `datei_loeschen` | `DELETE /drives/{d}/items/{id}` (bzw. `/me/drive/items/{id}`) | Papierkorb von OneDrive/SharePoint, gilt auch für Ordner |
+| `planner_aufgabe_loeschen` | `DELETE /planner/tasks/{id}` mit `If-Match` | endgültig weg; ohne ETag **kein** DELETE |
+| `todo_aufgabe_loeschen` | `DELETE /me/todo/lists/{l}/tasks/{t}` | gelöscht (To Do führt keinen Papierkorb für Aufgaben) |
+| `onenote_seite_loeschen` | `DELETE /me/onenote/pages/{id}` | in den Papierkorb des Notizbuchs |
+| `kontakt_loeschen` | `DELETE /me/contacts/{id}` | endgültig weg |
+| `sharepoint_listeneintrag_loeschen` | `DELETE /sites/{s}/lists/{l}/items/{id}` | in den Papierkorb der Liste |
+| `teams_nachricht_loeschen` | `POST …/messages/{id}/softDelete` | nur **eigene** Nachrichten; wiederherstellbar |
+
+Jedes Löschen-Tool liest zuerst (Titel/Name für die Meldung, und damit eine falsche Id keinen DELETE
+auslöst). Erst danach geht der schreibende Aufruf an Graph.
+
+### Listeneinträge: schreibgeschützte Spalten und 403
+
+`sharepoint_listeneintrag_aendern` schreibt nach `…/items/{id}/fields` (nicht auf `…/items/{id}`).
+Spalten, die SharePoint selbst führt – `LinkTitle`, `ID`, `Created`, `Modified`, `Author`, `Editor`
+und alles mit `_` am Anfang –, werden **vor dem Senden herausgefiltert**; die Antwort nennt sie
+unter `ignoriert` und sagt mit `hinweis`, warum. Bleibt danach nichts übrig, geht **keine** Anfrage
+an Graph.
+
+Antwortet Graph mit **403 `accessDenied`**, ist das kein Fehler im Code, sondern das Schreibrecht der
+Liste: das Tool antwortet dann mit „Kein Schreibrecht auf diese Liste (SharePoint-Rechte der Liste).“
+statt mit dem Rohfehler.
 
 ## Anmeldung
 
@@ -136,7 +296,7 @@ quiver-m365 --version
 
 Es gibt **keine** App-Registrierung einzurichten und kein Secret: `quiver-m365` ist eine
 eingebaute Multi-Tenant-App (öffentlicher Client). Details:
-[docs/entra-app.md](docs/entra-app.md).
+[entra-app.md](entra-app.md).
 
 ## Konfiguration
 
@@ -144,9 +304,9 @@ Alles über Umgebung, alles optional:
 
 | Variable | Standard | Bedeutung |
 |---|---|---|
-| `M365_CLIENT_ID` | eingebaute Client-ID | eigene App-Registrierung (siehe [docs/entra-app.md](docs/entra-app.md)) |
+| `M365_CLIENT_ID` | eingebaute Client-ID | eigene App-Registrierung (siehe [entra-app.md](entra-app.md)) |
 | `M365_TENANT` | `organizations` | Tenant-ID oder Domain |
-| `M365_SCOPES` | `User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.Read.All Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send Chat.ReadWrite User.ReadBasic.All offline_access` | delegierte Rechte |
+| `M365_SCOPES` | `User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.Read.All Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send TeamMember.Read.All Chat.ReadWrite User.ReadBasic.All Sites.ReadWrite.All Files.ReadWrite.All Tasks.ReadWrite Group.Read.All Contacts.ReadWrite People.Read Notes.ReadWrite.All offline_access` | delegierte Rechte |
 | `M365_AUTHORITY` | `https://login.microsoftonline.com` | Anmeldedienst (Tests: Attrappe) |
 | `M365_GRAPH_URL` | `https://graph.microsoft.com/v1.0` | Graph (Tests: Attrappe) |
 | `M365_ZEITZONE` | `Europe/Berlin` | Zeitzone für Termine und alle Zeiten in Antworten |

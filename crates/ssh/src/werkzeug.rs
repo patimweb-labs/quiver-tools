@@ -13,7 +13,9 @@ use quiver_tools_kern::{hinweis_zugang, Feld, FeldArt, Profil, Werkzeug};
 
 use crate::anmeldung;
 use crate::pfade::Pfade;
-use crate::verbindung::{Sammlung, ANMELDE_PASSWORT, BENUTZER, HOST, PORT, SUDO_PASSWORT};
+use crate::verbindung::{
+    Sammlung, ANMELDE_PASSWORT, AUSTAUSCHORDNER, BENUTZER, HOST, PORT, SCHREIBEN, SUDO_PASSWORT,
+};
 
 /// Kurzname: Teil der Werkzeugnamen (`ssh_exec`) und des Programms.
 pub const NAME: &str = "ssh";
@@ -89,6 +91,27 @@ impl Werkzeug for Ssh {
                 hilfe: "Für Befehle mit sudo. Getrennt vom Anmelde-Passwort.",
                 link: None,
             },
+            Feld {
+                name: SCHREIBEN,
+                titel: quiver_tools_kern::TITEL_SCHREIBEN,
+                art: FeldArt::Schalter,
+                pflicht: false,
+                standard: Some("aus"),
+                hilfe:
+                    "Erlaubt ssh_exec, ssh_schluessel_einrichten sowie Hoch- und Herunterladen. \
+                        Standard: aus – ohne diesen Schalter geht kein Befehl an den Host.",
+                link: None,
+            },
+            Feld {
+                name: AUSTAUSCHORDNER,
+                titel: "Austauschordner",
+                art: FeldArt::Ordner,
+                pflicht: false,
+                standard: None,
+                hilfe: "Ordner auf diesem Gerät für ssh_upload und ssh_download. Ohne dieses Feld \
+                        gibt es beide Werkzeuge nicht; Dateien bleiben immer in diesem Ordner.",
+                link: None,
+            },
         ]
     }
 
@@ -135,7 +158,7 @@ mod tests {
         assert_eq!(werkzeug.mehrfach(), Some(("Verbindungen", "Verbindung")));
 
         let felder = werkzeug.felder();
-        assert_eq!(felder.len(), 5);
+        assert_eq!(felder.len(), 7);
         assert_eq!(
             felder.iter().map(|feld| feld.name).collect::<Vec<_>>(),
             vec![
@@ -143,7 +166,9 @@ mod tests {
                 "host",
                 "port",
                 "anmelde_passwort",
-                "sudo_passwort"
+                "sudo_passwort",
+                "schreiben",
+                "austauschordner"
             ]
         );
         // benutzer, host: Pflicht, Text (die Liste im quiver-Fenster zeigt `benutzer@host`).
@@ -160,6 +185,10 @@ mod tests {
         assert!(felder[3].hilfe.contains("gelöscht"));
         assert_eq!(felder[4].art, FeldArt::Passwort);
         assert!(felder[4].hilfe.contains("sudo"));
+        // Der Schreibschalter ist im Zweifel aus; der Austauschordner ist eine Ordnerwahl.
+        assert_eq!(felder[5].art, FeldArt::Schalter);
+        assert_eq!(felder[5].standard, Some("aus"));
+        assert_eq!(felder[6].art, FeldArt::Ordner);
         // Alle Hilfe-Texte erklären das Feld, keiner ist leer.
         assert!(felder.iter().all(|feld| !feld.hilfe.is_empty()));
     }

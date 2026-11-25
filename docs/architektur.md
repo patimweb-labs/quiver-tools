@@ -7,13 +7,17 @@
 
 ```
 crates/kern        Werkzeug-Trait, Zugang aus der Umgebung, Bibliothekseintrag, MCP-Hilfen, Gerüst
+                   net (ein HTTP-Client, Adress- und Zertifikatsregel), schutz (Schreibschutz),
+                   ablage (Dateien nur im Arbeitsordner)
 crates/<tool>      ein Programm quiver-<tool> je Tool
 assets/            tokens.css und Schriften (Kopie aus mcp-quiver, nicht von Hand ändern)
 ```
 
 `kern ← <tool>`: ein Tool kennt den Kern, der Kern kennt kein Tool. Alles, was ein
 Tool dem Kern über sich sagt, steht in `Werkzeug`: Name, Titel, Beschreibung, Felder,
-`testen`.
+`testen`. Eine Ausnahme gibt es nur im Test: `crates/kern/tests/alle_programme.rs`
+bindet die Werkzeug-Crates als **Dev**-Abhängigkeit ein, um den Schreibschutz über alle
+Programme zu prüfen (siehe [adr/0014-haertung-paket-4.md](adr/0014-haertung-paket-4.md)).
 
 Die Oberfläche ist **quiver**. Dieses Repo liefert keine Seite und keinen Browser-Code
 mehr; `assets/` bleibt als Vorlage für quiver und wird hier von keinem Programm
@@ -26,6 +30,9 @@ eingebunden.
 | `umgebung` | `Zugang`: Felder aus `<NAME>_<FELD>` lesen, Pflichtfelder prüfen, `Profil` bauen | Umgebung des Prozesses |
 | `profil` | `Profil { name, werte, geheim }`, `ProfilFehler`; `Debug` zeigt Geheimnisse nie | keiner |
 | `eintrag` | `quiver_domain::Eintrag` als JSON: id, version, titel, beschreibung, laufzeit, felder | keiner |
+| `net` | ein HTTP-Client (keine Weiterleitung, Frist, 8 MB), Adress- und Zertifikatsregel | keiner |
+| `schutz` | Schreibschutz aus der Werkzeugliste: was nicht `read_only_hint` ist, braucht `schreiben` | keiner |
+| `ablage` | Dateien nur im Arbeitsordner: relative Namen, keine Symlinks, kein Überschreiben | Dateisystem |
 | `mcp` | `zugang`, `profile_tool`, `profile_antwort`, `server_info`, `kuerzen` | keiner |
 | `start` | `starten`, `aufruf_aus_args`, `Aufruf` (MCP, eintrag, testen, version, hilfe) | Prozess |
 | `zugaenge` | `Zugang { name, werte }`, `zugaenge()`, `mit_umgebung()` aus `QUIVER_ZUGAENGE` | Umgebungsvariable |
@@ -72,8 +79,12 @@ schreibt sie als JSON auf stdout. `befehl` kommt aus `--befehl <pfad>`, sonst au
 
 ```
 laufzeit = { art: "stdio", befehl: <pfad>, umgebung: { "<NAME>_<FELD>": "${<feld>}" } }
-felder   = [ { name, beschreibung: titel – hilfe, quelle: client|geheim, pflicht, standard } ]
+felder   = [ { name, titel, beschreibung: hilfe, art, quelle: client|geheim, pflicht, standard } ]
 ```
+
+`titel` ist die Anzeige, `beschreibung` nur die Hilfe. `art` folgt `quiver_domain::FeldArt`:
+`text`, `passwort`, `zahl`, `schalter`, `url` oder
+`{ auswahl: { optionen: [ { wert, anzeige } ] } }`. Auch `mehrfach.felder` trägt beide Felder.
 
 Kein `einrichtung`-Feld: es gibt keine Seite, die quiver öffnen könnte. `aktiv` und
 `argumente` fehlen absichtlich; beides hat in `quiver_domain` einen Standardwert.
@@ -226,11 +237,11 @@ Aufgabe: angemeldet bleiben.
 | `cookies` | Cookie-Speicher des Ablaufs (Host, Pfad, `Secure`) | je Ablauf |
 | `routine` | der Ablauf ohne Browser: Formular, Zustimmung, Rückleitung abfangen, Code tauschen | je Ablauf |
 | `browser` | `Browser`-Naht: `OeffneBrowser` (Notfall), `KeinBrowser` | keiner |
-| `anmeldung` | Token, Tresor, Sperrschutz, Hintergrund-Erneuerung, `status` | ein Token im Speicher, Refresh im Tresor |
+| `anmeldung` | Token, Tresor, Sperrschutz (nur nach echtem Fehlversuch), Hintergrund-Erneuerung, `status` | ein Token im Speicher, Refresh im Tresor |
 | `tresor` | `Tresor`-Naht: `DateiTresor` (`tresor/` im Zustandsordner), `SpeicherTresor` | Refresh-Token, `client_id` |
 | `sperre` | Sperrzustand als Datei (`routine-gesperrt.json`) | eine Datei |
 | `vermittler` | rmcp-Client zum ZEP-MCP, 401 → erneuern → einmal wiederholen | eine Verbindung |
-| `server` | der MCP-Server über stdio, Liste beim Start, `list_changed` weitergeben | Werkzeugliste |
+| `server` | der MCP-Server über stdio, Anmeldung und Liste beim Start, `list_changed` weitergeben | Werkzeugliste |
 | `befehle` | `anmelden`, `anmelden --browser`, `status`, `abmelden`, `routine-pruefen` | keiner |
 
 Datenfluss eines Aufrufs:
@@ -278,9 +289,20 @@ Regeln, die dort gelten:
   Feld**namen**; Werte stehen in keinem Bericht, keinem Fehler und keinem Log.
 - **Zugangsdaten gehen nur an den Authorization-Host.** Eine Weiterleitung auf einen
   fremden Host bricht ab, statt das Passwort dorthin zu tragen.
-- **Ein Versuch, dann Sperre.** Jeder Fehlschlag der Routine schreibt
-  `routine-gesperrt.json`; frei wird sie nur durch eine erfolgreiche Anmeldung über den
-  Knopf (`anmelden`). Automatische Wege wiederholen nie.
+- **Nur ein echter Fehlversuch sperrt.** Gesperrt wird nur, wenn Benutzer und Passwort
+  tatsächlich abgeschickt wurden und die Anmeldung danach nicht zum Token führte
+  (`Abgelehnt`, oder eine unbekannte Seite **nach** dem Absenden) – nur das zählt bei
+  ZEP, das nach fünf Fehlversuchen sperrt. Dann steht `routine-gesperrt.json` im
+  Zustandsordner, und frei wird sie erst durch eine erfolgreiche Anmeldung über den
+  Knopf (`anmelden`). Fehler **vor** dem Absenden (Netz, Metadaten, Registrierung,
+  unbekannte Seite vor dem Formular, fremder Host) schreiben keine Sperrdatei: sie
+  werden gemeldet, und der nächste Bedarf versucht es erneut – höchstens alle 60 s
+  (Merker im Speicher, nicht in der Datei). Dafür gibt `routine::Routine` zurück, ob
+  die Zugangsdaten gesendet wurden (`zugangsdaten_gesendet`).
+- **Anmelden beim Start.** Ohne gültiges Token, ohne Sperre und mit Benutzer und
+  Passwort meldet sich `quiver-zep` beim Start des MCP-Prozesses sofort im Hintergrund
+  an (`server::starte_anmeldung`) – nicht erst beim ersten Werkzeugaufruf. Danach liegt
+  das Refresh-Token im Tresor und `status` sagt „Angemeldet“.
 - **Nur eine Erneuerung gleichzeitig.** Refresh und Routine liegen unter einer Sperre;
   sonst nähmen sich zwei Erneuerungen das rotierte Refresh-Token weg.
 - **Der Browser ist Notfall.** `KeinBrowser` ist der Normalfall; nur `anmelden --browser`
@@ -324,6 +346,14 @@ funktioniert: [adr/0004-zep-offizieller-mcp.md](adr/0004-zep-offizieller-mcp.md)
   ein Mini-MCP-Server hinter `Bearer`, der auf Wunsch `tools/list_changed` schickt.
   Kein Test spricht mit zep-online.de; `ZEP_TRESOR=speicher` hält die Tresor-Datei aus
   dem Spiel.
+- **Tests laufen nie im echten Zustand.** Wo ein Modul einen Ordner für Zustand wählt,
+  liefert er unter `cfg(test)` einen temporären Ordner je Prozess – `zep::werkzeug::
+  zustandsordner` (und damit der Sperrzustand und `DateiTresor::standard`),
+  `m365_anmeldung::tresor` und `ssh::pfade::Pfade::aus_umgebung` (im Test ohne Home).
+  Ein Wächter-Test je Crate prüft, dass dieser Ordner nicht unter `HOME` liegt; ein
+  Test schreibt so nie eine `routine-gesperrt.json` in den Zustand des Users.
+  Integrationstests setzen weiterhin `ZEP_ZUSTAND`/`QUIVER_SSH_DATEN`, weil die
+  Bibliothek dort ohne `cfg(test)` läuft.
 - `crates/email/tests/imap_echt.rs` ist `#[ignore]` und spricht nur auf Anforderung mit
   einem echten IMAP-Server (`EMAIL_TEST_*`, z. B. GreenMail im Docker). Ohne diese
   Umgebung geht kein Test ins Netz.
@@ -469,7 +499,9 @@ Regeln, die dort gelten:
   `Debug` von `Organisation` und `Client` zeigt höchstens, *ob* einer gesetzt ist.
   Antworten, Fehlertexte und Logs nennen ihn nie.
 - **`api-version` an jeder Anfrage.** `7.1`; die Kommentar-Endpunkte (`…/comments`)
-  brauchen `7.1-preview.4`, weil DevOps sie noch als Vorschau führt. Eine eigene
+  brauchen `7.1-preview.4` und `_apis/connectionData` braucht `7.1-preview.1`, weil
+  DevOps beide noch als Vorschau führt (mit `7.1` antworten sie mit HTTP 400). Den
+  `connectionData`-Aufruf baut allein `client::verbindungsdaten()`. Eine eigene
   `api-version` im Aufruf wird nicht verdoppelt.
 - **401 und 203 mit HTML sind endgültig.** DevOps leitet bei ungültigem PAT auf die
   Anmeldung um; beides wird zu „PAT für <verbindung> ungültig oder abgelaufen“ und

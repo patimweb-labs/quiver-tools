@@ -22,6 +22,13 @@ pub enum AdtFehler {
     )]
     Anmeldung { system: String },
 
+    /// Der Pfad zeigt auf ein anderes System als das eingetragene.
+    #[error(
+        "Die Adresse gehört nicht zu {system} – erlaubt sind nur Objektpfade dieses Systems \
+         (z. B. /sap/bc/adt/…)."
+    )]
+    FremdesSystem { system: String },
+
     /// Das CSRF-Token ließ sich nicht holen.
     #[error("Das CSRF-Token von {system} ließ sich nicht holen – bitte Zugang im quiver-Fenster prüfen.")]
     Csrf { system: String },

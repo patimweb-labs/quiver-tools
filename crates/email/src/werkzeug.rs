@@ -42,6 +42,8 @@ pub const BENUTZER: &str = "benutzer";
 pub const PASSWORT: &str = "passwort";
 /// Zertifikat prüfen (`EMAIL_ZERTIFIKAT_PRUEFEN`, Standard `an`).
 pub const ZERTIFIKAT: &str = "zertifikat_pruefen";
+/// Schreiben erlauben (`EMAIL_SCHREIBEN`, Standard **aus**).
+pub const SCHREIBEN: &str = quiver_tools_kern::FELD_SCHREIBEN;
 
 /// Das E-Mail-Werkzeug.
 #[derive(Debug, Clone, Copy, Default)]
@@ -170,6 +172,16 @@ impl Werkzeug for Email {
                 pflicht: false,
                 standard: Some("an"),
                 hilfe: "Nur für lokale Brücken (127.0.0.1, localhost) wirksam",
+                link: None,
+            },
+            Feld {
+                name: SCHREIBEN,
+                titel: quiver_tools_kern::TITEL_SCHREIBEN,
+                art: FeldArt::Schalter,
+                pflicht: false,
+                standard: Some("aus"),
+                hilfe: "Erlaubt die verändernden Werkzeuge (senden, antworten, weiterleiten, \
+                        entwerfen, flaggen, verschieben, löschen). Standard: aus.",
                 link: None,
             },
         ]
@@ -308,14 +320,14 @@ mod tests {
     }
 
     #[test]
-    fn werkzeug_nennt_name_titel_und_elf_felder() {
+    fn werkzeug_nennt_name_titel_und_zwoelf_felder() {
         let werkzeug = Email;
         assert_eq!(werkzeug.name(), "email");
         assert_eq!(werkzeug.titel(), "E-Mail");
         assert!(werkzeug.beschreibung().contains("IMAP"));
 
         let felder = werkzeug.felder();
-        assert_eq!(felder.len(), 11, "{felder:?}");
+        assert_eq!(felder.len(), 12, "{felder:?}");
         let namen: Vec<&str> = felder.iter().map(|feld| feld.name).collect();
         assert_eq!(
             namen,
@@ -331,6 +343,7 @@ mod tests {
                 "benutzer",
                 "passwort",
                 "zertifikat_pruefen",
+                "schreiben",
             ]
         );
 

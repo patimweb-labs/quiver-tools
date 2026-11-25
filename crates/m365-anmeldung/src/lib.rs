@@ -41,8 +41,19 @@ pub const STANDARD_SCOPES: &[&str] = &[
     "Channel.ReadBasic.All",
     "ChannelMessage.Read.All",
     "ChannelMessage.Send",
+    // Mitglieder lesen (`teams_mitglieder`, Aufgabe 07).
+    "TeamMember.Read.All",
     "Chat.ReadWrite",
     "User.ReadBasic.All",
+    // SharePoint/OneDrive, Planner/To Do, Kontakte/Personen, OneNote
+    // (docs/aufgaben/06-graph-erweiterung.md): delegiert, als der User.
+    "Sites.ReadWrite.All",
+    "Files.ReadWrite.All",
+    "Tasks.ReadWrite",
+    "Group.Read.All",
+    "Contacts.ReadWrite",
+    "People.Read",
+    "Notes.ReadWrite.All",
     "offline_access",
 ];
 

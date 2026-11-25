@@ -162,8 +162,8 @@ impl Zustand {
 
     fn werkzeugliste(&self) -> Vec<Tool> {
         let mut liste = vec![
-            werkzeug("zep_projekte", "Projekte", "Listet die Projekte.", true),
-            werkzeug("zep_zeiten", "Zeiten", "Listet gebuchte Zeiten.", true),
+            werkzeug("get_project_info", "Projekte", "Listet die Projekte.", true),
+            werkzeug("get_attendances", "Zeiten", "Listet gebuchte Zeiten.", true),
             werkzeug(
                 "zep_umschalten",
                 "Umschalten",
@@ -289,6 +289,8 @@ impl Attrappe {
             zustand,
             takt,
             wartezeit: std::time::Duration::from_secs(10),
+            // Kurz: der Test soll den zweiten Versuch nicht 60 s abwarten.
+            pause: std::time::Duration::from_millis(50),
         }
     }
 
@@ -320,6 +322,11 @@ impl Attrappe {
     /// `/authorize` antwortet mit einer Seite, die zu keinem Schritt passt.
     pub fn unklare_seite_zeigen(&self) {
         self.zustand.unklare_seite.store(true, Ordering::SeqCst);
+    }
+
+    /// `/authorize` antwortet wieder mit dem Anmeldeformular.
+    pub fn unklare_seite_aus(&self) {
+        self.zustand.unklare_seite.store(false, Ordering::SeqCst);
     }
 
     /// Die Zustimmung kommt wie bei ZEP als Inertia-Seite (ohne `<form>`).
@@ -430,8 +437,8 @@ impl ServerHandler for Werkzeuge {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let antwort = match request.name.as_ref() {
-            "zep_projekte" => "Projekte der Attrappe: Neoimpulse, Quiver.",
-            "zep_zeiten" => "Zeiten der Attrappe: 2 Buchungen.",
+            "get_project_info" => "Projekte der Attrappe: Neoimpulse, Quiver.",
+            "get_attendances" => "Zeiten der Attrappe: 2 Buchungen.",
             "zep_kunden" => "Kunden der Attrappe: niemand.",
             "zep_umschalten" => {
                 self.zustand.umgeschaltet.store(true, Ordering::SeqCst);

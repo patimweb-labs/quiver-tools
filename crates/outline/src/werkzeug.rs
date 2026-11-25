@@ -22,6 +22,14 @@ pub const TITEL: &str = "Outline-Wiki";
 pub const ADRESSE: &str = "url";
 /// Feldname des API-Schlüssels im Zugang (`OUTLINE_API_KEY`, geheim).
 pub const SCHLUESSEL: &str = "api_key";
+/// Feldname des Schalters „Unverschlüsselt erlauben“ (`OUTLINE_UNVERSCHLUESSELT_ERLAUBEN`).
+pub const UNVERSCHLUESSELT: &str = quiver_tools_kern::net::FELD_UNVERSCHLUESSELT;
+/// Feldname des eigenen CA-Zertifikats (`OUTLINE_CA_ZERTIFIKAT`).
+pub const CA_ZERTIFIKAT: &str = quiver_tools_kern::net::FELD_CA_ZERTIFIKAT;
+/// Feldname des Arbeitsordners für `outline_export` (Feldart „Ordner“).
+pub const ORDNER: &str = "ordner";
+/// Feldname des Schalters „Schreiben erlauben“ (Standard **aus**).
+pub const SCHREIBEN: &str = quiver_tools_kern::FELD_SCHREIBEN;
 
 /// Das Outline-Werkzeug.
 #[derive(Debug, Clone, Copy, Default)]
@@ -64,6 +72,46 @@ impl Werkzeug for Outline {
                     "${url}/settings/api-and-access",
                 )),
             },
+            Feld {
+                name: UNVERSCHLUESSELT,
+                titel: quiver_tools_kern::net::TITEL_UNVERSCHLUESSELT,
+                art: FeldArt::Schalter,
+                pflicht: false,
+                standard: Some("aus"),
+                hilfe: "Nur nötig, wenn das Wiki über http:// (ohne TLS) erreichbar ist. \
+                        Ohne diesen Schalter sind nur 127.0.0.1, localhost und [::1] per http erlaubt.",
+                link: None,
+            },
+            Feld {
+                name: CA_ZERTIFIKAT,
+                titel: quiver_tools_kern::net::TITEL_CA_ZERTIFIKAT,
+                art: FeldArt::Text,
+                pflicht: false,
+                standard: None,
+                hilfe: "Pfad einer PEM-Datei, wenn das Wiki ein eigenes CA-Zertifikat nutzt. \
+                        Leer heißt: Prüfung gegen den Zertifikatsspeicher des Systems.",
+                link: None,
+            },
+            Feld {
+                name: ORDNER,
+                titel: "Arbeitsordner",
+                art: FeldArt::Ordner,
+                pflicht: false,
+                standard: None,
+                hilfe: "Ordner für outline_export. Dateien entstehen nur darin, nie darüber \
+                        hinaus; vorhandene Dateien werden nicht überschrieben.",
+                link: None,
+            },
+            Feld {
+                name: SCHREIBEN,
+                titel: quiver_tools_kern::TITEL_SCHREIBEN,
+                art: FeldArt::Schalter,
+                pflicht: false,
+                standard: Some("aus"),
+                hilfe: "Erlaubt die verändernden Werkzeuge (anlegen, ändern, verschieben, \
+                        archivieren, löschen, kommentieren, exportieren). Standard: aus.",
+                link: None,
+            },
         ]
     }
 
@@ -83,6 +131,27 @@ pub enum AdressFehler {
     Leer,
     #[error("„{0}“ ist keine gültige URL.")]
     Ungueltig(String),
+    #[error("{0}")]
+    Unverschluesselt(String),
+}
+
+/// Die Wurzel des Arbeitsbereichs, mit derselben Adressprüfung wie im Kern:
+/// `https` immer, `http` nur auf dem Loopback oder mit eingeschaltetem Feld
+/// „Unverschlüsselt erlauben“.
+pub fn wurzel_geprueft(roh: &str, unverschluesselt: bool) -> Result<String, AdressFehler> {
+    let wurzel = wurzel(roh)?;
+    quiver_tools_kern::net::adresse_erlaubt(&wurzel, unverschluesselt).map_err(|fehler| {
+        match fehler {
+            quiver_tools_kern::net::AdressFehler::Ungueltig { url }
+            | quiver_tools_kern::net::AdressFehler::Unsicher { url } => {
+                AdressFehler::Ungueltig(url)
+            }
+            quiver_tools_kern::net::AdressFehler::Unverschluesselt { .. } => {
+                AdressFehler::Unverschluesselt(fehler.to_string())
+            }
+        }
+    })?;
+    Ok(wurzel)
 }
 
 /// Die Wurzel des Arbeitsbereichs aus dem, was der User einträgt.
@@ -188,7 +257,7 @@ mod tests {
         assert_eq!(werkzeug.titel(), "Outline-Wiki");
         assert!(werkzeug.beschreibung().contains("Outline-Wiki"));
         let felder = werkzeug.felder();
-        assert_eq!(felder.len(), 2);
+        assert_eq!(felder.len(), 6);
         assert_eq!(felder[0].name, "url");
         assert_eq!(felder[0].art, FeldArt::Url);
         assert!(felder[0].pflicht);
@@ -197,5 +266,25 @@ mod tests {
         assert_eq!(felder[1].art, FeldArt::Passwort);
         assert!(felder[1].pflicht);
         assert!(felder[1].hilfe.contains("ol_api_"));
+        // Die Härtung: Adresse, Zertifikat, Arbeitsordner und Schreibschalter.
+        assert_eq!(felder[2].name, UNVERSCHLUESSELT);
+        assert_eq!(felder[3].name, CA_ZERTIFIKAT);
+        assert_eq!(felder[4].name, ORDNER);
+        assert_eq!(felder[4].art, FeldArt::Ordner);
+        assert_eq!(felder[5].name, SCHREIBEN);
+        // Der Schreibschalter ist im Zweifel aus.
+        assert_eq!(felder[5].standard, Some("aus"));
+    }
+
+    #[test]
+    fn http_ist_ohne_schalter_nur_auf_loopback_erlaubt() {
+        assert!(wurzel_geprueft("http://127.0.0.1:3000", false).is_ok());
+        assert!(wurzel_geprueft("http://localhost:3000", false).is_ok());
+        let fehler = wurzel_geprueft("http://wiki.example.test", false).unwrap_err();
+        assert!(
+            fehler.to_string().contains("Unverschlüsselt erlauben"),
+            "{fehler}"
+        );
+        assert!(wurzel_geprueft("http://wiki.example.test", true).is_ok());
     }
 }

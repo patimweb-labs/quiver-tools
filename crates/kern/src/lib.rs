@@ -9,16 +9,21 @@
 //! Bibliothekseintrags), baut den Bibliothekseintrag für mcp-quiver und liefert
 //! die MCP-Hilfen.
 
+pub mod ablage;
 pub mod eintrag;
 pub mod mcp;
+pub mod net;
 pub mod profil;
+pub mod schutz;
 pub mod start;
 pub mod umgebung;
 pub mod zugaenge;
 
+pub use ablage::Ablage;
 pub use eintrag::{eintrag, Eintrag, Herkunft, Laufzeit, Quelle};
 pub use mcp::{antwort, kuerzen, zugang, OhneProfil};
 pub use profil::{Profil, ProfilFehler};
+pub use schutz::{schreibschutz, FELD_SCHREIBEN, TITEL_SCHREIBEN};
 pub use start::{aufruf_aus_args, starten, Aufruf};
 pub use umgebung::Zugang;
 
@@ -31,6 +36,8 @@ pub enum FeldArt {
     Zahl,
     Schalter,
     Url,
+    /// Ein Ordner auf dem Gerät; quiver öffnet dafür den Datei-Dialog.
+    Ordner,
     /// Feste Auswahl (Wert, Anzeige).
     Auswahl(Vec<(String, String)>),
 }
@@ -85,6 +92,20 @@ pub fn hinweis_zugang(titel: &str) -> String {
     format!("Zugang fehlt – bitte im quiver-Fenster unter Tools → {titel} die Angaben eintragen.")
 }
 
+/// Ein Schalter, der im Zweifel **aus** ist (Feld `schreiben`, SPEC §2a).
+///
+/// Nur ein ausdrückliches Einschalten (`an`, `ja`, `1`, `true`, `ein`, `on`)
+/// gilt; ein fehlendes Feld und jede andere Schreibweise bleiben aus.
+pub fn schalter_aus(wert: Option<&str>) -> bool {
+    match wert.map(str::trim) {
+        None | Some("") => false,
+        Some(wert) => matches!(
+            wert.to_ascii_lowercase().as_str(),
+            "an" | "ja" | "1" | "true" | "ein" | "on"
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,5 +117,15 @@ mod tests {
             text,
             "Zugang fehlt – bitte im quiver-Fenster unter Tools → Outline-Wiki die Angaben eintragen."
         );
+    }
+
+    #[test]
+    fn der_schalter_ist_im_zweifel_aus() {
+        assert!(!schalter_aus(None));
+        assert!(!schalter_aus(Some("")));
+        assert!(!schalter_aus(Some("aus")));
+        assert!(!schalter_aus(Some("quatsch")));
+        assert!(schalter_aus(Some("an")));
+        assert!(schalter_aus(Some(" TRUE ")));
     }
 }

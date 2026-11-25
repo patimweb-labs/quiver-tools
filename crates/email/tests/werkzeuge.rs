@@ -571,3 +571,36 @@ async fn ohne_zugang_kommt_der_hinweis_und_kein_fehler() {
     assert_eq!(*drin(&postfach.aufzeichnung.postfaecher), 0);
     assert!(drin(&versand.aufzeichnung.versandt).is_empty());
 }
+
+#[tokio::test]
+async fn ohne_schreibschalter_geht_keine_anfrage_hinaus() {
+    let (postfach, versand, fabrik) = attrappe::fabrik();
+    let server =
+        EmailServer::mit_fabrik(attrappe::zugang_ohne_schreiben("ich@example.test"), fabrik);
+
+    // Lesen geht weiter.
+    let text = ruf(&server, "email_list_mailboxes", json!({}))
+        .await
+        .unwrap();
+    assert!(text.contains("Postfächer"), "{text}");
+
+    // Senden nicht: der Hinweis nennt das Feld im quiver-Fenster.
+    let text = ruf(
+        &server,
+        "email_send",
+        json!({ "to": ["ada@example.test"], "subject": "Test", "text": "Hallo" }),
+    )
+    .await
+    .unwrap();
+    assert!(text.contains("Schreiben erlauben"), "{text}");
+    assert!(text.contains("quiver-Fenster"), "{text}");
+    assert!(text.contains("email_send"), "{text}");
+    assert!(drin(&versand.aufzeichnung.versandt).is_empty());
+
+    // Auch Flaggen ist verändernd und bleibt gesperrt.
+    let text = ruf(&server, "email_flag", json!({ "uid": 42, "add": ["Seen"] }))
+        .await
+        .unwrap();
+    assert!(text.contains("Schreiben erlauben"), "{text}");
+    assert!(drin(&postfach.aufzeichnung.flaggen).is_empty());
+}

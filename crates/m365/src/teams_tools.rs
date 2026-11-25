@@ -12,11 +12,15 @@
 //! * Gesendet wird genau einmal – kein Wiederholen nach 429 (doppelte Nachricht).
 //! * Antworten sind knappes JSON: HTML→Text, Länge begrenzt, Anhänge nur als Name,
 //!   gelöschte und System-Nachrichten weg.
+//! * Aufgabe 09: `setReaction`, `markChatReadForUser` und `softDelete` antworten mit
+//!   **204 und leerem Rumpf** – Erfolg, ohne Modell zu erwarten. Löschen heißt bei
+//!   Teams `softDelete`: nur eigene Nachrichten, wiederherstellbar.
 
 use jiff::Timestamp;
-use m365_anmeldung::Anmeldung;
+use m365_anmeldung::{Anmeldung, Token};
 use m365_graph::{
-    Chat, Kanal, Mitglied, Profil, Sammlung, SucheAntwort, Team, TeamsNachricht, Treffer, Vorschau,
+    mandant_aus_token, Chat, GraphFehler, Kanal, Mitglied, Profil, Sammlung, SucheAntwort, Team,
+    TeamsNachricht, Treffer, Vorschau,
 };
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::ErrorData;
@@ -40,6 +44,14 @@ const HOECHSTENS_ANTWORTEN: usize = 50;
 const STANDARD_TAGE: u32 = 3;
 /// So viele Zeichen einer Chat-Vorschau stehen in `teams_chats`.
 const VORSCHAU_ZEICHEN: usize = 200;
+
+/// Der Satz, wenn `teams_mitglieder` mit 403 antwortet.
+///
+/// Ein 403 heißt hier fast immer: das delegierte Recht `TeamMember.Read.All`
+/// fehlt (`Authorization_RequestDenied`). Der Rohfehler hilft niemandem, der
+/// Satz schon (Aufgabe 07).
+pub const MITGLIEDER_HINWEIS: &str =
+    "Für `teams_mitglieder` fehlt das Recht `TeamMember.Read.All` – im quiver-Fenster unter Tools → Microsoft 365 erneut auf „Anmelden“ klicken (in vielen Tenants gibt ein Admin das Recht einmal frei).";
 
 // ---------------------------------------------------------------------------
 // Parameter der Tools (Namen und Beschreibungen deutsch, wie im Rest des Repos)
@@ -213,8 +225,8 @@ pub struct TeamsReagierenAnfrage {
     pub kanal: Option<String>,
     /// Id der Nachricht, auf die reagiert wird.
     pub nachricht: String,
-    /// Die Reaktion: `like`, `heart`, `laugh`, `surprised`, `sad`, `angry` –
-    /// oder das Emoji (👍 ❤️ 😂 😮 😢 😡).
+    /// Die Reaktion als Wort (`like`, `love`, `laugh`, `surprised`, `sad`,
+    /// `angry`) oder direkt als Emoji (👍 ❤️ 😆 😮 😢 😡).
     pub reaktion: String,
     /// `true`: die Reaktion wieder entfernen (Standard `false`).
     #[serde(default)]
@@ -229,6 +241,22 @@ pub struct TeamsAlsGelesenAnfrage {
     /// `true` (Standard): als gelesen markieren. `false`: wieder ungelesen.
     #[serde(default)]
     pub gelesen: Option<bool>,
+}
+
+/// Parameter für `teams_nachricht_loeschen`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TeamsNachrichtLoeschenAnfrage {
+    /// Chat als Id, Thema oder Mitgliedsname – **oder** `team` + `kanal`.
+    #[serde(default)]
+    pub chat: Option<String>,
+    /// Team als Id oder Name (zusammen mit `kanal` statt `chat`).
+    #[serde(default)]
+    pub team: Option<String>,
+    /// Kanal als Id oder Name (zusammen mit `team`).
+    #[serde(default)]
+    pub kanal: Option<String>,
+    /// Id der Nachricht, die gelöscht wird.
+    pub nachricht: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -549,6 +577,18 @@ impl<A: Anmeldung + 'static> Quiver<A> {
     ) -> Result<String, ErrorData> {
         ergebnis(self.teams_als_gelesen_lauf(anfrage).await)
     }
+
+    /// Eine eigene Nachricht löschen (softDelete, wiederherstellbar).
+    #[tool(
+        description = "Eine eigene Teams-Nachricht löschen (softDelete – wiederherstellbar, fremde Nachrichten lehnt Graph ab). Verändert den Chat bzw. Kanal.",
+        annotations(destructive_hint = true)
+    )]
+    pub async fn teams_nachricht_loeschen(
+        &self,
+        Parameters(anfrage): Parameters<TeamsNachrichtLoeschenAnfrage>,
+    ) -> Result<String, ErrorData> {
+        ergebnis(self.teams_nachricht_loeschen_lauf(anfrage).await)
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -569,11 +609,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         }
         let teams = self
             .graph
-            .get_seiten::<Team>(
-                "/me/joinedTeams",
-                &[("$top", "100".to_string())],
-                HOECHSTENS_LISTE,
-            )
+            .get_seiten::<Team>("/me/joinedTeams", &[], HOECHSTENS_LISTE)
             .await?;
         let kandidaten = teams
             .into_iter()
@@ -596,7 +632,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         let pfad = format!("/teams/{}/channels", team.id);
         let kanaele = self
             .graph
-            .get_seiten::<Kanal>(&pfad, &[("$top", "100".to_string())], HOECHSTENS_LISTE)
+            .get_seiten::<Kanal>(&pfad, &[], HOECHSTENS_LISTE)
             .await?;
         let kandidaten = kanaele
             .into_iter()
@@ -707,7 +743,11 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         }
     }
 
-    async fn personen_suchen(&self, suche: &str, anzahl: u32) -> Result<Vec<Person>, ToolFehler> {
+    async fn personen_im_tenant_suchen(
+        &self,
+        suche: &str,
+        anzahl: u32,
+    ) -> Result<Vec<Person>, ToolFehler> {
         let abfrage = format!("\"displayName:{suche}\" OR \"mail:{suche}\"");
         let liste: Sammlung<Profil> = self
             .graph
@@ -745,7 +785,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         if referenz.is_empty() {
             return Err(ungueltig_tool("Teilnehmer fehlt"));
         }
-        let personen = self.personen_suchen(referenz, 10).await?;
+        let personen = self.personen_im_tenant_suchen(referenz, 10).await?;
         let klein = referenz.to_lowercase();
         let identisch: Vec<&Person> = personen
             .iter()
@@ -817,6 +857,22 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             .get("/me", &[("$select", "id,displayName".to_string())])
             .await?;
         Ok((profil.id, profil.display_name))
+    }
+
+    /// Der Mandant des angemeldeten Users – aus dem `tid`-Anspruch des Tokens.
+    ///
+    /// Kein zusätzlicher Aufruf an Graph; ein Token ohne `tid` (von Hand
+    /// gesetzt) ergibt einen Hinweis statt eines 400 von Graph (Aufgabe 07).
+    async fn mandant(&self) -> Result<String, ToolFehler> {
+        match self.graph.anmeldung().access_token().await {
+            Ok(Token::Bereit(token)) => mandant_aus_token(&token).ok_or_else(|| {
+                ungueltig_tool(
+                    "Der Mandant fehlt im Access-Token (`tid`). Bitte im quiver-Fenster unter Tools → Microsoft 365 erneut auf „Anmelden“ klicken.",
+                )
+            }),
+            Ok(Token::WartetAufBrowser) => Err(GraphFehler::AnmeldungLaeuft.into()),
+            Err(fehler) => Err(GraphFehler::Anmeldung(fehler).into()),
+        }
     }
 
     async fn antwortzahl(&self, pfad: &str) -> Result<usize, ToolFehler> {
@@ -939,13 +995,11 @@ impl<A: Anmeldung + 'static> Quiver<A> {
     }
 
     async fn teams_liste_lauf(&self) -> Result<String, ToolFehler> {
+        // Kein `$top` auf `/me/joinedTeams` (Graph: „Query option 'Top' is not
+        // allowed“, Aufgabe 07); begrenzt wird clientseitig über `get_seiten`.
         let teams = self
             .graph
-            .get_seiten::<Team>(
-                "/me/joinedTeams",
-                &[("$top", "100".to_string())],
-                HOECHSTENS_LISTE,
-            )
+            .get_seiten::<Team>("/me/joinedTeams", &[], HOECHSTENS_LISTE)
             .await?;
         let liste: Vec<Value> = teams
             .iter()
@@ -963,9 +1017,10 @@ impl<A: Anmeldung + 'static> Quiver<A> {
     async fn teams_kanaele_lauf(&self, anfrage: TeamsKanaeleAnfrage) -> Result<String, ToolFehler> {
         let team = self.team_finden(&anfrage.team).await?;
         let pfad = format!("/teams/{}/channels", team.id);
+        // Auch hier kein `$top` (Aufgabe 07).
         let kanaele = self
             .graph
-            .get_seiten::<Kanal>(&pfad, &[("$top", "100".to_string())], HOECHSTENS_LISTE)
+            .get_seiten::<Kanal>(&pfad, &[], HOECHSTENS_LISTE)
             .await?;
         let liste: Vec<Value> = kanaele
             .iter()
@@ -1141,7 +1196,8 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         let mitglieder = self
             .graph
             .get_seiten::<Mitglied>(&pfad, &[("$top", "200".to_string())], HOECHSTENS_LISTE)
-            .await?;
+            .await
+            .map_err(mitglieder_fehler)?;
         let liste: Vec<Value> = mitglieder.iter().map(mitglied_json).collect();
         als_json(&json!({"wo": wo, "mitglieder": liste})).map_err(ToolFehler::from)
     }
@@ -1155,7 +1211,7 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             return Err(ungueltig_tool("suche fehlt"));
         }
         let anzahl = anzahl_mit(anfrage.anzahl, 10, 50);
-        let personen = self.personen_suchen(suche, anzahl).await?;
+        let personen = self.personen_im_tenant_suchen(suche, anzahl).await?;
         let liste: Vec<Value> = personen
             .iter()
             .map(|person| {
@@ -1238,16 +1294,43 @@ impl<A: Anmeldung + 'static> Quiver<A> {
             personen.push(self.person_finden(referenz).await?);
         }
 
+        // Der User selbst gehört immer dazu (Graph erwartet ihn ausdrücklich) –
+        // aber als **eigene Id**, nicht als `/me`: `user@odata.bind` verlangt eine
+        // Bindung an die Ressource (Aufgabe 07: „'user@odata.bind' field is
+        // missing“ bei `…/me`).
+        let (ich_id, _) = self.ich().await?;
+        let ich_id = ich_id.ok_or_else(|| {
+            ungueltig_tool("Die eigene Benutzer-Id fehlt in der Antwort von Graph (/me).")
+        })?;
+
+        // Der eigene User wird nie doppelt gebunden, und ein Mitglied steht nur
+        // einmal im Rumpf (Aufgabe 08: „Duplicate chat members“). Bleibt niemand
+        // übrig, gibt es keinen Chat mit sich selbst.
+        let mut gesehen: Vec<String> = vec![ich_id.to_lowercase()];
+        personen.retain(|person| {
+            let id = person.id.to_lowercase();
+            if gesehen.contains(&id) {
+                false
+            } else {
+                gesehen.push(id);
+                true
+            }
+        });
+        if personen.is_empty() {
+            return Err(ungueltig_tool(
+                "Du kannst keinen Chat nur mit dir selbst anlegen – nenne mindestens eine andere Person.",
+            ));
+        }
+
         let art = if personen.len() == 1 {
             "oneOnOne"
         } else {
             "group"
         };
-        // Der User selbst gehört immer dazu (Graph erwartet ihn ausdrücklich).
         let mut mitglieder = vec![json!({
             "@odata.type": "#microsoft.graph.aadUserConversationMember",
             "roles": ["owner"],
-            "user@odata.bind": "https://graph.microsoft.com/v1.0/me",
+            "user@odata.bind": format!("https://graph.microsoft.com/v1.0/users('{ich_id}')"),
         })];
         for person in &personen {
             mitglieder.push(json!({
@@ -1300,50 +1383,24 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         if nachricht.is_empty() {
             return Err(ungueltig_tool("nachricht fehlt"));
         }
-        let reaktion = reaktion_normalisieren(&anfrage.reaktion);
-        if reaktion.is_empty() {
-            return Err(ungueltig_tool("reaktion fehlt"));
-        }
+        let roh = anfrage.reaktion.trim();
+        let reaktion = reaktion_normalisieren(roh).ok_or_else(|| {
+            let erlaubt = "erlaubt sind die Wörter like, love, laugh, surprised, sad, angry oder das Emoji (👍 ❤️ 😆 😮 😢 😡)";
+            if roh.is_empty() {
+                ungueltig_tool(format!("reaktion fehlt – {erlaubt}."))
+            } else {
+                ungueltig_tool(format!("reaktion {roh:?} ist unbekannt – {erlaubt}."))
+            }
+        })?;
 
-        let basis = match anfrage
-            .chat
-            .as_deref()
-            .map(str::trim)
-            .filter(|c| !c.is_empty())
-        {
-            Some(chat) => {
-                let chat = self.chat_finden(chat).await?;
-                format!("/chats/{}/messages/{nachricht}", chat.id)
-            }
-            None => {
-                let team = anfrage
-                    .team
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|t| !t.is_empty())
-                    .ok_or_else(|| {
-                        ungueltig_tool(
-                            "chat fehlt – oder team und kanal nennen (genau eines von beidem)",
-                        )
-                    })?;
-                let kanal = anfrage
-                    .kanal
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|k| !k.is_empty())
-                    .ok_or_else(|| {
-                        ungueltig_tool(
-                            "kanal fehlt – zusammen mit team (oder stattdessen chat nennen)",
-                        )
-                    })?;
-                let team = self.team_finden(team).await?;
-                let kanal = self.kanal_finden(&team, kanal).await?;
-                format!(
-                    "/teams/{}/channels/{}/messages/{nachricht}",
-                    team.id, kanal.id
-                )
-            }
-        };
+        let basis = self
+            .nachricht_basis(
+                anfrage.chat.as_deref(),
+                anfrage.team.as_deref(),
+                anfrage.kanal.as_deref(),
+                nachricht,
+            )
+            .await?;
 
         let entfernen = anfrage.entfernen.unwrap_or(false);
         let aktion = if entfernen {
@@ -1351,9 +1408,9 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         } else {
             "setReaction"
         };
-        let _: Value = self
-            .graph
-            .post(
+        // 204 mit leerem Rumpf: der Aufruf ist erfolgreich (Aufgabe 09).
+        self.graph
+            .post_ohne_antwort(
                 &format!("{basis}/{aktion}"),
                 &json!({"reactionType": reaktion}),
             )
@@ -1368,6 +1425,35 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         .map_err(ToolFehler::from)
     }
 
+    async fn teams_nachricht_loeschen_lauf(
+        &self,
+        anfrage: TeamsNachrichtLoeschenAnfrage,
+    ) -> Result<String, ToolFehler> {
+        let nachricht = anfrage.nachricht.trim();
+        if nachricht.is_empty() {
+            return Err(ungueltig_tool("nachricht fehlt"));
+        }
+        let basis = self
+            .nachricht_basis(
+                anfrage.chat.as_deref(),
+                anfrage.team.as_deref(),
+                anfrage.kanal.as_deref(),
+                nachricht,
+            )
+            .await?;
+        // `softDelete`: Graph markiert die Nachricht als gelöscht, sie bleibt
+        // wiederherstellbar. Fremde Nachrichten lehnt Graph ab (403).
+        self.graph
+            .post_ohne_antwort(&format!("{basis}/softDelete"), &Value::Null)
+            .await?;
+        als_json(&json!({
+            "geloescht": true,
+            "nachricht": nachricht,
+            "wiederherstellbar": true,
+        }))
+        .map_err(ToolFehler::from)
+    }
+
     async fn teams_als_gelesen_lauf(
         &self,
         anfrage: TeamsAlsGelesenAnfrage,
@@ -1377,27 +1463,88 @@ impl<A: Anmeldung + 'static> Quiver<A> {
         let ich_id = ich_id.ok_or_else(|| {
             ungueltig_tool("Die eigene Benutzer-Id fehlt in der Antwort von Graph (/me).")
         })?;
+        // `markChatReadForUser` verlangt den Mandanten des Users im Rumpf
+        // (Aufgabe 07: „TenantId for the user must be specified“). Er steht im
+        // `tid`-Anspruch des Access-Tokens.
+        let mandant = self.mandant().await?;
         let chat = self.chat_finden(&anfrage.chat).await?;
         let aktion = if gelesen {
             "markChatReadForUser"
         } else {
             "markChatUnreadForUser"
         };
-        let _: Value = self
-            .graph
-            .post(
+        // 204 mit leerem Rumpf: die Lesemarke ist gesetzt (Aufgabe 09).
+        self.graph
+            .post_ohne_antwort(
                 &format!("/chats/{}/{aktion}", chat.id),
-                &json!({"user": {"id": ich_id}}),
+                &json!({"user": {"id": ich_id, "tenantId": mandant}}),
             )
             .await?;
 
         als_json(&json!({"chat": chat.id, "gelesen": gelesen})).map_err(ToolFehler::from)
+    }
+
+    /// Der Graph-Pfad einer Nachricht: über den Chat **oder** über Team und Kanal.
+    /// Genau eines von beidem, sonst eine Meldung ohne Anfrage.
+    async fn nachricht_basis(
+        &self,
+        chat: Option<&str>,
+        team: Option<&str>,
+        kanal: Option<&str>,
+        nachricht: &str,
+    ) -> Result<String, ToolFehler> {
+        match chat.map(str::trim).filter(|chat| !chat.is_empty()) {
+            Some(chat) => {
+                let chat = self.chat_finden(chat).await?;
+                Ok(format!("/chats/{}/messages/{nachricht}", chat.id))
+            }
+            None => {
+                let team = team
+                    .map(str::trim)
+                    .filter(|team| !team.is_empty())
+                    .ok_or_else(|| {
+                        ungueltig_tool(
+                            "chat fehlt – oder team und kanal nennen (genau eines von beidem)",
+                        )
+                    })?;
+                let kanal = kanal
+                    .map(str::trim)
+                    .filter(|kanal| !kanal.is_empty())
+                    .ok_or_else(|| {
+                        ungueltig_tool(
+                            "kanal fehlt – zusammen mit team (oder stattdessen chat nennen)",
+                        )
+                    })?;
+                let team = self.team_finden(team).await?;
+                let kanal = self.kanal_finden(&team, kanal).await?;
+                Ok(format!(
+                    "/teams/{}/channels/{}/messages/{nachricht}",
+                    team.id, kanal.id
+                ))
+            }
+        }
     }
 }
 
 // ---------------------------------------------------------------------------
 // Reine Hilfen
 // ---------------------------------------------------------------------------
+
+/// Ein 403 bei `teams_mitglieder` ist keine Panne, sondern ein fehlendes Recht:
+/// statt des Rohfehlers kommt der Satz aus [`MITGLIEDER_HINWEIS`] (Aufgabe 07).
+/// Ein 403 mit `Missing scope` bleibt der allgemeine Zustimmungs-Hinweis, und
+/// alles andere bleibt, wie es war.
+fn mitglieder_fehler(fehler: GraphFehler) -> ToolFehler {
+    if fehler.zustimmung_fehlt() {
+        return ToolFehler::from(fehler);
+    }
+    match &fehler {
+        GraphFehler::Graph { status: 403, .. } => {
+            ToolFehler::Hinweis(MITGLIEDER_HINWEIS.to_string())
+        }
+        _ => ToolFehler::from(fehler),
+    }
+}
 
 /// Der Graph-Körper einer neuen Nachricht.
 ///
@@ -1432,18 +1579,46 @@ fn text_zu_html(text: &str) -> String {
     raus
 }
 
-/// Emoji oder deutscher Name → Reaktionstyp von Graph.
-fn reaktion_normalisieren(roh: &str) -> String {
-    match roh.trim() {
-        "👍" | "like" | "gefällt mir" => "like",
-        "❤️" | "❤" | "heart" | "herz" => "heart",
-        "😂" | "laugh" | "lachen" => "laugh",
-        "😮" | "surprised" | "überrascht" => "surprised",
-        "😢" | "sad" | "traurig" => "sad",
-        "😡" | "angry" | "wütend" => "angry",
-        anderes => anderes,
+/// Emoji oder Wort → das **Unicode-Emoji**, das Graph als `reactionType` will
+/// (Aufgabe 08: „Unicode 'heart' in the payload is not supported“).
+///
+/// `None` für alles Unbekannte und für leeren Text – dann geht keine Anfrage
+/// an Graph.
+fn reaktion_normalisieren(roh: &str) -> Option<String> {
+    let roh = roh.trim();
+    let wort = match roh {
+        "like" => Some("👍"),
+        "heart" | "love" | "herz" => Some("❤️"),
+        "laugh" | "lachen" => Some("😆"),
+        "surprised" | "überrascht" => Some("😮"),
+        "sad" | "traurig" => Some("😢"),
+        "angry" | "wütend" => Some("😡"),
+        _ => None,
+    };
+    if let Some(emoji) = wort {
+        return Some(emoji.to_string());
     }
-    .to_string()
+    // Ein Emoji bleibt, wie es ist.
+    if ist_emoji(roh) {
+        return Some(roh.to_string());
+    }
+    None
+}
+
+/// Ist der Text ein Emoji? Nur die Bildzeichen- und Emoji-Blöcke zählen.
+fn ist_emoji(text: &str) -> bool {
+    !text.is_empty()
+        && text.chars().all(|zeichen| {
+            matches!(
+                zeichen as u32,
+                0x2190..=0x21FF
+                    | 0x2600..=0x27BF
+                    | 0x2B00..=0x2BFF
+                    | 0x1F000..=0x1FAFF
+                    | 0xFE00..=0xFE0F
+                    | 0x200D
+            )
+        })
 }
 
 #[cfg(test)]
@@ -1478,12 +1653,18 @@ mod tests {
     }
 
     #[test]
-    fn reaktionen_werden_uebersetzt() {
-        assert_eq!(reaktion_normalisieren("👍"), "like");
-        assert_eq!(reaktion_normalisieren(" ❤️ "), "heart");
-        assert_eq!(reaktion_normalisieren("laugh"), "laugh");
-        assert_eq!(reaktion_normalisieren("😡"), "angry");
-        assert_eq!(reaktion_normalisieren("unbekannt"), "unbekannt");
+    fn reaktionen_werden_zu_emoji() {
+        assert_eq!(reaktion_normalisieren("like"), Some("👍".to_string()));
+        assert_eq!(reaktion_normalisieren(" heart "), Some("❤️".to_string()));
+        assert_eq!(reaktion_normalisieren("love"), Some("❤️".to_string()));
+        assert_eq!(reaktion_normalisieren("laugh"), Some("😆".to_string()));
+        assert_eq!(reaktion_normalisieren("angry"), Some("😡".to_string()));
+        // Ein Emoji bleibt, wie es ist.
+        assert_eq!(reaktion_normalisieren("👍"), Some("👍".to_string()));
+        assert_eq!(reaktion_normalisieren("😡"), Some("😡".to_string()));
+        // Unbekannt und leer: keine Anfrage, klare Meldung.
+        assert_eq!(reaktion_normalisieren("unbekannt"), None);
+        assert_eq!(reaktion_normalisieren("   "), None);
     }
 
     #[test]

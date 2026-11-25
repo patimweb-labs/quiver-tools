@@ -5,7 +5,22 @@
 //! 401 → Token verwerfen und **einmal** wiederholen, 429/503 mit `Retry-After`
 //! → höchstens **zwei** Wiederholungen, und nur bei **lesenden** Aufrufen
 //! (Aufgabe 05: ein Senden wird nie automatisch wiederholt, sonst entstehen
-//! doppelte Nachrichten).
+//! doppelte Nachrichten; Aufgabe 06: dasselbe gilt für PATCH und PUT).
+//!
+//! Drei Dinge kamen mit Aufgabe 06 dazu:
+//!
+//! * `PATCH` (Planner-Aufgabe ändern, Listeneinträge) und `PUT` (Datei
+//!   hochladen) – beide nie wiederholt.
+//! * **Text** statt JSON: OneNote liefert HTML, `/content` liefert Dateiinhalte.
+//! * Graph leitet `/content` mit 302 auf eine vor-signierte Adresse um. Dieses
+//!   eine Ziel wird **ohne** Token geholt – der Link selbst ist die Erlaubnis.
+//!
+//! Aufgabe 09: Graph antwortet auf `PATCH` und `DELETE` oft mit **204 und leerem
+//! Rumpf**, ebenso auf `setReaction`, `markChatReadForUser` und `softDelete`. Ein
+//! leerer Rumpf ist bei diesen Aufrufen ein **Erfolg**, kein Grund, ein Modell zu
+//! erwarten. Dafür stehen [`GraphClient::patch_ohne_antwort`],
+//! [`GraphClient::post_ohne_antwort`] und [`GraphClient::delete`] bereit – sie
+//! lesen nichts aus dem Rumpf.
 //!
 //! Tokens stehen nie in einem Fehlertext und nie in einem Log.
 
@@ -24,14 +39,45 @@ pub const HOECHSTENS_WARTEN: Duration = Duration::from_secs(10);
 const HOECHSTENS_WIEDERHOLUNGEN: u32 = 2;
 /// Länger wird ein Fehlertext nicht (Antworten bleiben knapp, SPEC.md §4).
 const HOECHSTENS_TEXT: usize = 500;
+/// So viel Antwort liest der Client höchstens in den Speicher (8 MB).
+///
+/// Alles darüber wäre kein Modell mehr, sondern ein Download; Dateien liest
+/// `get_text` und kürzt danach ohnehin.
+const HOECHSTENS_ANTWORT: usize = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Methode {
     Get,
     Post,
+    Patch,
+    Put,
+    Delete,
 }
 
-/// GET/POST gegen Graph, mit den Rechten des angemeldeten Users.
+/// Ein Körper für Graph: JSON oder reiner Text (Dateiinhalt, OneNote-HTML).
+enum Koerper<'a> {
+    Kein,
+    Json(&'a Value),
+    Text { inhalt: &'a str, typ: &'a str },
+}
+
+/// Was Graph geantwortet hat – roh, damit auch Text (HTML, Dateiinhalt) geht.
+struct RoheAntwort {
+    status: u16,
+    /// `Location` einer Weiterleitung (`/content` → vor-signierte Adresse).
+    location: Option<String>,
+    text: String,
+    /// Wurde bei [`HOECHSTENS_ANTWORT`] abgeschnitten?
+    abgeschnitten: bool,
+}
+
+impl RoheAntwort {
+    fn erfolg(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+}
+
+/// GET/POST/PATCH/PUT gegen Graph, mit den Rechten des angemeldeten Users.
 pub struct GraphClient<A: Anmeldung> {
     /// z. B. `https://graph.microsoft.com/v1.0`, ohne Schrägstrich am Ende.
     basis: String,
@@ -44,6 +90,7 @@ impl<A: Anmeldung> GraphClient<A> {
     pub fn neu(basis_url: impl Into<String>, anmeldung: A) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
             // Graph leitet nicht um; kein Folgen verhindert Missverständnisse.
+            // Die eine Ausnahme (`/content`) holt [`GraphClient::weiterleitung`].
             .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(60))
             .build()?;
@@ -76,7 +123,7 @@ impl<A: Anmeldung> GraphClient<A> {
         kopfzeilen: &[(&str, &str)],
     ) -> Result<T, GraphFehler> {
         let wert = self
-            .anfrage(Methode::Get, pfad, query, None, kopfzeilen)
+            .anfrage(Methode::Get, pfad, query, &Koerper::Kein, kopfzeilen)
             .await?;
         Self::lesen(wert)
     }
@@ -115,12 +162,48 @@ impl<A: Anmeldung> GraphClient<A> {
     pub async fn get_link<T: DeserializeOwned>(&self, link: &str) -> Result<T, GraphFehler> {
         let ziel = self.adresse(link)?;
         let wert = self
-            .anfrage_url(Methode::Get, ziel, None, &[], true)
+            .anfrage_url(Methode::Get, ziel, &Koerper::Kein, &[])
             .await?;
         Self::lesen(wert)
     }
 
-    /// Absolute Adresse unverändert, relative gegen die Basis.
+    /// Eine Adresse lesen und den Text **roh** zurückgeben: Dateiinhalt
+    /// (`/content`) oder OneNote-HTML. Eine Weiterleitung auf eine
+    /// vor-signierte Adresse wird ohne Token geholt.
+    pub async fn get_text(
+        &self,
+        pfad: &str,
+        query: &[(&str, String)],
+    ) -> Result<String, GraphFehler> {
+        self.get_text_mit_kopf(pfad, query, &[]).await
+    }
+
+    /// Wie [`GraphClient::get_text`], mit zusätzlichen Kopfzeilen.
+    pub async fn get_text_mit_kopf(
+        &self,
+        pfad: &str,
+        query: &[(&str, String)],
+        kopfzeilen: &[(&str, &str)],
+    ) -> Result<String, GraphFehler> {
+        let mut ziel = self.adresse(pfad)?;
+        if !query.is_empty() {
+            ziel.set_query(Some(&abfrage_text(query)));
+        }
+        let antwort = self
+            .anfrage_roh(Methode::Get, ziel, &Koerper::Kein, kopfzeilen, true)
+            .await?;
+        let antwort = self.weiterleitung(antwort).await?;
+        if !antwort.erfolg() {
+            return Err(fehler_aus(&antwort));
+        }
+        Ok(antwort.text)
+    }
+
+    /// Absolute Adresse nur auf dem Graph-Host, relative gegen die Basis.
+    ///
+    /// Folgeseiten (`@odata.nextLink`) und alle anderen absoluten Adressen
+    /// kommen aus einer Antwort. Sie dürfen das Bearer-Token nicht an einen
+    /// fremden Host tragen: Schema, Host und Port müssen zur Basis passen.
     fn adresse(&self, link: &str) -> Result<reqwest::Url, GraphFehler> {
         let link = link.trim();
         let ziel = match reqwest::Url::parse(link) {
@@ -128,16 +211,25 @@ impl<A: Anmeldung> GraphClient<A> {
             Err(_) => reqwest::Url::parse(&format!("{}{}", self.basis, link))
                 .map_err(|fehler| GraphFehler::Antwort(format!("Adresse unbrauchbar: {fehler}")))?,
         };
+        let erwartet = |kurz: &str| GraphFehler::FremderHost(kurz.to_string());
         if !matches!(ziel.scheme(), "http" | "https") {
-            return Err(GraphFehler::Antwort(format!(
-                "Adresse mit unerwartetem Schema: {}",
-                ziel.scheme()
-            )));
+            return Err(erwartet(ziel.as_str()));
+        }
+        if !ziel.username().is_empty() || ziel.password().is_some() {
+            return Err(erwartet(ziel.as_str()));
+        }
+        let basis = reqwest::Url::parse(&self.basis)
+            .map_err(|fehler| GraphFehler::Antwort(format!("Basis unbrauchbar: {fehler}")))?;
+        let gleich = basis.scheme() == ziel.scheme()
+            && basis.host_str() == ziel.host_str()
+            && basis.port_or_known_default() == ziel.port_or_known_default();
+        if !gleich {
+            return Err(erwartet(ziel.as_str()));
         }
         Ok(ziel)
     }
 
-    /// `POST <pfad>` mit JSON-Körper.
+    /// `POST <pfad>` mit JSON-Körper (wird nie automatisch wiederholt).
     pub async fn post<T: DeserializeOwned>(
         &self,
         pfad: &str,
@@ -154,7 +246,86 @@ impl<A: Anmeldung> GraphClient<A> {
         kopfzeilen: &[(&str, &str)],
     ) -> Result<T, GraphFehler> {
         let wert = self
-            .anfrage(Methode::Post, pfad, &[], Some(body), kopfzeilen)
+            .anfrage(Methode::Post, pfad, &[], &Koerper::Json(body), kopfzeilen)
+            .await?;
+        Self::lesen(wert)
+    }
+
+    /// `POST <pfad>` mit einem Textkörper (OneNote-Seite: HTML).
+    pub async fn post_text<T: DeserializeOwned>(
+        &self,
+        pfad: &str,
+        inhalt: &str,
+        typ: &str,
+    ) -> Result<T, GraphFehler> {
+        let wert = self
+            .anfrage(
+                Methode::Post,
+                pfad,
+                &[],
+                &Koerper::Text { inhalt, typ },
+                &[],
+            )
+            .await?;
+        Self::lesen(wert)
+    }
+
+    /// `PATCH <pfad>` ohne erwartete Antwort (Planner, To Do, Listenfelder).
+    ///
+    /// Graph antwortet hier mit **204 und leerem Rumpf**. Genau das ist der
+    /// Erfolg: es wird nichts gelesen, ein 4xx/5xx bleibt ein Fehler. Wird nie
+    /// automatisch wiederholt.
+    ///
+    /// Einen PATCH, der ein Modell zurückgibt, gibt es bei Graph nicht – deshalb
+    /// **nur** diese Fassung (Aufgabe 09).
+    pub async fn patch_ohne_antwort(
+        &self,
+        pfad: &str,
+        body: &Value,
+        kopfzeilen: &[(&str, &str)],
+    ) -> Result<(), GraphFehler> {
+        self.anfrage_ohne_inhalt(Methode::Patch, pfad, &Koerper::Json(body), kopfzeilen)
+            .await
+    }
+
+    /// `POST <pfad>` ohne erwartete Antwort (`setReaction`, `markChatReadForUser`,
+    /// `softDelete`, `move`).
+    ///
+    /// 204 oder leerer Rumpf ist Erfolg; ein 2xx mit Inhalt wird ebenfalls
+    /// angenommen, nur eben nicht gelesen. Wird nie automatisch wiederholt.
+    pub async fn post_ohne_antwort(&self, pfad: &str, body: &Value) -> Result<(), GraphFehler> {
+        self.anfrage_ohne_inhalt(Methode::Post, pfad, &Koerper::Json(body), &[])
+            .await
+    }
+
+    /// `DELETE <pfad>` – mit optionalen Kopfzeilen (`If-Match` bei Planner).
+    ///
+    /// Graph antwortet mit **204 und leerem Rumpf**; das ist der Erfolg. Wird nie
+    /// automatisch wiederholt: ein zweites DELETE würde nur noch 404 liefern.
+    pub async fn delete(&self, pfad: &str, kopfzeilen: &[(&str, &str)]) -> Result<(), GraphFehler> {
+        self.anfrage_ohne_inhalt(Methode::Delete, pfad, &Koerper::Kein, kopfzeilen)
+            .await
+    }
+
+    /// `PUT <pfad>?...` mit einem Textkörper (einfacher Upload bis 4 MB).
+    ///
+    /// Wird nie automatisch wiederholt: ein zweiter Upload könnte eine doppelte
+    /// Datei anlegen.
+    pub async fn put_text<T: DeserializeOwned>(
+        &self,
+        pfad: &str,
+        query: &[(&str, String)],
+        inhalt: &str,
+        typ: &str,
+    ) -> Result<T, GraphFehler> {
+        let wert = self
+            .anfrage(
+                Methode::Put,
+                pfad,
+                query,
+                &Koerper::Text { inhalt, typ },
+                &[],
+            )
             .await?;
         Self::lesen(wert)
     }
@@ -173,7 +344,7 @@ impl<A: Anmeldung> GraphClient<A> {
         methode: Methode,
         pfad: &str,
         query: &[(&str, String)],
-        body: Option<&Value>,
+        koerper: &Koerper<'_>,
         kopfzeilen: &[(&str, &str)],
     ) -> Result<Value, GraphFehler> {
         let mut ziel = reqwest::Url::parse(&format!("{}{}", self.basis, pfad))
@@ -181,21 +352,53 @@ impl<A: Anmeldung> GraphClient<A> {
         if !query.is_empty() {
             ziel.set_query(Some(&abfrage_text(query)));
         }
-        // 429/503 nur bei lesenden Aufrufen wiederholen: ein zweiter POST
-        // könnte eine doppelte Nachricht erzeugen (Aufgabe 05).
+        self.anfrage_url(methode, ziel, koerper, kopfzeilen).await
+    }
+
+    /// Wie [`GraphClient::anfrage`], aber der Rumpf wird nicht gelesen: 204 und
+    /// leerer Rumpf sind Erfolg (Aufgabe 09).
+    async fn anfrage_ohne_inhalt(
+        &self,
+        methode: Methode,
+        pfad: &str,
+        koerper: &Koerper<'_>,
+        kopfzeilen: &[(&str, &str)],
+    ) -> Result<(), GraphFehler> {
+        let ziel = reqwest::Url::parse(&format!("{}{}", self.basis, pfad))
+            .map_err(|fehler| GraphFehler::Antwort(format!("Adresse unbrauchbar: {fehler}")))?;
+        // 429/503 nur bei lesenden Aufrufen wiederholen: ein zweiter POST,
+        // PATCH, PUT oder DELETE könnte doppelt wirken (Aufgabe 05/06/09).
         let wiederholbar = methode == Methode::Get;
-        self.anfrage_url(methode, ziel, body, kopfzeilen, wiederholbar)
-            .await
+        let antwort = self
+            .anfrage_roh(methode, ziel, koerper, kopfzeilen, wiederholbar)
+            .await?;
+        auswerten_ohne_inhalt(antwort)
     }
 
     async fn anfrage_url(
         &self,
         methode: Methode,
         ziel: reqwest::Url,
-        body: Option<&Value>,
+        koerper: &Koerper<'_>,
+        kopfzeilen: &[(&str, &str)],
+    ) -> Result<Value, GraphFehler> {
+        // 429/503 nur bei lesenden Aufrufen wiederholen: ein zweiter POST,
+        // PATCH oder PUT könnte doppelt wirken (Aufgabe 05/06).
+        let wiederholbar = methode == Methode::Get;
+        let antwort = self
+            .anfrage_roh(methode, ziel, koerper, kopfzeilen, wiederholbar)
+            .await?;
+        auswerten(antwort)
+    }
+
+    async fn anfrage_roh(
+        &self,
+        methode: Methode,
+        ziel: reqwest::Url,
+        koerper: &Koerper<'_>,
         kopfzeilen: &[(&str, &str)],
         wiederholbar: bool,
-    ) -> Result<Value, GraphFehler> {
+    ) -> Result<RoheAntwort, GraphFehler> {
         let mut erneuert = false;
         let mut wiederholungen = 0u32;
         loop {
@@ -203,13 +406,24 @@ impl<A: Anmeldung> GraphClient<A> {
             let mut anfrage = match methode {
                 Methode::Get => self.http.get(ziel.clone()),
                 Methode::Post => self.http.post(ziel.clone()),
+                Methode::Patch => self.http.patch(ziel.clone()),
+                Methode::Put => self.http.put(ziel.clone()),
+                Methode::Delete => self.http.delete(ziel.clone()),
             }
             .bearer_auth(&token);
             for (name, wert) in kopfzeilen {
                 anfrage = anfrage.header(*name, *wert);
             }
-            if let Some(body) = body {
-                anfrage = anfrage.json(body);
+            match koerper {
+                Koerper::Kein => {}
+                Koerper::Json(wert) => {
+                    anfrage = anfrage.json(wert);
+                }
+                Koerper::Text { inhalt, typ } => {
+                    anfrage = anfrage
+                        .header(reqwest::header::CONTENT_TYPE, *typ)
+                        .body((*inhalt).to_string());
+                }
             }
 
             let antwort = anfrage
@@ -246,36 +460,128 @@ impl<A: Anmeldung> GraphClient<A> {
                 }
             }
 
-            return Self::auswerten(status.as_u16(), antwort).await;
+            let location = antwort
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|wert| wert.to_str().ok())
+                .map(str::to_string);
+            let (text, abgeschnitten) = text_begrenzt(antwort).await?;
+            return Ok(RoheAntwort {
+                status: status.as_u16(),
+                location,
+                text,
+                abgeschnitten,
+            });
         }
     }
 
-    async fn auswerten(status: u16, antwort: reqwest::Response) -> Result<Value, GraphFehler> {
-        let text = antwort
-            .text()
+    /// Graph leitet `/content` mit 302 auf eine vor-signierte Adresse um. Diese
+    /// eine Adresse wird **ohne** Token geholt (der Link enthält die Erlaubnis);
+    /// alles andere bleibt liegen.
+    async fn weiterleitung(&self, antwort: RoheAntwort) -> Result<RoheAntwort, GraphFehler> {
+        if !matches!(antwort.status, 301 | 302 | 303 | 307 | 308) {
+            return Ok(antwort);
+        }
+        let Some(location) = antwort.location.as_deref() else {
+            return Ok(antwort);
+        };
+        let ziel = reqwest::Url::parse(location).map_err(|fehler| {
+            GraphFehler::Antwort(format!("Weiterleitung unbrauchbar: {fehler}"))
+        })?;
+        if !matches!(ziel.scheme(), "http" | "https") {
+            return Err(GraphFehler::Antwort(format!(
+                "Weiterleitung mit unerwartetem Schema: {}",
+                ziel.scheme()
+            )));
+        }
+        // Diese eine Weiterleitung trägt **kein** Token (der Link selbst ist
+        // die Erlaubnis), aber ein Herabstufen auf http ist nie nötig.
+        let basis = reqwest::Url::parse(&self.basis)
+            .map_err(|fehler| GraphFehler::Antwort(format!("Basis unbrauchbar: {fehler}")))?;
+        if basis.scheme() == "https" && ziel.scheme() == "http" {
+            return Err(GraphFehler::FremderHost(ziel.to_string()));
+        }
+        let geholt = self
+            .http
+            .get(ziel)
+            .send()
             .await
             .map_err(|fehler| GraphFehler::Netz(format!("{fehler}")))?;
-
-        if (200..300).contains(&status) {
-            if text.trim().is_empty() {
-                // z. B. `sendMail` antwortet mit 202 ohne Körper.
-                return Ok(Value::Null);
-            }
-            return serde_json::from_str(&text)
-                .map_err(|fehler| GraphFehler::Antwort(format!("kein JSON: {fehler}")));
-        }
-
-        let (code, meldung) = graph_fehler_felder(&text);
-        Err(GraphFehler::Graph {
+        let status = geholt.status().as_u16();
+        let (text, abgeschnitten) = text_begrenzt(geholt).await?;
+        Ok(RoheAntwort {
             status,
-            code,
-            text: kuerzen(&meldung),
+            location: None,
+            text,
+            abgeschnitten,
         })
     }
 
     fn lesen<T: DeserializeOwned>(wert: Value) -> Result<T, GraphFehler> {
         serde_json::from_value(wert)
             .map_err(|fehler| GraphFehler::Antwort(format!("unerwartete Felder: {fehler}")))
+    }
+}
+
+/// Antwort als JSON-Modell oder als Graph-Fehler.
+fn auswerten(antwort: RoheAntwort) -> Result<Value, GraphFehler> {
+    if antwort.erfolg() {
+        if antwort.abgeschnitten {
+            return Err(GraphFehler::Antwort(
+                "Antwort von Graph ist zu groß für ein Modell".to_string(),
+            ));
+        }
+        let text = antwort.text.trim();
+        if text.is_empty() {
+            // z. B. `sendMail` antwortet mit 202 ohne Körper.
+            return Ok(Value::Null);
+        }
+        return serde_json::from_str(text)
+            .map_err(|fehler| GraphFehler::Antwort(format!("kein JSON: {fehler}")));
+    }
+    Err(fehler_aus(&antwort))
+}
+
+/// Antwort ohne Inhalt auswerten: 2xx ist Erfolg, egal ob ein Rumpf dabei ist
+/// (Aufgabe 09). Alles andere wird zum Graph-Fehler.
+fn auswerten_ohne_inhalt(antwort: RoheAntwort) -> Result<(), GraphFehler> {
+    if antwort.erfolg() {
+        Ok(())
+    } else {
+        Err(fehler_aus(&antwort))
+    }
+}
+
+/// Liest höchstens [`HOECHSTENS_ANTWORT`] Bytes; mehr landet nicht im Speicher.
+async fn text_begrenzt(mut antwort: reqwest::Response) -> Result<(String, bool), GraphFehler> {
+    let mut bytes: Vec<u8> = Vec::new();
+    loop {
+        let stueck = antwort
+            .chunk()
+            .await
+            .map_err(|fehler| GraphFehler::Netz(format!("{fehler}")))?;
+        let Some(stueck) = stueck else {
+            break;
+        };
+        let platz = HOECHSTENS_ANTWORT.saturating_sub(bytes.len());
+        if platz == 0 {
+            return Ok((String::from_utf8_lossy(&bytes).to_string(), true));
+        }
+        bytes.extend_from_slice(&stueck[..stueck.len().min(platz)]);
+        if bytes.len() >= HOECHSTENS_ANTWORT {
+            return Ok((String::from_utf8_lossy(&bytes).to_string(), true));
+        }
+    }
+    Ok((String::from_utf8_lossy(&bytes).to_string(), false))
+}
+
+/// Fehler von Graph (Status, Code, Text) – ohne Token.
+fn fehler_aus(antwort: &RoheAntwort) -> GraphFehler {
+    let (code, meldung) = graph_fehler_felder(&antwort.text);
+    GraphFehler::Graph {
+        status: antwort.status,
+        code,
+        text: kuerzen(&meldung),
     }
 }
 
@@ -359,6 +665,50 @@ fn kuerzen(text: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Eine Anmeldung mit festem Token (nur für Adress-Tests).
+    struct FestesToken;
+
+    impl m365_anmeldung::Anmeldung for FestesToken {
+        async fn access_token(
+            &self,
+        ) -> Result<m365_anmeldung::Token, m365_anmeldung::AnmeldeFehler> {
+            Ok(m365_anmeldung::Token::Bereit("test-token".to_string()))
+        }
+        fn verwerfen(&self) {}
+        fn abmelden(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn client() -> GraphClient<FestesToken> {
+        GraphClient::neu("https://graph.microsoft.com/v1.0", FestesToken).unwrap()
+    }
+
+    #[test]
+    fn folgeseiten_bleiben_auf_dem_graph_host() {
+        let client = client();
+        // Eigenes Schema, eigener Host, eigener Port: erlaubt.
+        assert!(client
+            .adresse("https://graph.microsoft.com/v1.0/me/messages?$skiptoken=abc")
+            .is_ok());
+        // Relativ gegen die Basis: erlaubt.
+        assert!(client.adresse("/v1.0/me/messages").is_ok());
+
+        for fremd in [
+            "https://fremd.example/v1.0/me/messages",
+            "https://graph.microsoft.com.evil.test/v1.0/me",
+            "http://graph.microsoft.com/v1.0/me",
+            "https://graph.microsoft.com:8443/v1.0/me",
+            "https://user@graph.microsoft.com/v1.0/me",
+        ] {
+            let fehler = client.adresse(fremd).unwrap_err();
+            assert!(
+                matches!(fehler, GraphFehler::FremderHost(_)),
+                "{fremd}: {fehler:?}"
+            );
+        }
+    }
+
     #[test]
     fn fehlerfelder_werden_gelesen() {
         let (code, text) = graph_fehler_felder(
@@ -413,5 +763,52 @@ mod tests {
         assert_eq!(wartezeit(&kopfzeilen), None, "Datum verstehen wir nicht");
 
         assert_eq!(wartezeit(&reqwest::header::HeaderMap::new()), None);
+    }
+
+    #[test]
+    fn nur_erfolg_ist_erfolg() {
+        let antwort = |status| RoheAntwort {
+            status,
+            location: None,
+            text: String::new(),
+            abgeschnitten: false,
+        };
+        assert!(antwort(200).erfolg());
+        assert!(antwort(204).erfolg());
+        assert!(!antwort(302).erfolg());
+        assert!(!antwort(404).erfolg());
+    }
+
+    #[test]
+    fn leerer_rumpf_ist_bei_aenderungen_ein_erfolg() {
+        let antwort = |status, text: &str| RoheAntwort {
+            status,
+            location: None,
+            text: text.to_string(),
+            abgeschnitten: false,
+        };
+        // 204 ohne Rumpf: Erfolg, kein Modell erwartet (Aufgabe 09).
+        assert!(auswerten_ohne_inhalt(antwort(204, "")).is_ok());
+        // 200 mit Rumpf: wird nicht gelesen, ist aber auch Erfolg.
+        assert!(auswerten_ohne_inhalt(antwort(200, r#"{"ok":true}"#)).is_ok());
+        // Ein Fehler bleibt ein Fehler.
+        assert!(matches!(
+            auswerten_ohne_inhalt(antwort(403, r#"{"error":{"code":"accessDenied"}}"#)),
+            Err(GraphFehler::Graph { status: 403, .. })
+        ));
+        // Und ein leerer Rumpf ist als JSON `Null` – genau das war der Fehler:
+        // daraus lässt sich kein `PlannerAufgabe` bauen.
+        assert_eq!(auswerten(antwort(204, "")).expect("Erfolg"), Value::Null);
+    }
+
+    #[test]
+    fn eine_zu_grosse_antwort_wird_kein_modell() {
+        let antwort = RoheAntwort {
+            status: 200,
+            location: None,
+            text: "{}".to_string(),
+            abgeschnitten: true,
+        };
+        assert!(matches!(auswerten(antwort), Err(GraphFehler::Antwort(_))));
     }
 }

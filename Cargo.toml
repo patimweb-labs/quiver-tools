@@ -2,12 +2,18 @@
 resolver = "2"
 members = [
   "crates/kern",
+  "crates/diagramm",
+  "crates/excalidraw",
+  "crates/drawio",
   "crates/outline",
   "crates/email",
   "crates/zep",
   "crates/ssh",
   "crates/abap",
   "crates/devops",
+  "crates/jira",
+  "crates/confluence",
+  "crates/zephyr",
   "crates/m365-anmeldung",
   "crates/m365-graph",
   "crates/m365",

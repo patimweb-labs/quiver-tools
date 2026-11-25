@@ -204,12 +204,10 @@ fn als_art(art: FeldArt) -> Art {
     }
 }
 
-/// Das laufende Programm, sonst der Name, unter dem quiver es im Pfad sucht.
+/// Der Name, unter dem quiver das Programm auf **jedem** Gerät findet. Nie der
+/// Pfad dieses Rechners: ein Eintrag geht an andere Geräte.
 fn programm(name: &str) -> String {
-    std::env::current_exe()
-        .ok()
-        .map(|pfad| pfad.display().to_string())
-        .unwrap_or_else(|| format!("quiver-{name}"))
+    format!("quiver-{name}")
 }
 
 #[cfg(test)]

@@ -803,6 +803,36 @@ Umgebung.
 Aufbau, Bausteine und Datenfluss: [docs/architektur.md](docs/architektur.md).
 Entscheidungen: [docs/adr/](docs/adr/).
 
+## Releases
+
+A tag `vX.Y.Z` — it must match `[workspace.package] version` — builds every
+`quiver-*` program natively on its own runner (macOS `aarch64` and `x86_64`, Linux
+`x86_64` and `aarch64` on 22.04, Windows `x86_64`) and attaches one archive per
+system to the GitHub release:
+
+```
+quiver-tools-<version>-<system>-<arch>.tar.gz
+```
+
+The archive holds the stripped programs flat next to each other, plus
+`LISTE.json` (name, version, size, SHA-256 per program). `SHA256SUMS` covers all
+archives. The quiver server takes these archives and hands each device the programs
+assigned to it. macOS is signed ad hoc (Gatekeeper asks once); Windows needs no extra
+runtime. Nothing is signed with a certificate and no secret is used.
+
+Before upload, each program is started on its own system: `--version`, `eintrag`
+and an MCP handshake over pipes (`initialize`, `tools/list`). “Run workflow” and
+pull requests only build — a release is created from a tag alone.
+
+The same steps run locally:
+
+```bash
+verteilung/paket.sh                    # build, strip, sign (macOS), dist/*.tar.gz
+verteilung/pruefen.sh dist/*.tar.gz    # hashes and a short start of every program
+```
+
+Details: [docs/release.md](docs/release.md).
+
 ## Lizenz
 
 [MIT](LICENSE)

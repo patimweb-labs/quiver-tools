@@ -1,0 +1,270 @@
+# Die Programme für alle Systeme, als GitHub-Release mit Prüfsummen.
+#
+#   Tag vX.Y.Z (von Hand)  -> bauen, Release anlegen, Archive anhängen
+#   „Run workflow“         -> nur bauen, Archive liegen als Artefakte am Lauf
+#   Pull Request           -> nur bauen, wenn `verteilung/` oder dieser Workflow
+#                             sich ändern
+#
+# Gebaut wird **nativ** auf dem jeweiligen Läufer, nicht über Kreuz: Rust unter
+# Emulation braucht eine Stunde statt Minuten. Was hier passiert, steht in
+# `verteilung/` und läuft lokal genauso:
+#
+#   verteilung/paket.sh    alle Programme bauen, strippen, signieren (macOS),
+#                          als `dist/quiver-tools-<version>-<system>-<arch>.tar.gz`
+#                          mit `LISTE.json` ablegen
+#   verteilung/pruefen.sh  das Archiv entpacken, Summen prüfen und jedes
+#                          Programm kurz starten (`--version`, `eintrag`,
+#                          MCP `initialize`/`tools/list`)
+#
+# Der Tag muss die Version aus `[workspace.package]` tragen — sonst hieße das
+# Release anders als die Programme in ihrer eigenen Antwort.
+#
+# **Keine Geheimnisse.** macOS wird ad hoc signiert; Gatekeeper fragt beim
+# ersten Start nach. Windows braucht keine zusätzliche Laufzeit (statische
+# C-Runtime, siehe `verteilung/paket.sh`).
+#
+# Rechte: oben leer, jeder Job nimmt sich Lesen — schreiben darf allein
+# `veroeffentlichen`.
+#
+# Bedingungen: In einem Job **ohne** Statusfunktion prüft GitHub stillschweigend
+# `success()` über **alle** Vorfahren. Deshalb steht überall ausdrücklich
+# `!cancelled() && needs.<job>.result == 'success' && …`; `!cancelled()` statt
+# `always()`, weil ein abgebrochener Lauf auch nicht weiterbauen soll.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - ".github/workflows/release.yml"
+      - "verteilung/**"
+  workflow_dispatch:
+
+# Zwei Läufe am selben Tag würden sich die Dateien am Release streitig machen.
+# Nicht abbrechen: ein halb hochgeladenes Release ist schlimmer als ein spätes.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions: {}
+
+env:
+  CARGO_TERM_COLOR: always
+  # `aws-lc-sys` (TLS in reqwest/rustls) bräuchte unter Windows sonst NASM.
+  AWS_LC_SYS_PREBUILT_NASM: "1"
+
+jobs:
+  # Die Version steht in `[workspace.package]`; der Tag muss dazu passen.
+  version:
+    name: Version und Tag
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+      veroeffentlichen: ${{ steps.v.outputs.veroeffentlichen }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Version aus Cargo.toml gegen den Tag prüfen
+        id: v
+        env:
+          EREIGNIS: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          set -euo pipefail
+          version=$(verteilung/version.sh)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+          tag=""
+          if [ "$EREIGNIS" = "push" ]; then
+            case "$REF" in
+              refs/tags/*) tag="${REF#refs/tags/}" ;;
+            esac
+          fi
+
+          if [ -n "$tag" ] && [ "$tag" != "v$version" ]; then
+            echo "::error::Tag »$tag« passt nicht zu »v$version« aus Cargo.toml."
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if [ -n "$tag" ]; then
+            echo "veroeffentlichen=ja" >> "$GITHUB_OUTPUT"
+          else
+            echo "veroeffentlichen=nein" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Version $version, Tag ${tag:-keiner}"
+
+  pakete:
+    name: Archiv ${{ matrix.name }}
+    needs: version
+    if: "!cancelled() && needs.version.result == 'success'"
+    strategy:
+      # Ein gescheitertes Linux ist kein Grund, macOS nicht zu bauen — so steht
+      # in einem Lauf da, **welche** Plattformen brechen.
+      fail-fast: false
+      matrix:
+        include:
+          # Der Name ist `system-arch` wie im Archiv; der Schritt „Bauen“
+          # prüft, dass der Läufer wirklich das gebaut hat, was hier steht.
+          - { name: macos-aarch64, os: macos-latest }
+          # Intel auf einem Intel-Läufer; ARM kann das nicht bauen.
+          - { name: macos-x86_64, os: macos-15-intel }
+          - { name: windows-x86_64, os: windows-2025 }
+          # 22.04: ältere glibc (2.35) — die Programme laufen damit auch auf
+          # älteren Systemen, nicht nur auf dem neuesten.
+          - { name: linux-x86_64, os: ubuntu-22.04 }
+          - { name: linux-aarch64, os: ubuntu-22.04-arm }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Bauen, strippen, paketieren
+        shell: bash
+        env:
+          ERWARTET: ${{ matrix.name }}
+        run: |
+          set -euo pipefail
+          verteilung/paket.sh
+          # `paket.sh` bestimmt System und Architektur aus `uname`. Weicht der
+          # Läufer von der Matrix ab (etwa ein ARM-Image, das x86_64 meldet),
+          # fällt es hier auf statt erst am Release.
+          if ! ls dist/*-"$ERWARTET".tar.gz >/dev/null 2>&1; then
+            echo "::error::Kein Archiv für $ERWARTET — der Läufer passt nicht zur Matrix."
+            ls -la dist
+            exit 1
+          fi
+
+      # Der Startbeweis: `--version`, `eintrag` und MCP über Pipes. Läuft auf
+      # dem Archiv, nicht auf `target/` — geprüft wird, was ausgeliefert wird.
+      - name: Programme prüfen
+        shell: bash
+        run: verteilung/pruefen.sh dist/quiver-tools-*.tar.gz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archiv-${{ matrix.name }}
+          if-no-files-found: error
+          retention-days: 7
+          path: dist/*.tar.gz
+
+  # Der einzige Job mit Schreibrechten: Prüfsummen und Release.
+  veroeffentlichen:
+    name: Prüfsummen und Release
+    needs: [version, pakete]
+    if: "!cancelled() && needs.version.result == 'success' && needs.pakete.result == 'success' && needs.version.outputs.veroeffentlichen == 'ja'"
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archiv-*
+          path: aus
+
+      - name: Archive einsammeln
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          find aus -type f -name '*.tar.gz' -exec cp {} release/ \;
+          if [ -z "$(ls -A release)" ]; then
+            echo "::error::Keine Archive da — die Bau-Jobs sind gescheitert."
+            exit 1
+          fi
+          ls -la release
+
+      - name: Prüfsummen
+        working-directory: release
+        run: |
+          set -euo pipefail
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+          # Die Größe je Archiv für den Release-Text. Bewusst **außerhalb** von
+          # `release/`: sonst läge die Tabelle als weiteres Anhängsel ohne
+          # Prüfsumme daneben. Und bewusst nur `*.tar.gz`: `SHA256SUMS` liegt
+          # sonst mit in der Tabelle.
+          {
+            echo "| Datei | Größe |"
+            echo "| --- | --- |"
+            for datei in *.tar.gz; do
+              printf "| %s | %s |\n" "$datei" "$(du -h --apparent-size "$datei" | cut -f1)"
+            done
+          } > ../groessen.md
+          cat ../groessen.md
+
+      - name: Release-Text schreiben
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Der Text steht ohne Ausdrücke in der Datei (»@VERSION@« statt
+          # »$VERSION«), damit auf dem Weg nichts doppelt ausgewertet wird; die
+          # Marke ersetzt `sed` am Ende. Die Größentabelle dazwischen kommt aus
+          # `groessen.md`.
+          cat > release-notizen.md <<'TEXT'
+          ## quiver-tools @VERSION@
+
+          Die MCP-Werkzeuge als einzelne Programme, je System ein Archiv:
+
+          | System | Architektur |
+          |---|---|
+          | macOS | `aarch64` (Apple Silicon), `x86_64` (Intel) |
+          | Linux | `x86_64`, `aarch64` |
+          | Windows | `x86_64` |
+
+          In jedem Archiv liegen die Programme flach nebeneinander und
+          `LISTE.json` mit Name, Version, Größe und SHA-256 je Programm. Der
+          quiver-Server übernimmt die Archive und liefert jedem Gerät die
+          Programme, die ihm zugewiesen sind. `quiver-<tool> eintrag` zeigt den
+          Bibliothekseintrag.
+
+          macOS ist **ad hoc signiert**: Gatekeeper fragt beim ersten Start nach
+          einer Bestätigung — Rechtsklick → *Öffnen* oder *Systemeinstellungen →
+          Datenschutz & Sicherheit → „Dennoch öffnen“*. Windows braucht keine
+          zusätzliche Laufzeit.
+
+          ### Größen
+
+          TEXT
+          cat groessen.md >> release-notizen.md
+          cat >> release-notizen.md <<'TEXT'
+
+          ### Prüfen
+
+          ```bash
+          sha256sum -c SHA256SUMS
+          ```
+          TEXT
+          # `sed … > neu` statt `sed -i`: die BSD-Variante unter macOS nimmt
+          # hinter `-i` einen Sicherungs-Zusatz an, GNU nicht. Der Lauf ist
+          # ohnehin ubuntu — aber geprüft wird der Schritt auch lokal.
+          sed "s|@VERSION@|$VERSION|g" release-notizen.md > release-notizen.neu
+          mv release-notizen.neu release-notizen.md
+          cat release-notizen.md
+
+      - name: Release anlegen oder ergänzen
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes-file release-notizen.md
+          else
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
+              --title "$TAG" --notes-file release-notizen.md --verify-tag
+          fi
+          gh release upload "$TAG" release/* -R "$GITHUB_REPOSITORY" --clobber

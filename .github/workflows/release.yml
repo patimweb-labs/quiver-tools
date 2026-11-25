@@ -1,44 +1,72 @@
-# Die Programme für alle Systeme, als GitHub-Release mit Prüfsummen.
+# Die Programme für alle Systeme, als GitHub-Release mit Prüfsummen —
+# Versionierung übernimmt `release-please`.
 #
-#   Tag vX.Y.Z (von Hand)  -> bauen, Release anlegen, Archive anhängen
-#   „Run workflow“         -> nur bauen, Archive liegen als Artefakte am Lauf
-#   Pull Request           -> nur bauen, wenn `verteilung/` oder dieser Workflow
-#                             sich ändern
+#   Push nach main            release-please führt den Release-PR (Version in
+#                             Cargo.toml und Cargo.lock, CHANGELOG.md), sonst
+#                             nichts
+#   Merge des Release-PR      release-please legt Tag und Release an, danach
+#                             wird im **selben** Lauf gebaut, geprüft und
+#                             angehängt
+#   Tag vX.Y.Z (von Hand)     bauen, prüfen, Release anlegen (oder ergänzen),
+#                             Archive anhängen
+#   „Run workflow“            nur bauen; Archive liegen als Artefakte am Lauf
+#   Pull Request              nur bauen, wenn die Paket-Skripte, dieser
+#                             Workflow oder die Release-Konfiguration sich
+#                             ändern (kein Release, keine Geheimnisse)
+#
+# Warum Tag und Bau in einem Lauf: Ein Tag, den `GITHUB_TOKEN` anlegt, löst
+# **keine** weiteren Workflows aus. release-please erzeugt den Tag hier, also
+# muss dieser Lauf auch bauen und veröffentlichen.
 #
 # Gebaut wird **nativ** auf dem jeweiligen Läufer, nicht über Kreuz: Rust unter
 # Emulation braucht eine Stunde statt Minuten. Was hier passiert, steht in
 # `verteilung/` und läuft lokal genauso:
 #
-#   verteilung/paket.sh    alle Programme bauen, strippen, signieren (macOS),
-#                          als `dist/quiver-tools-<version>-<system>-<arch>.tar.gz`
-#                          mit `LISTE.json` ablegen
-#   verteilung/pruefen.sh  das Archiv entpacken, Summen prüfen und jedes
-#                          Programm kurz starten (`--version`, `eintrag`,
-#                          MCP `initialize`/`tools/list`)
+#   verteilung/paket.sh          alle Programme bauen, strippen, signieren
+#                                (macOS), als
+#                                `dist/quiver-tools-<version>-<system>-<arch>.tar.gz`
+#                                mit `LISTE.json` ablegen
+#   verteilung/pruefen.sh        das Archiv entpacken, Summen prüfen und jedes
+#                                Programm kurz starten (`--version`, `eintrag`,
+#                                MCP `initialize`/`tools/list`)
+#   verteilung/release-ziel.sh   was dieser Lauf mit Tag und Release tut
 #
 # Der Tag muss die Version aus `[workspace.package]` tragen — sonst hieße das
 # Release anders als die Programme in ihrer eigenen Antwort.
 #
+# **Eine veröffentlichte Version wird nicht neu gebaut.** Trägt das Release zum
+# Tag schon Archive, bricht `release-ziel.sh` ab, statt sie mit `--clobber` zu
+# ersetzen; dieselbe Version ein zweites Mal ist ein Fehler. Die erste Fassung
+# `v0.1.0` ist auf dem Weg vor release-please entstanden und bleibt, wie sie
+# ist.
+#
 # **Keine Geheimnisse.** macOS wird ad hoc signiert; Gatekeeper fragt beim
 # ersten Start nach. Windows braucht keine zusätzliche Laufzeit (statische
-# C-Runtime, siehe `verteilung/paket.sh`).
+# C-Runtime, siehe `verteilung/paket.sh`). Auf Pull Requests werden keine
+# Geheimnisse angefasst — es gibt keine.
 #
-# Rechte: oben leer, jeder Job nimmt sich Lesen — schreiben darf allein
-# `veroeffentlichen`.
+# Rechte: oben leer, jeder Job nimmt sich Lesen; schreiben darf allein
+# `release_please` (Inhalt, Pull Requests) und `veroeffentlichen` (Inhalt).
 #
 # Bedingungen: In einem Job **ohne** Statusfunktion prüft GitHub stillschweigend
-# `success()` über **alle** Vorfahren. Deshalb steht überall ausdrücklich
-# `!cancelled() && needs.<job>.result == 'success' && …`; `!cancelled()` statt
-# `always()`, weil ein abgebrochener Lauf auch nicht weiterbauen soll.
+# `success()` über **alle** Vorfahren. Ein übersprungener Job (etwa
+# `release_please` bei einem Tag von Hand, bei einem Pull Request oder bei
+# „Run workflow“) würde damit `version`, `pakete` und `veroeffentlichen`
+# mitreißen. Deshalb steht überall ausdrücklich `!cancelled() &&
+# needs.<job>.result == 'success' && …`; `!cancelled()` statt `always()`, weil
+# ein abgebrochener Lauf auch nicht weiterbauen soll.
 
 name: Release
 
 on:
   push:
     tags: ["v*"]
+    branches: [main]
   pull_request:
     paths:
       - ".github/workflows/release.yml"
+      - "release-please-config.json"
+      - ".release-please-manifest.json"
       - "verteilung/**"
   workflow_dispatch:
 
@@ -56,9 +84,34 @@ env:
   AWS_LC_SYS_PREBUILT_NASM: "1"
 
 jobs:
-  # Die Version steht in `[workspace.package]`; der Tag muss dazu passen.
+  # Hält den Release-PR aktuell und legt beim Merge des Release-PR den Tag und
+  # das GitHub-Release an. Die Version steht in `release-please-config.json`
+  # (Cargo.toml und Cargo.lock), der Stand in `.release-please-manifest.json`.
+  release_please:
+    name: Release-PR und Tag
+    if: "!cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    outputs:
+      released: ${{ steps.rp.outputs.release_created }}
+      tag: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # Entscheidet, ob dieser Lauf nur baut oder auch veröffentlicht, und bricht
+  # ab, wenn die Version schon veröffentlicht ist.
   version:
     name: Version und Tag
+    needs: release_please
+    # `skipped` ist der Normalfall: bei einem Tag von Hand, einem Pull Request
+    # und „Run workflow“ läuft release-please nicht.
+    if: "!cancelled() && (needs.release_please.result == 'success' || needs.release_please.result == 'skipped')"
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -71,40 +124,36 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Version aus Cargo.toml gegen den Tag prüfen
+      - name: Prüfen, ob die Version schon veröffentlicht ist
         id: v
         env:
           EREIGNIS: ${{ github.event_name }}
           REF: ${{ github.ref }}
+          RP_RELEASED: ${{ needs.release_please.outputs.released }}
+          RP_TAG: ${{ needs.release_please.outputs.tag }}
+          REPOSITORY: ${{ github.repository }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version=$(verteilung/version.sh)
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+          # Erst in eine Datei: `release-ziel.sh` schreibt nur `schlüssel=wert`
+          # auf die Standardausgabe, seine Erklärungen gehen nach stderr.
+          verteilung/release-ziel.sh > ziel.txt
+          cat ziel.txt >> "$GITHUB_OUTPUT"
+          cat ziel.txt
 
-          tag=""
-          if [ "$EREIGNIS" = "push" ]; then
-            case "$REF" in
-              refs/tags/*) tag="${REF#refs/tags/}" ;;
-            esac
-          fi
-
-          if [ -n "$tag" ] && [ "$tag" != "v$version" ]; then
-            echo "::error::Tag »$tag« passt nicht zu »v$version« aus Cargo.toml."
-            exit 1
-          fi
-
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
-          if [ -n "$tag" ]; then
-            echo "veroeffentlichen=ja" >> "$GITHUB_OUTPUT"
-          else
-            echo "veroeffentlichen=nein" >> "$GITHUB_OUTPUT"
-          fi
-          echo "Version $version, Tag ${tag:-keiner}"
-
+  # Nativ auf dem jeweiligen Läufer gebaut, kein Cross-Compile.
+  #
+  # `fail-fast: false`: ein gescheitertes Linux ist kein Grund, macOS nicht
+  # zu bauen — so steht in einem Lauf da, **welche** Plattformen brechen. Der
+  # Lauf bleibt rot, und weil `veroeffentlichen` `needs.pakete.result ==
+  # 'success'` verlangt, wird dann nichts veröffentlicht.
   pakete:
     name: Archiv ${{ matrix.name }}
     needs: version
-    if: "!cancelled() && needs.version.result == 'success'"
+    # Auf einem Push nach main ohne neues Release gibt es nichts zu bauen.
+    # Gebaut wird auf jedem Weg, der Archive liefern kann: Tag von Hand,
+    # gemergter Release-PR, Pull Request und „Run workflow“.
+    if: "!cancelled() && needs.version.result == 'success' && (needs.version.outputs.veroeffentlichen == 'ja' || github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch')"
     strategy:
       # Ein gescheitertes Linux ist kein Grund, macOS nicht zu bauen — so steht
       # in einem Lauf da, **welche** Plattformen brechen.
@@ -161,10 +210,14 @@ jobs:
           retention-days: 7
           path: dist/*.tar.gz
 
-  # Der einzige Job mit Schreibrechten: Prüfsummen und Release.
+  # Der einzige Job mit Schreibrechten am Release: Prüfsummen und Release.
   veroeffentlichen:
     name: Prüfsummen und Release
     needs: [version, pakete]
+    # Nur mit Tag **und** mit allen gebauten Archiven. Bei einem Pull Request,
+    # bei „Run workflow“ und bei einem Push nach main ohne neues Release setzt
+    # `version` `veroeffentlichen=nein`; hier wird dann nichts angelegt und
+    # nichts hochgeladen.
     if: "!cancelled() && needs.version.result == 'success' && needs.pakete.result == 'success' && needs.version.outputs.veroeffentlichen == 'ja'"
     runs-on: ubuntu-24.04
     permissions:
@@ -231,6 +284,10 @@ jobs:
           Programme, die ihm zugewiesen sind. `quiver-<tool> eintrag` zeigt den
           Bibliothekseintrag.
 
+          Jedes Programm wurde auf seinem System gestartet: `--version`,
+          `eintrag` und ein MCP-Handschlag über Pipes (`initialize`,
+          `tools/list`).
+
           macOS ist **ad hoc signiert**: Gatekeeper fragt beim ersten Start nach
           einer Bestätigung — Rechtsklick → *Öffnen* oder *Systemeinstellungen →
           Datenschutz & Sicherheit → „Dennoch öffnen“*. Windows braucht keine
@@ -255,6 +312,15 @@ jobs:
           mv release-notizen.neu release-notizen.md
           cat release-notizen.md
 
+      # Ergänzt ein vorhandenes Release (release-please hat den Text
+      # geschrieben) und legt sonst eines an. Der eigene Block steht unter einer
+      # Marke: so bleiben die Notizen von release-please erhalten, und ein
+      # zweiter Lauf ersetzt den Block, statt ihn zu verdoppeln.
+      #
+      # `gh release upload` **ohne** `--clobber`: gibt es die Datei schon, endet
+      # der Schritt mit einem Fehler. Ein bestehendes Release wird nicht
+      # überschrieben — `verteilung/release-ziel.sh` hat vorher schon geprüft,
+      # dass zu diesem Tag keine Archive liegen.
       - name: Release anlegen oder ergänzen
         env:
           GH_TOKEN: ${{ github.token }}
@@ -262,9 +328,14 @@ jobs:
         run: |
           set -euo pipefail
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes-file release-notizen.md
+            gh release view "$TAG" -R "$GITHUB_REPOSITORY" --json body -q .body > vorhanden.md
+            sed '/<!-- quiver-tools-pakete -->/,$d' vorhanden.md > release-notizen.neu
+            printf '\n%s\n' '<!-- quiver-tools-pakete -->' >> release-notizen.neu
+            cat release-notizen.md >> release-notizen.neu
+            gh release edit "$TAG" -R "$GITHUB_REPOSITORY" --notes-file release-notizen.neu
           else
+            { printf '%s\n\n' '<!-- quiver-tools-pakete -->'; cat release-notizen.md; } > release-notizen.neu
             gh release create "$TAG" -R "$GITHUB_REPOSITORY" \
-              --title "$TAG" --notes-file release-notizen.md --verify-tag
+              --title "$TAG" --notes-file release-notizen.neu --verify-tag
           fi
-          gh release upload "$TAG" release/* -R "$GITHUB_REPOSITORY" --clobber
+          gh release upload "$TAG" release/* -R "$GITHUB_REPOSITORY"

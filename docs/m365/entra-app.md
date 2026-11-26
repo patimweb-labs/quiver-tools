@@ -2,12 +2,12 @@
 
 ## Die eine Registrierung (erledigt)
 
-`quiver-m365` ist **eine** Multi-Tenant-App im Tenant des Herausgebers (die Firma steht hier
-absichtlich nicht; die eingebaute Client-ID genügt):
+Die App-Registrierung legt die Firma an, die quiver betreibt. Ihre Client-ID gibt die Verwaltung
+als Feld `client_id` vor; im Programm steht keine:
 
 | | |
 |---|---|
-| Client-ID | `9ae8e0db-e05f-4db8-adde-83d70d416eeb` |
+| Client-ID | die eurer Registrierung, in quiver als Feld `client_id` vom Server |
 | Kontotypen | Accounts in any organizational directory (Multi-Tenant) |
 | Plattform | Public client/native, Redirects `http://127.0.0.1` und `http://localhost` (jeder Port) |
 | Öffentliche Client-Flows | **aus** (2026-11-24): keine Gerätecode-Anmeldung; Browser mit PKCE und Loopback braucht sie nicht |

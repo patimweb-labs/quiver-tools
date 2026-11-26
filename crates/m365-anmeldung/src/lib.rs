@@ -24,12 +24,6 @@ pub struct Konfig {
     pub lauscher_hoechstens: Duration,
 }
 
-/// Eingebaute Client-ID der einen Multi-Tenant-Registrierung (SPEC.md §2a).
-///
-/// Kein User und keine Firma muss etwas registrieren; eine eigene Registrierung
-/// ist möglich, `M365_CLIENT_ID` überschreibt diesen Wert.
-pub const STANDARD_CLIENT_ID: &str = "9ae8e0db-e05f-4db8-adde-83d70d416eeb";
-
 pub const STANDARD_SCOPES: &[&str] = &[
     "User.Read",
     "Mail.ReadWrite",

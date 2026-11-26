@@ -122,7 +122,30 @@ pub const BEREICHE: &[Bereich] = &[
 pub fn eintrag(befehl: Option<&str>) -> serde_json::Value {
     let mut umgebung = serde_json::Map::new();
     umgebung.insert("RUST_LOG".into(), "info".into());
-    let mut felder = Vec::new();
+    // Die App-Registrierung der Firma: kommt vom Server (Satz), nie aus dem
+    // Programm (SPEC.md §2a).
+    umgebung.insert("M365_CLIENT_ID".into(), "${client_id}".into());
+    umgebung.insert("M365_TENANT".into(), "${tenant}".into());
+    let mut felder = vec![
+        serde_json::json!({
+            "name": "client_id",
+            "titel": "Anwendungs-ID",
+            "beschreibung": "Die Client-ID der App-Registrierung deiner Firma in Microsoft Entra. Gibt die Verwaltung vor.",
+            "art": "text",
+            "quelle": "server",
+            "pflicht": true,
+            "standard": null,
+        }),
+        serde_json::json!({
+            "name": "tenant",
+            "titel": "Mandant",
+            "beschreibung": "Tenant-ID oder Domain deiner Firma. Standard: organizations (jeder Geschäftsmandant).",
+            "art": "text",
+            "quelle": "server",
+            "pflicht": false,
+            "standard": "organizations",
+        }),
+    ];
     for bereich in BEREICHE
         .iter()
         .filter(|bereich| bereich.name != "allgemein")
@@ -143,7 +166,7 @@ pub fn eintrag(befehl: Option<&str>) -> serde_json::Value {
         "id": "microsoft-365",
         "version": env!("CARGO_PKG_VERSION"),
         "titel": "Microsoft 365",
-        "beschreibung": "Mail, Kalender, Teams, Dateien, Planner, Kontakte und OneNote über Microsoft Graph. Angemeldet wird einmal im Browser; eine eigene App-Registrierung ist nicht nötig.",
+        "beschreibung": "Mail, Kalender, Teams, Dateien, Planner, Kontakte und OneNote über Microsoft Graph. Angemeldet wird einmal im Browser; die Anwendungs-ID der App-Registrierung gibt die Verwaltung vor.",
         "herkunft": "eigen",
         "laufzeit": {
             "art": "stdio",
@@ -250,12 +273,9 @@ mod schreibschutz_tests {
     fn der_eintrag_hat_je_bereich_einen_schalter_standard_aus() {
         let eintrag = eintrag(Some("/opt/quiver-m365"));
         assert_eq!(eintrag["id"], "microsoft-365");
-        // Der Einrichtungstext nennt die eingebaute App, aber keine Firma.
+        // Der Einrichtungstext nennt die App-Registrierung, aber keine Firma.
         let beschreibung = eintrag["beschreibung"].as_str().unwrap();
-        assert!(
-            beschreibung.contains("eigene App-Registrierung"),
-            "{beschreibung}"
-        );
+        assert!(beschreibung.contains("App-Registrierung"), "{beschreibung}");
         for wort in ["firma", "gmbh", "kunde", "tenant", "example.test"] {
             assert!(
                 !beschreibung.to_lowercase().contains(wort),
@@ -263,7 +283,18 @@ mod schreibschutz_tests {
             );
         }
         assert_eq!(eintrag["laufzeit"]["befehl"], "/opt/quiver-m365");
-        let felder = eintrag["felder"].as_array().unwrap();
+        let alle = eintrag["felder"].as_array().unwrap();
+        // Zuerst die App-Registrierung: vom Server, nie aus dem Programm.
+        assert_eq!(alle[0]["name"], "client_id");
+        assert_eq!(alle[0]["quelle"], "server");
+        assert_eq!(alle[0]["pflicht"], true);
+        assert!(alle[0]["standard"].is_null(), "keine eingebaute ID");
+        assert_eq!(alle[1]["name"], "tenant");
+        assert_eq!(alle[1]["quelle"], "server");
+        let umgebung = &eintrag["laufzeit"]["umgebung"];
+        assert_eq!(umgebung["M365_CLIENT_ID"], "${client_id}");
+        assert_eq!(umgebung["M365_TENANT"], "${tenant}");
+        let felder = &alle[2..];
         assert_eq!(felder.len(), BEREICHE.len() - 1);
         for feld in felder {
             assert_eq!(feld["art"], "schalter");

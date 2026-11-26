@@ -23,8 +23,10 @@ Client Credentials (App-Rechte statt User-Rechte – widerspricht dem Rechtemode
 
 ## 2a. Eine Registrierung für alle, Freigabe im Browser
 
-**Festlegung:** `quiver-m365` ist **eine** Multi-Tenant-App (öffentlicher Client), registriert im
-Tenant des Herausgebers, Client-ID `9ae8e0db-e05f-4db8-adde-83d70d416eeb` – eingebaut als Standard.
+**Festlegung (geändert 2026-11-26):** Die App-Registrierung (öffentlicher Client) gehört der Firma,
+die quiver betreibt. Ihre Client-ID steht **nicht** im Programm: sie kommt über `M365_CLIENT_ID`, in
+quiver als Server-Feld `client_id` des Eintrags, vorgegeben in der Verwaltung. Ohne sie startet
+`quiver-m365` mit einer klaren Meldung.
 Der Tenant wird hier nicht namentlich genannt; die Client-ID genügt.
 *Begründung:* Kein User und keine Firma muss etwas registrieren oder konfigurieren. Beim ersten Login
 sieht der User die Zustimmungsseite von Microsoft („quiver-m365 möchte: …“) und gibt frei.
@@ -74,7 +76,7 @@ Ablauf der Anmeldung (`quiver-m365 anmelden`):
 
 | Variable | Pflicht | Bedeutung |
 |---|---|---|
-| `M365_CLIENT_ID` | nein | Standard: die eingebaute Client-ID (§2a); eigene Registrierung möglich |
+| `M365_CLIENT_ID` | ja | Client-ID der App-Registrierung der Firma (§2a), in quiver vom Server |
 | `M365_TENANT` | nein | Tenant-ID oder `organizations` (Standard) |
 | `M365_SCOPES` | nein | Standard: siehe §4 |
 | `M365_AUTHORITY` | nein | Standard `https://login.microsoftonline.com` (Tests: Attrappe) |

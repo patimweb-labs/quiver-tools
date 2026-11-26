@@ -294,8 +294,8 @@ cargo install --path crates/mcp
 quiver-m365 --version
 ```
 
-Es gibt **keine** App-Registrierung einzurichten und kein Secret: `quiver-m365` ist eine
-eingebaute Multi-Tenant-App (öffentlicher Client). Details:
+Die Firma braucht **eine** App-Registrierung (öffentlicher Client, ohne Secret). Ihre Client-ID
+setzt `M365_CLIENT_ID`; in quiver gibt sie die Verwaltung als Feld `client_id` vor. Details:
 [entra-app.md](entra-app.md).
 
 ## Konfiguration
@@ -304,7 +304,7 @@ Alles über Umgebung, alles optional:
 
 | Variable | Standard | Bedeutung |
 |---|---|---|
-| `M365_CLIENT_ID` | eingebaute Client-ID | eigene App-Registrierung (siehe [entra-app.md](entra-app.md)) |
+| `M365_CLIENT_ID` | – (Pflicht) | Client-ID der App-Registrierung der Firma (siehe [entra-app.md](entra-app.md)); in quiver vom Server |
 | `M365_TENANT` | `organizations` | Tenant-ID oder Domain |
 | `M365_SCOPES` | `User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.Read.All Team.ReadBasic.All Channel.ReadBasic.All ChannelMessage.Read.All ChannelMessage.Send TeamMember.Read.All Chat.ReadWrite User.ReadBasic.All Sites.ReadWrite.All Files.ReadWrite.All Tasks.ReadWrite Group.Read.All Contacts.ReadWrite People.Read Notes.ReadWrite.All offline_access` | delegierte Rechte |
 | `M365_AUTHORITY` | `https://login.microsoftonline.com` | Anmeldedienst (Tests: Attrappe) |

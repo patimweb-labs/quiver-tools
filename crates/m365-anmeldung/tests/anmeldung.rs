@@ -283,6 +283,20 @@ async fn kein_token_in_fehlermeldungen() {
     assert!(gespeichertes_refresh(&tresor).is_none(), "Tresor ist leer");
 }
 
+/// Ohne Anwendungs-ID startet der Dienst, aber jede Anmeldung sagt, woher die
+/// ID kommt – statt „startet nicht“ im quiver-Fenster.
+#[tokio::test]
+async fn ohne_anwendungs_id_sagt_die_anmeldung_woher_sie_kommt() {
+    let attrappe = Attrappe::starten().await;
+    let mut konfig = attrappe::konfig(&attrappe);
+    konfig.client_id = String::new();
+    let (anmeldung, _tresor) = bauen_mit(konfig, AttrappenBrowser::neu());
+    let anmeldung = anmeldung.ohne_browser();
+    let fehler = anmeldung.access_token().await.expect_err("ohne ID");
+    assert!(format!("{fehler}").contains("M365_CLIENT_ID"), "{fehler}");
+    assert!(format!("{fehler}").contains("Verwaltung"), "{fehler}");
+}
+
 #[test]
 fn konfig_aus_der_umgebung() {
     std::env::remove_var("M365_CLIENT_ID");

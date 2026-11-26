@@ -62,10 +62,12 @@ fn loggen() {
 
 /// MCP über stdio, bis der Client die Verbindung schließt.
 async fn dienen() -> ExitCode {
-    let konfig = match Konfig::aus_umgebung() {
-        Ok(konfig) => konfig,
-        Err(fehler) => return fehler_ausgeben(fehler),
-    };
+    // Ohne Anwendungs-ID startet der Dienst trotzdem; jeder Aufruf sagt dann,
+    // dass die Verwaltung sie vorgeben muss.
+    let konfig = Konfig::aus_umgebung_ohne_id();
+    if konfig.client_id.is_empty() {
+        tracing::warn!("{}", m365_anmeldung::OHNE_ID);
+    }
     let tresor = TresorWahl::aus_umgebung();
     // Im MCP-Betrieb öffnet `quiver-m365` nie selbst einen Browser (Aufgabe 03):
     // die Anmeldung löst der User im quiver-Fenster aus (Unterbefehl `anmelden`).

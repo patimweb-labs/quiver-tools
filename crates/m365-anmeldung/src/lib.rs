@@ -120,6 +120,7 @@ mod browser;
 mod dateitresor;
 mod fluss;
 mod konfig;
+pub use konfig::OHNE_ID;
 mod tresor;
 
 pub use anmeldung::EntraAnmeldung;

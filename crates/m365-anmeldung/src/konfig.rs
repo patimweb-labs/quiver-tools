@@ -9,6 +9,10 @@ use crate::{Konfig, STANDARD_SCOPES};
 
 /// Standard-Mandant, wenn `M365_TENANT` fehlt.
 pub const STANDARD_TENANT: &str = "organizations";
+/// Die Meldung, wenn die Anwendungs-ID fehlt.
+pub const OHNE_ID: &str = "Für Microsoft 365 fehlt die Anwendungs-ID (M365_CLIENT_ID). Sie kommt \
+                           von deiner Firma – bitte in der Verwaltung beim Eintrag „Microsoft 365“ \
+                           vorgeben lassen.";
 /// Standard-Autorität, wenn `M365_AUTHORITY` fehlt.
 pub const STANDARD_AUTHORITY: &str = "https://login.microsoftonline.com";
 /// Standard: so lange wartet ein Tool-Aufruf auf die Anmeldung im Browser.
@@ -23,14 +27,20 @@ impl Konfig {
     ///
     /// Getrimmte, leere Werte gelten als nicht gesetzt.
     pub fn aus_umgebung() -> anyhow::Result<Konfig> {
-        let client_id = wert("M365_CLIENT_ID").ok_or_else(|| {
-            anyhow::anyhow!(
-                "Für Microsoft 365 fehlt die Anwendungs-ID (M365_CLIENT_ID). Sie kommt von \
-                 deiner Firma – bitte in der Verwaltung beim Eintrag „Microsoft 365“ vorgeben lassen."
-            )
-        })?;
+        let konfig = Self::aus_umgebung_ohne_id();
+        if konfig.client_id.is_empty() {
+            anyhow::bail!(OHNE_ID);
+        }
+        Ok(konfig)
+    }
 
-        Ok(Konfig {
+    /// Wie [`Konfig::aus_umgebung`], aber eine fehlende Anwendungs-ID ist kein
+    /// Fehler: der MCP-Dienst startet trotzdem, und jeder Aufruf, der eine
+    /// Anmeldung braucht, antwortet mit [`OHNE_ID`]. So zeigt die Karte im
+    /// quiver-Fenster den Grund statt „startet nicht“.
+    pub fn aus_umgebung_ohne_id() -> Konfig {
+        let client_id = wert("M365_CLIENT_ID").unwrap_or_default();
+        Konfig {
             client_id,
             tenant: wert("M365_TENANT").unwrap_or_else(|| STANDARD_TENANT.to_string()),
             scopes: scopes(wert("M365_SCOPES")),
@@ -40,7 +50,7 @@ impl Konfig {
                 .to_string(),
             warten: STANDARD_WARTEN,
             lauscher_hoechstens: STANDARD_LAUSCHER,
-        })
+        }
     }
 }
 

@@ -291,6 +291,13 @@ impl<T: Tresor + 'static, B: Browser + 'static> Anmeldung for EntraAnmeldung<T, 
         if let Some(festes) = &self.kern.festes_token {
             return Ok(Token::Bereit(festes.clone()));
         }
+        // Ohne Anwendungs-ID gibt es keine Anmeldung – die Meldung sagt, woher
+        // sie kommt.
+        if self.kern.konfig.client_id.is_empty() {
+            return Err(AnmeldeFehler::Sonstiges(anyhow::anyhow!(
+                crate::konfig::OHNE_ID
+            )));
+        }
 
         // 2. Aus dem Speicher.
         if let Some(access) = self.kern.aus_dem_speicher() {

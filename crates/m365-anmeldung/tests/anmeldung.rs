@@ -290,9 +290,15 @@ fn konfig_aus_der_umgebung() {
     std::env::remove_var("M365_SCOPES");
     std::env::remove_var("M365_AUTHORITY");
 
-    // Ohne `M365_CLIENT_ID` gilt die eingebaute Registrierung (SPEC.md §2a).
+    // Ohne `M365_CLIENT_ID` gibt es keine Anmeldung: die ID kommt von der
+    // Firma, nicht aus dem Programm (SPEC.md §2a).
+    let fehler = Konfig::aus_umgebung().expect_err("ohne Anwendungs-ID");
+    assert!(format!("{fehler}").contains("M365_CLIENT_ID"), "{fehler}");
+
+    std::env::set_var("M365_CLIENT_ID", "00000000-0000-0000-0000-000000000001");
     let konfig = Konfig::aus_umgebung().expect("konfig");
-    assert_eq!(konfig.client_id, m365_anmeldung::STANDARD_CLIENT_ID);
+    std::env::remove_var("M365_CLIENT_ID");
+    assert_eq!(konfig.client_id, "00000000-0000-0000-0000-000000000001");
     assert_eq!(konfig.tenant, "organizations");
     assert_eq!(konfig.scopes.len(), m365_anmeldung::STANDARD_SCOPES.len());
     assert_eq!(konfig.authority, "https://login.microsoftonline.com");

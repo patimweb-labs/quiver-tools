@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use crate::{Konfig, STANDARD_CLIENT_ID, STANDARD_SCOPES};
+use crate::{Konfig, STANDARD_SCOPES};
 
 /// Standard-Mandant, wenn `M365_TENANT` fehlt.
 pub const STANDARD_TENANT: &str = "organizations";
@@ -17,12 +17,18 @@ pub const STANDARD_WARTEN: Duration = Duration::from_secs(45);
 pub const STANDARD_LAUSCHER: Duration = Duration::from_secs(300);
 
 impl Konfig {
-    /// Liest die Konfiguration aus der Umgebung. `M365_CLIENT_ID` ist optional
-    /// (Standard: [`STANDARD_CLIENT_ID`], SPEC.md §2a).
+    /// Liest die Konfiguration aus der Umgebung. `M365_CLIENT_ID` ist **Pflicht**:
+    /// die Anwendungs-ID der App-Registrierung kommt von der Firma (in quiver
+    /// über die Verwaltung), nicht aus dem Programm (SPEC.md §2a).
     ///
     /// Getrimmte, leere Werte gelten als nicht gesetzt.
     pub fn aus_umgebung() -> anyhow::Result<Konfig> {
-        let client_id = wert("M365_CLIENT_ID").unwrap_or_else(|| STANDARD_CLIENT_ID.to_string());
+        let client_id = wert("M365_CLIENT_ID").ok_or_else(|| {
+            anyhow::anyhow!(
+                "Für Microsoft 365 fehlt die Anwendungs-ID (M365_CLIENT_ID). Sie kommt von \
+                 deiner Firma – bitte in der Verwaltung beim Eintrag „Microsoft 365“ vorgeben lassen."
+            )
+        })?;
 
         Ok(Konfig {
             client_id,

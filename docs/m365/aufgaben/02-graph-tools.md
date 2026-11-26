@@ -38,7 +38,7 @@ Genau die Tabelle aus SPEC §4. Parameter mit `schemars`-Beschreibungen auf Deut
 ## Nachtrag: eingebaute Client-ID und Admin-Freigabe (SPEC §2a)
 
 - `Konfig::aus_umgebung`: `M365_CLIENT_ID` ist **optional**, Standard
-  `9ae8e0db-e05f-4db8-adde-83d70d416eeb` (Konstante `STANDARD_CLIENT_ID` in `crates/anmeldung`);
+  (früher als Konstante im Programm; seit 2026-11-26 vom Server, siehe SPEC §2a);
   `M365_TENANT` Standard `organizations`.
 - Unterbefehl `quiver-m365 freigeben [--tenant <id|domain>]`: Lauscher auf `127.0.0.1:0`, öffnet
   `<authority>/<tenant>/v2.0/adminconsent?client_id=…&scope=<Scopes mit https://graph.microsoft.com/-Präfix, ohne offline_access>&redirect_uri=http://localhost:<port>&state=…`,

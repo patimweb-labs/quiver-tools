@@ -1936,7 +1936,7 @@ checksum = "4050469837a6ff301cd14c1f8f24f88549e6d548f24f64e2148eb0f72cebc51f"
 
 [[package]]
 name = "m365-anmeldung"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -1958,7 +1958,7 @@ dependencies = [
 
 [[package]]
 name = "m365-graph"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2599,7 +2599,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-abap"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2618,7 +2618,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-confluence"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2637,7 +2637,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-devops"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2655,7 +2655,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-diagramm"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fd-lock",
  "png",
@@ -2671,7 +2671,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-drawio"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2691,7 +2691,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-email"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "async-imap",
@@ -2713,7 +2713,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-excalidraw"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2732,7 +2732,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-jira"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2751,7 +2751,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-m365"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2771,7 +2771,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-outline"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2790,7 +2790,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-ssh"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2811,7 +2811,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-tools-kern"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "quiver-abap",
@@ -2836,7 +2836,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-zep"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -2862,7 +2862,7 @@ dependencies = [
 
 [[package]]
 name = "quiver-zephyr"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",

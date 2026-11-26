@@ -8,6 +8,17 @@ Pflegt `release-please` aus den Conventional Commits; von Hand kommt nur der
 Eintrag zur ersten Version hierher. Der Tag ist `v<Version>` und muss zur
 Version in `[workspace.package]` passen.
 
+## [0.2.0](https://github.com/patimweb-labs/quiver-tools/compare/v0.1.0...v0.2.0) (2026-11-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* **m365:** Ohne M365_CLIENT_ID startet quiver-m365 nicht mehr.
+
+### Neu
+
+* **m365:** Anwendungs-ID kommt vom Server statt aus dem Programm ([7836361](https://github.com/patimweb-labs/quiver-tools/commit/7836361a0bb0b0aa345dc9de7620d0fb8ac8c24c))
+
 ## [0.1.0](https://github.com/patimweb-labs/quiver-tools/releases/tag/v0.1.0) (2026-11-25)
 
 Die erste Fassung: MCP-Werkzeuge als einzelne Programme, je System ein Archiv
